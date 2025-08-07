@@ -46,4 +46,16 @@ There were some hiccups as I used the config from the tutorial as a baseline, wh
 
 # Training
 
-Was a bit unclear whats the most up-to date config file, so I ran into a bunch of key errors that were missing from older configs I used. 
+Was a bit unclear whats the most up-to date config file, so I ran into a bunch of key errors that were missing from older configs I used. In the end I could start training with:
+```sh
+CUDA_VISIBLE_DEVICES=3,4,6 torchrun --rdzv-endpoint localhost:29515 --nnodes 1 --nproc_per_node 3 $(which modalities) run --config_file_path configs/2b_config.yaml
+```
+but only with duplicating the validation set. So now have to actually get a sensible dataset and run the above again. 
+For this we use load_fineweb2 which loads the languages which we specified ["eng_Latn", "deu_Latn", "fra_Latn", "ita_Latn", "spa_Latn", "nob_Latn"] and tries to get roughly 5B tokens from each of them (likely more as I use a conservative estimate of tokens per document)
+
+So then we need to create our indices again: 
+```sh
+modalities data create_raw_index --index_path /home/markus_frey/Github/modalities/tutorials/2b_fineweb/data/preprocessed/eng_Latn_train.idx /raid/s3/opengptx/mfrey/fineweb-30B/eng_Latn_train.jsonl
+modalities data create_raw_index --index_path /home/markus_frey/Github/modalities/tutorials/2b_fineweb/data/preprocessed/eng_Latn_val.idx /raid/s3/opengptx/mfrey/fineweb-30B/eng_Latn_val.jsonl
+```
+or see create_indices.sh

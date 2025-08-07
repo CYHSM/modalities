@@ -1,7 +1,7 @@
 settings:
-  src_path: /raid/s3/opengptx/mfrey/fineweb-edu-subset/fineweb_edu_num_docs_483606.jsonl
-  dst_path: /raid/s3/opengptx/mfrey/fineweb-edu-subset/fineweb_edu_num_docs_483606.pbin
-  index_path: data/preprocessed/fineweb_edu_num_docs_483606.idx
+  src_path: /raid/s3/opengptx/mfrey/fineweb-30B/deu_Latn_train.jsonl
+  dst_path: /raid/s3/opengptx/mfrey/fineweb-30B/deu_Latn_train.jsonl.pbin
+  index_path: data/preprocessed/deu_Latn_train.idx
   jq_pattern: .text
   num_cpus: ${node_env:num_cpus}
   eod_token: </s>
