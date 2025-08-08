@@ -59,3 +59,31 @@ modalities data create_raw_index --index_path /home/markus_frey/Github/modalitie
 modalities data create_raw_index --index_path /home/markus_frey/Github/modalities/tutorials/2b_fineweb/data/preprocessed/eng_Latn_val.idx /raid/s3/opengptx/mfrey/fineweb-30B/eng_Latn_val.jsonl
 ```
 or see create_indices.sh
+
+## Evaluation
+
+So the first model is running (https://wandb.ai/cyhsm/2b_config/runs/k564d3jf) and I can evaluate one of the checkpoints. So do to this I created the 2b_generation_config file which then should be able to run with: 
+```sh
+modalities generate_text --config_file_path configs/2b_generation_config.yaml
+```
+I get the error *settings.step_profile.sequence_length' not found* so I assume there has been some update to the codebase:
+- *'loss_fn.config.prediction_key' not found*
+- I think it makes sense to have the same yaml file for generation with maybe one additional passer (the checkpoint path)
+- *Input should be an instance of TokenizerWrapper [type=is_instance_of, input_value=None, input_type=NoneType]*
+
+Okay after putting the tokenizer directly inside the text_inference_component it works.
+
+## Evaluation on LightEval
+
+Now how do I evaluate it on LightEval. Probably best to do a conversion to Huggingface format:
+```sh
+python -m modalities convert_pytorch_to_hf_checkpoint \
+    --config_file_path /home/markus_frey/Github/modalities/tutorials/2b_fineweb/configs/2b_config.yaml \
+    --output_hf_checkpoint_dir /raid/s3/opengptx/mfrey/fineweb-30B/checkpoints/2025-08-07__17-50-58_89893f7f/hf \
+    --prediction_key "logits"
+```
+Okay this fails, and Im currently checking with Timm and Alex whats the best way of doing this. Definitely something where we need to update the docs. so I tried with 
+```sh
+python convert_gpt2.py --num_testruns 5 --device_modalities cuda:1 --device_hf cuda:2 /home/markus_frey/Github/modalities/tutorials/2b_fineweb/configs/2b_config_for_conversion.yaml /raid/s3/opengptx/mfrey/fineweb-30B/checkpoints/2025-08-07__17-50-58_89893f7f/hf
+```
+but it also failed, so I guess I have to change the branch? 
