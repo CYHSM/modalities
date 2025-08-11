@@ -87,3 +87,24 @@ Okay this fails, and Im currently checking with Timm and Alex whats the best way
 python convert_gpt2.py --num_testruns 5 --device_modalities cuda:1 --device_hf cuda:2 /home/markus_frey/Github/modalities/tutorials/2b_fineweb/configs/2b_config_for_conversion.yaml /raid/s3/opengptx/mfrey/fineweb-30B/checkpoints/2025-08-07__17-50-58_89893f7f/hf
 ```
 but it also failed, so I guess I have to change the branch? 
+Okay we needed to change the key "pytorch_implementation" from "manual" to "pytorch_flash" to make sure the logits of the hf model are the same as from the modalities model. Now it runs through and we can maybe run lighteval.
+
+```sh
+accelerate launch --num_processes=1 --gpu_ids="1" -m lighteval.accelerate_main \
+    --model_name_or_path /raid/s3/opengptx/mfrey/fineweb-30B/checkpoints/2025-08-07__17-50-58_89893f7f/hf \
+    --tasks leaderboard|truthfulqa:mc|0|0
+```
+
+Okay coming back to this later.
+
+## Warmstart
+
+So now we want to run the checkpoint with a new learning cycle from the checkpoints, for this we use a new config (2b_config_warmstart) and run the model using: 
+```sh
+CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --rdzv-endpoint localhost:29515 --nnodes 1 --nproc_per_node 4 $(which modalities) run --config_file_path configs/2b_config_warmstart.yaml
+```
+Lots of struggles with setting the correct number of tokens, for this config I have:
+4 (GPUs) × 3 (local_train_micro_batch_size) × 2048 (sequence_length) × 5 (gradient_accumulation_steps) = 122,880 tokens/step
+
+## Hyperparameters / Extensions
+- Is Grouped Query Attention not used??

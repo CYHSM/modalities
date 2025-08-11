@@ -1,5 +1,5 @@
 settings:
-  # experiment_id: ${modalities_env:experiment_id}
+  experiment_id: ${modalities_env:experiment_id}
   config_file_path: ${modalities_env:config_file_path}
   referencing_keys:
     sample_key: input_ids
@@ -11,6 +11,8 @@ settings:
     world_size: 1 #${cuda_env:WORLD_SIZE}
   paths:
     checkpoint_saving_path: /raid/s3/opengptx/mfrey/fineweb-30B/checkpoints/2025-08-07__17-50-58_89893f7f/hf
+    train_dataset_path: /raid/s3/opengptx/mfrey/fineweb-30B/packed/deu_Latn_train.pbin
+    val_dataset_path: /raid/s3/opengptx/mfrey/fineweb-30B/packed/deu_Latn_val.pbin
   intervals:
     training_log_interval_in_steps: 100
     checkpointing_interval_in_steps: 10000
@@ -224,7 +226,7 @@ checkpoint_saving:
       config:
         checkpoint_path: ${settings.paths.checkpoint_saving_path}
         global_rank: ${settings.cuda_env.global_rank}
-        # experiment_id: ${settings.experiment_id}
+        experiment_id: ${settings.experiment_id}
 
 loss_fn:
   component_key: loss
@@ -303,7 +305,7 @@ model_raw:
             n_head: ${model_raw.config.n_head_q} #it has to be head_q here
             seq_length_dim: -2
             base_freq: 10000
-    attention_implementation: manual
+    attention_implementation: pytorch_flash
     activation_type: swiglu
     attention_norm_config:
       norm_type: layer_norm

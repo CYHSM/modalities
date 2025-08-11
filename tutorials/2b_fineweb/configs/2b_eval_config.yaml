@@ -1,0 +1,32 @@
+# my_eval_config.yaml
+
+# This section defines the model to be evaluated
+model_args:
+  # The path to your local directory containing the model files
+  pretrained: /raid/s3/opengptx/mfrey/fineweb-30B/checkpoints/2025-08-07__17-50-58_89893f7f/hf
+
+  # You MUST use this because you have custom modeling_gpt2.py files
+  trust_remote_code: True
+
+  # Optional: Specify data type, e.g., bfloat16 for faster evaluation on compatible GPUs
+  dtype: bfloat16
+
+  # Optional: Specify which device to use. Defaults to "cuda:0" if available.
+  device: "cuda:2"
+
+# This section defines the evaluation tasks you want to run
+tasks:
+  # You can list multiple tasks. Here are some common examples:
+  - task: hellaswag  # Commonsense reasoning
+    num_fewshot: 10
+  - task: arc_challenge # Grade-school science questions
+    num_fewshot: 25
+  - task: winogrande # Commonsense reasoning
+    num_fewshot: 5
+  # - task: mmlu # Massive multitask language understanding (add more tasks as needed)
+  #   num_fewshot: 5
+
+# Optional parameters that override defaults
+override_params:
+  # Adjust batch size based on your GPU memory
+  batch_size: 4

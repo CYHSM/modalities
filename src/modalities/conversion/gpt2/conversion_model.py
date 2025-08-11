@@ -47,6 +47,7 @@ def convert_model_config(modalities_config: dict) -> GPT2Config:
     return GPT2Config(
         vocab_size=config["vocab_size"],
         hidden_size=config["n_embd"],
+        tie_word_embeddings=config["use_weight_tying"],
         pad_token_id=None,
         num_hidden_layers=config["n_layer"],
         num_key_value_heads=config["n_head_kv"],
@@ -83,6 +84,7 @@ def check_converted_model(hf_model: GPT2ForCausalLM, modalities_model: GPT2LLM, 
             modalities_logits = modalities_model(inputs)[modalities_model.prediction_key].to("cpu")
 
         assert llama_logits.shape == modalities_logits.shape
+        assert torch.allclose(llama_logits, modalities_logits)
         assert torch.equal(llama_logits, modalities_logits)
 
 

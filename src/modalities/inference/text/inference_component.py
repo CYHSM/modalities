@@ -77,8 +77,19 @@ class TextInferenceComponent:
         while True:
             try:
                 prompt = TextInferenceComponent._get_prompt(self.prompt_template)
-                self.generate_tokens(context=prompt)
-                print("\n\n--------------------END--------------------\n")
+                temp_input = input("Enter temperatures, separated by commas (e.g., 0, 0.2, 0.5, 1): ")
+                try:
+                    temperatures = [float(t.strip()) for t in temp_input.split(",")]
+                    if not temperatures:
+                        raise ValueError("No temperatures provided.")
+                except ValueError:
+                    print("\nInvalid input. Please enter a comma-separated list of numbers.\n")
+                    continue
+                for temp in temperatures:
+                    print(f"\n\n==================== GENERATING WITH TEMP: {temp} ====================")
+                    self.temperature = temp
+                    self.generate_tokens(context=prompt)  # Generate text with the current temperature
+                print("\n\n--------------------END OF ALL GENERATIONS--------------------\n")
             except KeyboardInterrupt:
                 print("closing app...")
                 break
