@@ -21,14 +21,14 @@ settings:
     enforce_last_step_evaluated: false
     enforce_last_step_checkpointed: false
   step_profile: 
-    gradient_accumulation_steps: 5
+    gradient_accumulation_steps: 6
     local_train_micro_batch_size: 3
     sequence_length: 2048
   warmstart_checkpoint_paths:
     model_checkpoint_path: "/raid/s3/opengptx/mfrey/fineweb-30B/checkpoints/2025-08-07__17-50-58_89893f7f/eid_2025-08-07__17-50-58_89893f7f-model-seen_steps_30000-seen_tokens_4608000000-target_steps_39508-target_tokens_6068428800.bin"
     optimizer_checkpoint_path: "/raid/s3/opengptx/mfrey/fineweb-30B/checkpoints/2025-08-07__17-50-58_89893f7f/eid_2025-08-07__17-50-58_89893f7f-optimizer-seen_steps_30000-seen_tokens_4608000000-target_steps_39508-target_tokens_6068428800.bin"
   training_target:
-    num_target_tokens: 9216000000 #9031680000 # 9216000000
+    num_target_tokens: 9031680000 # 9216000000 #9031680000 #
     num_target_steps: 60000
   training_progress:
     global_num_seen_tokens: 4608000000
@@ -322,7 +322,7 @@ lr_scheduler:
     optimizer:
       instance_key: optimizer
       pass_type: BY_REFERENCE
-    max_lr: 1.5e-5
+    max_lr: 3.5e-6
     div_factor: 10
     final_div_factor: 1
     total_steps: 30000

@@ -106,5 +106,8 @@ CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --rdzv-endpoint localhost:29515 --nnodes 1
 Lots of struggles with setting the correct number of tokens, for this config I have:
 4 (GPUs) × 3 (local_train_micro_batch_size) × 2048 (sequence_length) × 5 (gradient_accumulation_steps) = 122,880 tokens/step
 
+I had it start with the OneCycle LR again but it really seems that is not the correct way of doing this as the loss just shot up and now slowly comes down. We dont have enough GPUs to run stuff so I will cancel this run for now. 
+
+
 ## Hyperparameters / Extensions
 - Is Grouped Query Attention not used??
