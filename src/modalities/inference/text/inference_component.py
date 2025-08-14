@@ -13,6 +13,8 @@ class TextInferenceComponent:
         self,
         model: nn.Module,
         tokenizer: TokenizerWrapper,
+        system_prompt_path: str,
+        chat_template: str,
         prompt_template: str,
         sequence_length: int,
         temperature: float,
@@ -24,10 +26,13 @@ class TextInferenceComponent:
         self.model.eval()
         self.tokenizer = tokenizer
         self.eod_token = eod_token
+        self.chat_template = chat_template
         self.prompt_template = prompt_template
         self.temperature = temperature
         self.sequence_length = sequence_length
         self.device = device
+        with open(system_prompt_path, "r") as f:
+            self.system_prompt = f.read()
 
     def generate_tokens(
         self,
@@ -74,11 +79,28 @@ class TextInferenceComponent:
         print("\n max tokens reached", end="")
 
     def run(self):
-        prompt = TextInferenceComponent._get_prompt(self.prompt_template)
-        try:
-            self.generate_tokens(context=prompt)
-        except KeyboardInterrupt:
-            print("closing app...")
+        while True:
+            try:
+                user_prompt = self._get_prompt(self.prompt_template)
+                full_prompt = self.chat_template.format(system_prompt=self.system_prompt, user_prompt=user_prompt)
+
+                temp_input = input("Enter temperatures, separated by commas (e.g., 0, 0.2, 0.5, 1): ")
+                try:
+                    temperatures = [float(t.strip()) for t in temp_input.split(",")]
+                    if not temperatures:
+                        raise ValueError("No temperatures provided.")
+                except ValueError:
+                    print("\nInvalid input. Please enter a comma-separated list of numbers.\n")
+                    continue
+                for temp in temperatures:
+                    print(f"\n\n==================== GENERATING WITH TEMP: {temp} ====================")
+                    self.temperature = temp
+                    # MODIFIED: Pass the fully formatted prompt to the generator
+                    self.generate_tokens(context=full_prompt)
+                print("\n\n--------------------END OF ALL GENERATIONS--------------------\n")
+            except KeyboardInterrupt:
+                print("closing app...")
+                break
 
     @staticmethod
     def _get_prompt(template: str) -> str:

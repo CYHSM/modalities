@@ -1,0 +1,3433 @@
+settings:
+  experiment_id: ${modalities_env:experiment_id}
+  config_file_path: ${modalities_env:config_file_path}
+  referencing_keys:
+    sample_key: input_ids
+    target_key: target_ids
+    prediction_key: logits
+  cuda_env:
+    local_rank: ${cuda_env:LOCAL_RANK}
+    global_rank: ${cuda_env:RANK}
+    world_size: 1
+  paths:
+    checkpoint_saving_path: /raid/s3/opengptx/mfrey/3.73T-Tokens/checkpoints
+  intervals:
+    training_log_interval_in_steps: 10
+    checkpointing_interval_in_steps: 3375
+    evaluation_interval_in_steps: 562
+  consistency_enforcement:
+    enforce_tokens_per_step_consistency: true
+    enforce_last_step_logged: false
+    enforce_last_step_evaluated: false
+    enforce_last_step_checkpointed: false
+  step_profile:
+    gradient_accumulation_steps: 1
+    local_train_micro_batch_size: 2
+    sequence_length: 8192
+  training_target:
+    num_target_tokens: 3752534736896
+    num_target_steps: 447337
+  training_progress:
+    global_num_seen_tokens: 0
+    num_seen_steps: 0
+    num_seen_samples: 0
+    last_step: -1
+collate_fn:
+  component_key: collate_fn
+  variant_key: gpt_2_llm_collator
+  config:
+    sample_key: ${settings.referencing_keys.sample_key}
+    target_key: ${settings.referencing_keys.target_key}
+train_dataset:
+  component_key: dataset
+  variant_key: combined
+  config:
+    datasets:
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_0.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_1.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_2.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_3.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_4.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_5.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_6.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_7.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_8.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_9.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_10.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_11.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_12.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_13.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_14.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_15.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_16.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_17.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_18.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_19.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_20.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_21.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_22.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_23.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_24.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_25.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_26.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_27.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_28.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_29.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_30.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_31.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_32.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_33.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_34.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_35.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_36.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_37.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_38.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_39.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_40.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_41.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_42.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_43.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_44.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_45.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_46.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_47.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_48.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_49.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_50.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_51.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_52.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_53.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_54.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_55.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_56.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_57.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_58.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_59.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_60.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_61.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_62.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_63.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_64.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_65.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_66.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_67.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_68.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_69.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_70.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_71.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_72.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_73.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_74.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_75.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_76.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_77.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_78.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_79.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_80.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_81.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_82.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_83.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_84.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_85.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_86.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_87.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_88.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_89.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_90.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_91.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_92.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_93.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_94.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_95.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_96.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_97.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_98.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_99.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_100.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_101.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_102.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_103.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_104.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_105.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_106.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_107.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_108.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_109.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_110.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_111.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_112.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_113.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_114.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_115.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_116.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_117.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_118.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_119.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_120.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_121.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_122.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_123.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_124.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_125.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_126.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_127.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_128.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_129.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_130.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_131.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_132.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_133.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_134.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_135.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_136.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_137.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_138.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_139.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_140.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_141.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_142.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_143.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_144.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_145.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_146.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_147.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_148.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_149.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_150.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_151.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_152.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_153.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_154.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_155.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_156.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_157.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_158.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_159.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_160.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_161.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_162.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_163.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_164.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_165.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_166.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_167.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_168.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_169.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_170.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_171.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_172.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_173.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_174.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_175.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_176.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_177.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_178.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_179.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_180.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_181.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_182.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_183.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_184.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_185.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_186.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_187.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_188.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_189.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_190.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_191.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_192.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_193.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_194.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_195.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_196.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_197.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_198.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_199.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_200.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_201.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_202.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_203.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_204.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_205.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_206.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_207.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_208.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_209.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_210.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_211.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_212.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_213.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_214.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_215.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_216.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_217.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_218.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_219.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_220.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_221.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_222.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_223.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_224.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_225.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_226.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_227.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_228.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_229.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_230.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_231.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_232.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_233.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_234.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_235.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_236.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_237.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_238.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_239.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_240.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_241.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_242.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_243.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_244.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_245.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_246.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_247.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_248.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_249.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_250.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_251.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_252.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_253.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_254.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_255.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_256.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_257.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_258.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_259.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_260.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_261.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_262.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_263.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_264.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_265.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_266.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_267.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_268.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_269.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_270.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_271.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_272.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_273.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_274.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_275.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_276.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_277.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_278.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_279.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_280.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_281.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_282.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_283.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_284.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_285.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_286.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_287.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_288.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_289.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_290.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_291.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_292.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_293.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_294.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_295.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_296.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_297.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_298.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/chunked_data/chunk_299.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+
+train_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: train
+    dataset:
+      instance_key: train_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: resumable_distributed_sampler
+          config:
+            dataset:
+              instance_key: train_dataset
+              pass_type: BY_REFERENCE
+            rank: ${settings.cuda_env.global_rank}
+            num_replicas: ${settings.cuda_env.world_size}
+            shuffle: false
+            seed: 42
+            drop_last: true
+            skip_num_global_samples: ${settings.training_progress.num_seen_samples}
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+por_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/por_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+por_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: por_Latn
+    dataset:
+      instance_key: por_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: por_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+fin_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/fin_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+fin_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: fin_Latn
+    dataset:
+      instance_key: fin_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: fin_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+eng_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/eng_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+eng_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: eng_Latn
+    dataset:
+      instance_key: eng_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: eng_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+glg_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/glg_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+glg_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: glg_Latn
+    dataset:
+      instance_key: glg_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: glg_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+cat_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/cat_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+cat_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: cat_Latn
+    dataset:
+      instance_key: cat_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: cat_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+pol_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/pol_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+pol_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: pol_Latn
+    dataset:
+      instance_key: pol_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: pol_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+hye_Armn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/hye_Armn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+hye_Armn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: hye_Armn
+    dataset:
+      instance_key: hye_Armn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: hye_Armn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+bug_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/bug_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+bug_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: bug_Latn
+    dataset:
+      instance_key: bug_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: bug_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+spa_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/spa_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+spa_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: spa_Latn
+    dataset:
+      instance_key: spa_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: spa_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+slk_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/slk_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+slk_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: slk_Latn
+    dataset:
+      instance_key: slk_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: slk_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+mlt_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/mlt_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+mlt_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: mlt_Latn
+    dataset:
+      instance_key: mlt_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: mlt_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+ita_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/ita_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+ita_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: ita_Latn
+    dataset:
+      instance_key: ita_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: ita_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+slv_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/slv_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+slv_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: slv_Latn
+    dataset:
+      instance_key: slv_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: slv_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+isl_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/isl_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+isl_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: isl_Latn
+    dataset:
+      instance_key: isl_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: isl_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+lvs_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/lvs_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+lvs_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: lvs_Latn
+    dataset:
+      instance_key: lvs_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: lvs_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+als_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/als_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+als_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: als_Latn
+    dataset:
+      instance_key: als_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: als_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+hun_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/hun_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+hun_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: hun_Latn
+    dataset:
+      instance_key: hun_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: hun_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+ukr_Cyrl_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/ukr_Cyrl.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+ukr_Cyrl_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: ukr_Cyrl
+    dataset:
+      instance_key: ukr_Cyrl_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: ukr_Cyrl_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+gle_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/gle_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+gle_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: gle_Latn
+    dataset:
+      instance_key: gle_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: gle_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+srp_Cyrl_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/srp_Cyrl.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+srp_Cyrl_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: srp_Cyrl
+    dataset:
+      instance_key: srp_Cyrl_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: srp_Cyrl_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+tur_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/tur_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+tur_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: tur_Latn
+    dataset:
+      instance_key: tur_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: tur_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+ron_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/ron_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+ron_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: ron_Latn
+    dataset:
+      instance_key: ron_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: ron_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+ces_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/ces_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+ces_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: ces_Latn
+    dataset:
+      instance_key: ces_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: ces_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+deu_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/deu_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+deu_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: deu_Latn
+    dataset:
+      instance_key: deu_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: deu_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+lit_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/lit_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+lit_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: lit_Latn
+    dataset:
+      instance_key: lit_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: lit_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+dan_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/dan_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+dan_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: dan_Latn
+    dataset:
+      instance_key: dan_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: dan_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+fra_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/fra_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+fra_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: fra_Latn
+    dataset:
+      instance_key: fra_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: fra_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+hrv_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/hrv_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+hrv_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: hrv_Latn
+    dataset:
+      instance_key: hrv_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: hrv_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+mkd_Cyrl_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/mkd_Cyrl.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+mkd_Cyrl_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: mkd_Cyrl
+    dataset:
+      instance_key: mkd_Cyrl_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: mkd_Cyrl_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+code_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/code.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+code_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: code
+    dataset:
+      instance_key: code_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: code_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+nno_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/nno_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+nno_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: nno_Latn
+    dataset:
+      instance_key: nno_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: nno_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+est_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/est_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+est_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: est_Latn
+    dataset:
+      instance_key: est_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: est_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+swe_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/swe_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+swe_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: swe_Latn
+    dataset:
+      instance_key: swe_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: swe_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+nld_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/nld_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+nld_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: nld_Latn
+    dataset:
+      instance_key: nld_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: nld_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+ell_Grek_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/ell_Grek.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+ell_Grek_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: ell_Grek
+    dataset:
+      instance_key: ell_Grek_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: ell_Grek_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+eus_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/eus_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+eus_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: eus_Latn
+    dataset:
+      instance_key: eus_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: eus_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+
+nob_Latn_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /gpfs/scratch/ehpc17/eurolingua/data/val_data_tokenized/nob_Latn.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+nob_Latn_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: nob_Latn
+    dataset:
+      instance_key: nob_Latn_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: sequential_sampler
+          config:
+            data_source:
+              instance_key: nob_Latn_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+eval_dataloaders:
+  - instance_key: por_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: fin_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: eng_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: glg_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: cat_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: pol_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: hye_Armn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: bug_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: spa_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: slk_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: mlt_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: ita_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: slv_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: isl_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: lvs_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: als_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: hun_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: ukr_Cyrl_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: gle_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: srp_Cyrl_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: tur_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: ron_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: ces_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: deu_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: lit_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: dan_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: fra_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: hrv_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: mkd_Cyrl_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: code_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: nno_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: est_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: swe_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: nld_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: ell_Grek_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: eus_Latn_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: nob_Latn_dataloader
+    pass_type: BY_REFERENCE
+checkpoint_saving:
+  component_key: checkpoint_saving
+  variant_key: default
+  config:
+    checkpoint_saving_strategy:
+      component_key: checkpoint_saving_strategy
+      variant_key: save_k_most_recent_checkpoints_strategy
+      config:
+        k: -1
+    checkpoint_saving_execution:
+      component_key: checkpoint_saving_execution
+      variant_key: fsdp
+      config:
+        checkpoint_path: ${settings.paths.checkpoint_saving_path}
+        global_rank: ${settings.cuda_env.global_rank}
+        experiment_id: ${settings.experiment_id}
+loss_fn:
+  component_key: loss
+  variant_key: clm_cross_entropy_loss
+  config:
+    target_key: ${settings.referencing_keys.target_key}
+    prediction_key: ${settings.referencing_keys.prediction_key}
+model:
+  component_key: model
+  variant_key: model_initialized
+  config:
+    model:
+      instance_key: model_raw
+      pass_type: BY_REFERENCE
+    model_initializer:
+      component_key: model_initialization
+      variant_key: composed
+      config:
+        model_type: gpt2
+        weight_init_type: scaled
+        mean: 0.0
+        std: 0.02
+        num_layers: ${model_raw.config.n_layer}
+model_raw:
+  component_key: model
+  variant_key: gpt2
+  config:
+    sample_key: ${settings.referencing_keys.sample_key}
+    poe_type: NOPE
+    sequence_length: ${settings.step_profile.sequence_length}
+    prediction_key: ${loss_fn.config.prediction_key}
+    vocab_size: 250880
+    n_layer: 32
+    n_head_q: 32
+    n_head_kv: 8
+    ffn_hidden: 21248
+    n_embd: 4096
+    dropout: 0.0
+    bias: false
+    attention_config:
+      qkv_transforms:
+      - type_hint: RotaryTransform
+        config:
+          n_embd: ${model_raw.config.n_embd}
+          n_head: ${model_raw.config.n_head_q}
+          seq_length_dim: -2
+          base_freq: 500000
+    attention_implementation: pytorch_flash
+    activation_type: swiglu
+    attention_norm:
+      component_key: layer_norm
+      variant_key: layer_norm
+      config:
+        normalized_shape: ${model_raw.config.n_embd}
+        eps: 1.0e-05
+    ffn_norm:
+      component_key: layer_norm
+      variant_key: layer_norm
+      config:
+        normalized_shape: ${model_raw.config.n_embd}
+        eps: 1.0e-05
+    lm_head_norm:
+      component_key: layer_norm
+      variant_key: layer_norm
+      config:
+        normalized_shape: ${model_raw.config.n_embd}
+        eps: 1.0e-05
+scheduler:
+  component_key: scheduler
+  variant_key: onecycle_lr
+  config:
+    max_lr: 0.0003
+    div_factor: 1000000
+    final_div_factor: 1
+    total_steps: ${settings.training_target.num_target_steps}
+    pct_start: 0.002517
+    anneal_strategy: cos
+    last_epoch: ${settings.training_progress.last_step}
+    optimizer:
+      instance_key: optimizer
+      pass_type: BY_REFERENCE
+optimizer:
+  component_key: optimizer
+  variant_key: adam_w
+  config:
+    lr: 0.0003
+    betas:
+    - 0.9
+    - 0.95
+    eps: 1.0e-08
+    weight_decay: 0.1
+    weight_decay_groups_excluded:
+    - embedding
+    - layernorm
+    wrapped_model:
+      instance_key: wrapped_model
+      pass_type: BY_REFERENCE
+gradient_clipper:
+  component_key: gradient_clipper
+  variant_key: fsdp
+  config:
+    wrapped_model:
+      instance_key: wrapped_model
+      pass_type: BY_REFERENCE
+    norm_type: P2_NORM
+    max_norm: 1.0
+progress_subscriber:
+  component_key: progress_subscriber
+  variant_key: rich
+  config:
+    global_rank: ${settings.cuda_env.global_rank}
+    num_seen_steps: ${settings.training_progress.num_seen_steps}
+    num_target_steps: ${settings.training_target.num_target_steps}
+    train_dataloader_tag: ${train_dataloader.config.dataloader_tag}
+    eval_dataloaders:
+      instance_key: eval_dataloaders
+      pass_type: BY_REFERENCE
+evaluation_subscriber:
+  component_key: results_subscriber
+  variant_key: wandb
+  config:
+    global_rank: ${settings.cuda_env.global_rank}
+    project: eurolingua_gpt
+    mode: OFFLINE
+    experiment_id: ${settings.experiment_id}
+    directory: /gpfs/projects/ehpc17/modalities/eurolingua_gpt_model_family/wandb
+    config_file_path: ${settings.config_file_path}
+fsdp_model:
+  component_key: model
+  variant_key: fsdp_wrapped
+  config:
+    model:
+      instance_key: model
+      pass_type: BY_REFERENCE
+    sync_module_states: true
+    mixed_precision_settings: BF_16
+    sharding_strategy: FULL_SHARD
+    block_names:
+    - GPT2Block
+wrapped_model:
+  component_key: model
+  variant_key: activation_checkpointed
+  config:
+    model:
+      instance_key: fsdp_model
+      pass_type: BY_REFERENCE
+    activation_checkpointing_modules:
+    - GPT2Block
+
+checkpointed_model:
+  component_key: model
+  variant_key: fsdp1_checkpointed
+  config: 
+    checkpoint_loading:
+      component_key: checkpoint_loading
+      variant_key: torch
+      config:
+        device: cpu
+        precision: BF16
+    model:
+      instance_key: model
+      pass_type: BY_REFERENCE
+    checkpoint_path: /raid/s3/opengptx/mfrey/3.73T-Tokens/eid_2025-04-29__13-48-21_fed2a6d3-model-seen_steps_445500-seen_tokens_3737124864000-target_steps_447337-target_tokens_3752534736896.bin
+
+tokenizer:
+  component_key: tokenizer
+  variant_key: pretrained_sp_tokenizer
+  config:
+    tokenizer_model_file: /raid/s3/opengptx/mfrey/3.73T-Tokens/tokenizer/eurolingua_tokenizer.model
