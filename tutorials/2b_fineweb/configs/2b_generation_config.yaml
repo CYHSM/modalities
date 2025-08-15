@@ -1,0 +1,118 @@
+settings:
+  referencing_keys:
+    sample_key: input_ids
+    target_key: target_ids
+    prediction_key: logits
+  #model_path: /raid/s3/opengptx/mfrey/fineweb-30B/checkpoints/2025-08-07__17-50-58_89893f7f/eid_2025-08-07__17-50-58_89893f7f-model-seen_steps_10000-seen_tokens_1536000000-target_steps_39508-target_tokens_6068428800.bin
+  #model_path: /raid/s3/opengptx/mfrey/fineweb-30B/checkpoints/2025-08-07__17-50-58_89893f7f/eid_2025-08-07__17-50-58_89893f7f-model-seen_steps_20000-seen_tokens_3072000000-target_steps_39508-target_tokens_6068428800.bin
+  model_path: /raid/s3/opengptx/mfrey/fineweb-30B/checkpoints/2025-08-07__17-50-58_89893f7f/eid_2025-08-07__17-50-58_89893f7f-model-seen_steps_30000-seen_tokens_4608000000-target_steps_39508-target_tokens_6068428800.bin
+  device: 1
+  sequence_length: 256
+  step_profile: 
+    gradient_accumulation_steps: 5
+    local_train_micro_batch_size: 3
+    sequence_length: 2048
+
+text_inference_component:
+  component_key: inference_component
+  variant_key: text
+  config:
+    device: ${settings.device}
+    model:
+      instance_key: checkpointed_model
+      pass_type: BY_REFERENCE
+    tokenizer:
+      component_key: tokenizer
+      variant_key: pretrained_sp_tokenizer
+      config:
+        tokenizer_model_file: /home/markus_frey/Github/modalities/tutorials/2b_fineweb/tokenizer/eurolingua_tokenizer.model
+    sequence_length: ${settings.sequence_length}
+    eod_token: <|endoftext|>
+    prompt_template: "{prompt_input}" # "<instruction> Du bist Moody, ein LLM welches Menschen helfen soll. user: {prompt_input}"
+    temperature: 1
+    # chat: false
+
+loss_fn:
+  component_key: loss
+  variant_key: clm_cross_entropy_loss
+  config:
+    target_key: ${settings.referencing_keys.target_key}
+    prediction_key: ${settings.referencing_keys.prediction_key}
+
+checkpointed_model:
+  component_key: model
+  variant_key: fsdp1_checkpointed
+  config: 
+    checkpoint_loading:
+      component_key: checkpoint_loading
+      variant_key: torch
+      config:
+        device: ${settings.device}
+        precision: BF16
+    model:
+      instance_key: model
+      pass_type: BY_REFERENCE
+    checkpoint_path: ${settings.model_path}
+
+model:
+  component_key: model
+  variant_key: model_initialized
+  config:
+    model:
+      instance_key: model_raw
+      pass_type: BY_REFERENCE
+    model_initializer:
+      component_key: model_initialization
+      variant_key: composed
+      config:
+        model_type: gpt2
+        weight_init_type: scaled
+        mean: 0.0
+        std: 0.02
+        num_layers: ${model_raw.config.n_layer}
+
+model_raw:
+  component_key: model
+  variant_key: gpt2
+  config:
+    sample_key: ${settings.referencing_keys.sample_key}
+    poe_type: NOPE
+    sequence_length: ${settings.step_profile.sequence_length}
+    prediction_key: ${loss_fn.config.prediction_key}
+    vocab_size: 251008 
+    # Eurolingua vocab size of 250880, padded up to nearest multiple of 64 for efficiency (250944),
+    # which runs into "Value error, vocab_size with value 250944 should be divisible by 128 for efficient training." 
+    # so we use 251008
+    n_layer: 24
+    n_head_q: 32
+    n_head_kv: 8
+    ffn_hidden: 8192
+    n_embd: 2048
+    dropout: 0.0
+    bias: false
+    attention_config:
+      qkv_transforms:
+        - type_hint: RotaryTransform
+          config:
+            n_embd: ${model_raw.config.n_embd}
+            n_head: ${model_raw.config.n_head_q} #it has to be head_q here
+            seq_length_dim: -2
+            base_freq: 10000
+    attention_implementation: manual
+    activation_type: swiglu
+    attention_norm_config:
+      norm_type: layer_norm
+      config:
+        normalized_shape: ${model_raw.config.n_embd}
+        eps: 1.0e-05
+    ffn_norm_config:
+      norm_type: layer_norm
+      config:
+        normalized_shape: ${model_raw.config.n_embd}
+        eps: 1.0e-05
+    lm_head_norm_config:
+      norm_type: layer_norm
+      config:
+        normalized_shape: ${model_raw.config.n_embd}
+        eps: 1.0e-05
+    use_weight_tying: true

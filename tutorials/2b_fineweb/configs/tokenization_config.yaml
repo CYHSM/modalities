@@ -1,0 +1,16 @@
+settings:
+  src_path: /raid/s3/opengptx/mfrey/fineweb-30B/deu_Latn_train.jsonl
+  dst_path: /raid/s3/opengptx/mfrey/fineweb-30B/deu_Latn_train.jsonl.pbin
+  index_path: data/preprocessed/deu_Latn_train.idx
+  jq_pattern: .text
+  num_cpus: ${node_env:num_cpus}
+  eod_token: </s>
+  processing_batch_size: 10
+  raw_samples_queue_size: 300
+  processed_samples_queue_size: 300
+
+tokenizer:
+  component_key: tokenizer
+  variant_key: pretrained_sp_tokenizer
+  config:
+    tokenizer_model_file: /home/markus_frey/Github/modalities/tutorials/2b_fineweb/tokenizer/eurolingua_tokenizer.model

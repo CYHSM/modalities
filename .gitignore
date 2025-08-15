@@ -10,6 +10,9 @@ core.*
 checkpoint
 wandb
 artifacts
+*.idx
+*.npz
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
