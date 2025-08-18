@@ -3258,7 +3258,7 @@ checkpoint_saving:
         k: -1
     checkpoint_saving_execution:
       component_key: checkpoint_saving_execution
-      variant_key: fsdp
+      variant_key: fsdp1
       config:
         checkpoint_path: ${settings.paths.checkpoint_saving_path}
         global_rank: ${settings.cuda_env.global_rank}
@@ -3311,25 +3311,24 @@ model_raw:
           base_freq: 500000
     attention_implementation: pytorch_flash
     activation_type: swiglu
-    attention_norm:
-      component_key: layer_norm
-      variant_key: layer_norm
+    attention_norm_config:
+      norm_type: layer_norm
       config:
         normalized_shape: ${model_raw.config.n_embd}
         eps: 1.0e-05
-    ffn_norm:
-      component_key: layer_norm
-      variant_key: layer_norm
+    ffn_norm_config:
+      norm_type: layer_norm
       config:
         normalized_shape: ${model_raw.config.n_embd}
         eps: 1.0e-05
-    lm_head_norm:
-      component_key: layer_norm
-      variant_key: layer_norm
+    lm_head_norm_config:
+      norm_type: layer_norm
       config:
         normalized_shape: ${model_raw.config.n_embd}
         eps: 1.0e-05
-scheduler:
+    use_weight_tying: false
+
+lr_scheduler:
   component_key: scheduler
   variant_key: onecycle_lr
   config:
@@ -3347,21 +3346,18 @@ optimizer:
   component_key: optimizer
   variant_key: adam_w
   config:
-    lr: 0.0003
-    betas:
-    - 0.9
-    - 0.95
-    eps: 1.0e-08
-    weight_decay: 0.1
-    weight_decay_groups_excluded:
-    - embedding
-    - layernorm
-    wrapped_model:
+    lr: 0.0001
+    betas: [0.9, 0.95]
+    eps: 1e-8
+    weight_decay: 1e-1
+    weight_decay_groups_excluded: [embedding, layernorm]
+    wrapped_model: 
       instance_key: wrapped_model
       pass_type: BY_REFERENCE
+
 gradient_clipper:
   component_key: gradient_clipper
-  variant_key: fsdp
+  variant_key: fsdp1
   config:
     wrapped_model:
       instance_key: wrapped_model
@@ -3389,9 +3385,24 @@ evaluation_subscriber:
     experiment_id: ${settings.experiment_id}
     directory: /gpfs/projects/ehpc17/modalities/eurolingua_gpt_model_family/wandb
     config_file_path: ${settings.config_file_path}
-fsdp_model:
+
+app_state:
+  component_key: app_state
+  variant_key: raw
+  config:
+    model: 
+      instance_key: wrapped_model
+      pass_type: BY_REFERENCE
+    optimizer:
+      instance_key: optimizer
+      pass_type: BY_REFERENCE
+    lr_scheduler:
+      instance_key: lr_scheduler
+      pass_type: BY_REFERENCE
+
+wrapped_model:
   component_key: model
-  variant_key: fsdp_wrapped
+  variant_key: fsdp1_wrapped
   config:
     model:
       instance_key: model
@@ -3399,17 +3410,7 @@ fsdp_model:
     sync_module_states: true
     mixed_precision_settings: BF_16
     sharding_strategy: FULL_SHARD
-    block_names:
-    - GPT2Block
-wrapped_model:
-  component_key: model
-  variant_key: activation_checkpointed
-  config:
-    model:
-      instance_key: fsdp_model
-      pass_type: BY_REFERENCE
-    activation_checkpointing_modules:
-    - GPT2Block
+    block_names: [GPT2Block]
 
 checkpointed_model:
   component_key: model

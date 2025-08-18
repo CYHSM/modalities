@@ -8,53 +8,67 @@ from transformers import LlamaTokenizer
 from modalities.tokenization.tokenizer_wrapper import PreTrainedSPTokenizer
 
 
-def convert_tokenizer(tokenizer_model_path: str, output_dir: str) -> tuple[int, int, int, int]:
-    """Converts a SentencePiece tokenizer to a Huggingface tokenizer.
+def convert_tokenizer(tokenizer_model_path: str, output_dir: str):
+    """
+    Converts a SentencePiece tokenizer to a Huggingface tokenizer, ensuring
+    special tokens are correctly configured.
 
     Args:
         tokenizer_model_path (str): Path to the SentencePiece tokenizer model file.
         output_dir (str): Path to the directory where the converted tokenizer will be saved.
-
     Returns:
         tuple[int, int, int, int]: The actual bos_token_id, eos_token_id, pad_token_id and
                                    unk_token_id of the tokenizer. Note, that these are not
                                    set in the transformers part of the created tokenizer.
                                    Only in the wrapped SentencePiece tokenizer.
     """
-    sp_tokenizer = PreTrainedSPTokenizer(tokenizer_model_path)
-    split_special_tokens = _is_splitting_special_tokens(sp_tokenizer)
-    # Setting the special tokens to None in order to let the internal SentencePiece tokenizer handle them.
-    special_tokens, special_token_ids = _dummy_special_tokens()
+    print("Loading source SentencePiece tokenizer...")
+    sp_tokenizer_wrapper = PreTrainedSPTokenizer(tokenizer_model_path)
+    sp_model = sp_tokenizer_wrapper.tokenizer
+
+    # 1. Get all special tokens and their IDs from the source model
+    bos_id = sp_model.bos_id()
+    eos_id = sp_model.eos_id()
+    unk_id = sp_model.unk_id()
+    pad_id = sp_model.pad_id()  # Often -1 if not set
+
+    bos_token = sp_model.id_to_piece(bos_id) if bos_id != -1 else "<s>"
+    eos_token = sp_model.id_to_piece(eos_id) if eos_id != -1 else "</s>"
+    unk_token = sp_model.id_to_piece(unk_id) if unk_id != -1 else "<unk>"
+
+    # 2. Handle the PAD token
+    if pad_id == -1:
+        print("Warning: PAD token not set in source tokenizer. Using EOS token as PAD.")
+        pad_id = eos_id
+        pad_token = eos_token
+    else:
+        pad_token = sp_model.id_to_piece(pad_id)
+
     with _create_tokenizer_directory(tokenizer_model_path) as tokenizer_model_dir:
-        hf_tokenizer = LlamaTokenizer.from_pretrained(
-            tokenizer_model_dir, split_special_tokens=split_special_tokens, **special_tokens, **special_token_ids
-        )
-    hf_tokenizer.add_bos_token = False
-    hf_tokenizer.add_eos_token = False
-    # With legacy=True the LlamaTokenizer tokenizer will use the SentencePiece tokenizer for tokenization
-    # and not run any special token logic.
-    hf_tokenizer.legacy = True
-    hf_tokenizer.save_pretrained(output_dir)
-    return (
-        sp_tokenizer.tokenizer.bos_id(),
-        sp_tokenizer.tokenizer.eos_id(),
-        sp_tokenizer.tokenizer.pad_id(),
-        sp_tokenizer.tokenizer.unk_id(),
+        print(f"Loading LlamaTokenizer from temporary directory: {tokenizer_model_dir}")
+        hf_tokenizer = LlamaTokenizer.from_pretrained(tokenizer_model_dir, legacy=True)
+
+    # 3. Set the special tokens on the LlamaTokenizer
+    hf_tokenizer.add_special_tokens(
+        {"bos_token": bos_token, "eos_token": eos_token, "unk_token": unk_token, "pad_token": pad_token}
     )
 
+    # Also set the token_id attributes directly to ensure config is written correctly
+    hf_tokenizer.bos_token_id = bos_id
+    hf_tokenizer.eos_token_id = eos_id
+    hf_tokenizer.unk_token_id = unk_id
+    hf_tokenizer.pad_token_id = pad_id
 
-def _is_splitting_special_tokens(sp_tokenizer: PreTrainedSPTokenizer) -> bool:
-    if (bos := sp_tokenizer.tokenizer.bos_id()) >= 0:
-        test_token_id = bos
-    elif (eos := sp_tokenizer.tokenizer.eos_id()) >= 0:
-        test_token_id = eos
-    elif (pad := sp_tokenizer.tokenizer.pad_id()) >= 0:
-        test_token_id = pad
-    elif (unk := sp_tokenizer.tokenizer.unk_id()) >= 0:
-        test_token_id = unk
-    else:
-        return False
-    return len(sp_tokenizer.tokenize(sp_tokenizer.tokenizer.id_to_piece(test_token_id))) > 1
+    # 4. Save the fully configured tokenizer
+    print(f"Saving configured tokenizer to: {output_dir}")
+    hf_tokenizer.save_pretrained(output_dir)
+    print("Conversion complete.")
+    print(f"  BOS: '{bos_token}' (ID: {bos_id})")
+    print(f"  EOS: '{eos_token}' (ID: {eos_id})")
+    print(f"  UNK: '{unk_token}' (ID: {unk_id})")
+    print(f"  PAD: '{pad_token}' (ID: {pad_id})")
+
+    return bos_id, eos_id, pad_id, unk_id
 
 
 @contextmanager
@@ -73,10 +87,3 @@ def _create_tokenizer_directory(tokenizer_model_path: str) -> Iterable[str]:
     with tempfile.TemporaryDirectory() as temp_dir:
         shutil.copy(tokenizer_model_path, f"{temp_dir}/tokenizer.model")
         yield temp_dir
-
-
-def _dummy_special_tokens() -> tuple[dict[str, str], dict[str, int]]:
-    return (
-        {"bos_token": None, "eos_token": None, "pad_token": None, "unk_token": None},
-        {"bos_token_id": None, "eos_token_id": None, "pad_token_id": None, "unk_token_id": None},
-    )
