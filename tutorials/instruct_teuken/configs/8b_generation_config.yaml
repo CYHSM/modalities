@@ -4,7 +4,7 @@ settings:
     target_key: target_ids
     prediction_key: logits
   model_path: /raid/s3/opengptx/mfrey/3.73T-Tokens/eid_2025-04-29__13-48-21_fed2a6d3-model-seen_steps_445500-seen_tokens_3737124864000-target_steps_447337-target_tokens_3752534736896.bin
-  device: 0
+  device: 7
   sequence_length: 1024
   step_profile:
     gradient_accumulation_steps: 1

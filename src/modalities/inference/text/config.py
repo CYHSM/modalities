@@ -18,7 +18,7 @@ class TextInferenceComponentConfig(BaseModel):
     temperature: Optional[float] = 1.0
     eod_token: Optional[str] = "<eod>"
     device: PydanticPytorchDeviceType
-    system_prompt_path: str
+    system_prompt_path: Optional[str] = ""
     chat_template: str
     prompt_template: str
 
