@@ -27,10 +27,8 @@ text_inference_component:
     sequence_length: ${settings.sequence_length}
     eod_token: <|endoftext|>
     prompt_template: "{prompt_input}" # "<instruction> Du bist Moody, ein LLM welches Menschen helfen soll. user: {prompt_input}"
-
     system_prompt_path: "/home/markus_frey/Github/modalities/tutorials/instruct_teuken/configs/system_prompt.txt"
     chat_template: "System:\n{system_prompt}\nUser:{user_prompt}\nAssistant:\n"
-
     temperature: 1
     # chat: false
 
