@@ -46,7 +46,6 @@ def parse_args():
     parser.add_argument("--eval-batch-size", type=int, default=16, help="Evaluation batch size")
 
     # Environment arguments
-    parser.add_argument("--cuda-devices", default="6", help="CUDA visible devices")
     parser.add_argument("--hf-home", default="/raid/s3/opengptx/mfrey/huggingface", help="HF cache dir")
 
     # WandB arguments
@@ -97,7 +96,6 @@ def create_config_from_args(args) -> Config:
         training=training_config,
         evaluation=eval_config,
         wandb=wandb_config,
-        cuda_visible_devices=args.cuda_devices,
         hf_home=args.hf_home,
     )
 

@@ -11,7 +11,6 @@ import wandb
 from model_utils import generate_response
 
 from config import EvaluationConfig
-from data import GSM8K_SAMPLES, MATH_SAMPLES
 
 logger = logging.getLogger(__name__)
 
@@ -140,10 +139,6 @@ def manual_evaluation(
     temperature: float = 0.7,
     num_samples: int = 5,
 ) -> Dict[str, Any]:
-    """Run manual evaluation with sample problems."""
-    if test_problems is None:
-        test_problems = GSM8K_SAMPLES + MATH_SAMPLES
-
     # Limit to num_samples
     test_problems = test_problems[:num_samples]
 

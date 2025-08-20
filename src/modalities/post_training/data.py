@@ -27,11 +27,25 @@ def format_metamath(example: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def format_openmathinstruct2(example: Dict[str, Any]) -> Dict[str, Any]:
+    """Format OpenMathInstruct-2 dataset to chat format with instruction template."""
+    instruction = "Solve the following math problem. Explain your reasoning and put the final answer in \\boxed{}."
+    formatted_problem = f"{instruction}\n\n{example['problem']}"
+
+    return {
+        "messages": [
+            {"role": "user", "content": formatted_problem},
+            {"role": "assistant", "content": example["generated_solution"]},
+        ]
+    }
+
+
 def format_dataset(dataset_name: str, example: Dict[str, Any]) -> Dict[str, Any]:
     """Format dataset based on its name/type."""
     formatters = {
         "tatsu-lab/alpaca": format_alpaca,
         "meta-math/MetaMathQA": format_metamath,
+        "nvidia/OpenMathInstruct-2": format_openmathinstruct2,
     }
 
     formatter = formatters.get(dataset_name)

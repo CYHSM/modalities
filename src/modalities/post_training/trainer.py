@@ -2,12 +2,12 @@
 import logging
 import os
 
+from evaluation import AsyncEvaluator
+from model_utils import save_model_with_custom_code
 from transformers import TrainerCallback
 from trl import SFTConfig, SFTTrainer
 
-from .config import EvaluationConfig, TrainingConfig
-from .evaluation import AsyncEvaluator
-from .model_utils import save_model_with_custom_code
+from config import EvaluationConfig, TrainingConfig
 
 logger = logging.getLogger(__name__)
 

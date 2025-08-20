@@ -46,9 +46,9 @@ class TrainingConfig:
     per_device_train_batch_size: int = 1
     per_device_eval_batch_size: int = 1
     gradient_accumulation_steps: int = 4
-    learning_rate: float = 1e-5
+    learning_rate: float = 3e-5
     weight_decay: float = 0.01
-    warmup_ratio: float = 0.1
+    warmup_ratio: float = 0.01
     logging_steps: int = 10
     save_steps: int = 1000
     eval_steps: int = 1000
@@ -64,12 +64,12 @@ class TrainingConfig:
 class EvaluationConfig:
     """Evaluation configuration."""
 
-    gpu_id: int = 6
+    gpu_id: int = 7
     max_samples: int = 500
     max_workers: int = 2
-    tasks: str = "leaderboard|hellaswag|0|1,leaderboard|gsm8k|0|1"
+    tasks: str = "leaderboard|hellaswag|10|1,leaderboard|gsm8k|8|1"
     batch_size: int = 16
-    timeout: int = 300  # seconds
+    timeout: int = 3600
 
 
 @dataclass
@@ -91,10 +91,7 @@ class Config:
     training: TrainingConfig
     evaluation: EvaluationConfig
     wandb: WandBConfig
-    cuda_visible_devices: str = "6"
     hf_home: str = "/raid/s3/opengptx/mfrey/huggingface"
 
     def setup_environment(self):
-        """Set up environment variables."""
-        os.environ["CUDA_VISIBLE_DEVICES"] = self.cuda_visible_devices
         os.environ["HF_HOME"] = self.hf_home
