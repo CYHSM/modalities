@@ -196,13 +196,13 @@ class AsyncEvaluator:
     def submit_evaluation(self, checkpoint_path: str, step: int):
         """Submit an evaluation job."""
 
-        def eval_and_log():
-            results = run_lighteval_cli(checkpoint_path, step, self.eval_config, self.hf_home)
+        def eval_and_log(eval_step, eval_checkpoint_path):
+            results = run_lighteval_cli(eval_checkpoint_path, eval_step, self.eval_config, self.hf_home)
             if results:
-                return parse_and_log_results(results, step)
+                return parse_and_log_results(results, eval_step)
             return {}
 
-        future = self.executor.submit(eval_and_log)
+        future = self.executor.submit(eval_and_log, step, checkpoint_path)  # Pass explicitly
         self.futures.append((future, step))
 
         # Clean up completed futures
