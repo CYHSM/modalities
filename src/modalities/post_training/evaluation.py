@@ -15,6 +15,15 @@ from config import EvaluationConfig
 logger = logging.getLogger(__name__)
 
 
+def setup_wandb_metrics():
+    """Setup WandB metrics to allow out-of-order logging for evaluation metrics."""
+    if wandb.run is not None:
+        # Define evaluation metrics with step_metric to allow out-of-order logging
+        wandb.define_metric("eval/*", step_metric="eval_step")
+        wandb.define_metric("eval_step")
+        logger.info("✅ WandB metrics configured for out-of-order evaluation logging")
+
+
 def run_lighteval_cli(
     checkpoint_path: str, step: int, eval_config: EvaluationConfig, hf_home: str = "/raid/s3/opengptx/mfrey/huggingface"
 ) -> Optional[Dict[str, Any]]:
@@ -25,12 +34,7 @@ def run_lighteval_cli(
         checkpoint_dir = Path(checkpoint_path)
 
         # Define the argument strings
-        model_args = (
-            f"model_name={checkpoint_path},"
-            f"use_chat_template=True,"
-            f"trust_remote_code=True,"
-            f"batch_size={eval_config.batch_size}"
-        )
+        model_args = f"model_name={checkpoint_path}," f"use_chat_template=True," f"trust_remote_code=True,"
 
         # Construct the full command
         cmd_string = (
@@ -97,7 +101,6 @@ def parse_and_log_results(eval_results: Dict[str, Any], step: int) -> Dict[str, 
         return {}
 
     results_to_log = {}
-
     # Parse individual task results
     for task_name, metrics in eval_results["results"].items():
         if task_name == "all":  # Skip the aggregated results
@@ -105,26 +108,20 @@ def parse_and_log_results(eval_results: Dict[str, Any], step: int) -> Dict[str, 
 
         # Clean up task name for logging
         clean_task_name = task_name.replace("leaderboard|", "").split("|")[0]
-
         for metric_name, value in metrics.items():
-            if not metric_name.endswith("_stderr"):  # Skip stderr metrics
-                log_key = f"eval/{clean_task_name}_{metric_name}"
-                results_to_log[log_key] = value
+            log_key = f"eval/{clean_task_name}_{metric_name}"
+            results_to_log[log_key] = value
 
-    # Also log some metadata
-    if "config_general" in eval_results:
-        config = eval_results["config_general"]
-        if "total_evaluation_time_secondes" in config:
-            results_to_log["eval/evaluation_time_seconds"] = float(config["total_evaluation_time_secondes"])
-        if "model_size" in config:
-            results_to_log["eval/model_size"] = config["model_size"]
-
-    # Log to WandB if available
+    # Log to WandB if available - include eval_step for out-of-order logging
     if results_to_log and wandb.run is not None:
-        wandb.log(results_to_log, step=step)
-        logger.info(f"📊 Logged {len(results_to_log)} metrics to WandB for step {step}")
+        # Add the eval_step to the metrics
+        results_to_log["eval_step"] = step
+        # Log without specifying step parameter!
+        wandb.log(results_to_log)
+        logger.info(f"📊 Logged {len(results_to_log)} metrics to WandB for eval_step {step}")
         for key, value in results_to_log.items():
-            logger.info(f"  {key}: {value}")
+            if key != "eval_step":
+                logger.info(f"  {key}: {value}")
     else:
         logger.warning(f"❌ No metrics to log for step {step}")
 
@@ -192,6 +189,9 @@ class AsyncEvaluator:
         self.hf_home = hf_home
         self.executor = ThreadPoolExecutor(max_workers=eval_config.max_workers)
         self.futures = []
+
+        # Setup WandB metrics when evaluator is created
+        setup_wandb_metrics()
 
     def submit_evaluation(self, checkpoint_path: str, step: int):
         """Submit an evaluation job."""

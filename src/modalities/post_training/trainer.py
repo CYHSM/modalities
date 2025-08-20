@@ -13,12 +13,23 @@ logger = logging.getLogger(__name__)
 
 
 class EvalCallback(TrainerCallback):
-    """Callback to trigger async LightEval CLI on checkpoint saves."""
+    """Callback to trigger async LightEval CLI on checkpoint saves and at training start."""
 
-    def __init__(self, eval_config: EvaluationConfig, hf_home: str = "/raid/s3/opengptx/mfrey/huggingface"):
+    def __init__(
+        self,
+        eval_config: EvaluationConfig,
+        source_model_path: str,
+        hf_home: str = "/raid/s3/opengptx/mfrey/huggingface",
+    ):
         self.eval_config = eval_config
+        self.source_model_path = source_model_path
         self.hf_home = hf_home
         self.evaluator = AsyncEvaluator(eval_config, hf_home)
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Run initial evaluation on the base model at step 0."""
+        logger.info("🔍 Running initial evaluation on base model at step 0...")
+        self.evaluator.submit_evaluation(self.source_model_path, step=0)
 
     def on_save(self, args, state, control, **kwargs):
         """Trigger evaluation when checkpoint is saved."""
@@ -98,7 +109,7 @@ def setup_trainer(
     sft_config = create_sft_config(training_config)
 
     # Create callbacks
-    callbacks = [EvalCallback(eval_config, hf_home)]
+    callbacks = [EvalCallback(eval_config, source_model_path, hf_home)]
 
     # Create trainer
     trainer = CustomSFTTrainer(

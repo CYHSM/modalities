@@ -65,10 +65,9 @@ class EvaluationConfig:
     """Evaluation configuration."""
 
     gpu_id: int = 7
-    max_samples: int = 500
-    max_workers: int = 2
+    max_samples: int = 100
+    max_workers: int = 1
     tasks: str = "leaderboard|hellaswag|10|1,leaderboard|gsm8k|8|1"
-    batch_size: int = 16
     timeout: int = 3600
 
 

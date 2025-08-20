@@ -5,7 +5,6 @@ import logging
 import sys
 
 import wandb
-from evaluation import parse_and_log_results, run_lighteval_cli
 from model_utils import get_model_info, load_model_and_tokenizer
 from trainer import setup_trainer
 
@@ -43,8 +42,7 @@ def parse_args():
 
     # Evaluation arguments
     parser.add_argument("--eval-gpu", type=int, default=7, help="GPU for evaluation")
-    parser.add_argument("--eval-samples", type=int, default=500, help="Max samples for evaluation")
-    parser.add_argument("--eval-batch-size", type=int, default=16, help="Evaluation batch size")
+    parser.add_argument("--eval-samples", type=int, default=100, help="Max samples for evaluation")
 
     # Environment arguments
     parser.add_argument("--hf-home", default="/raid/s3/opengptx/mfrey/huggingface", help="HF cache dir")
@@ -87,7 +85,7 @@ def create_config_from_args(args) -> Config:
         report_to="wandb" if not args.no_wandb else "none",
     )
 
-    eval_config = EvaluationConfig(gpu_id=args.eval_gpu, max_samples=args.eval_samples, batch_size=args.eval_batch_size)
+    eval_config = EvaluationConfig(gpu_id=args.eval_gpu, max_samples=args.eval_samples)
 
     wandb_config = WandBConfig(project=args.wandb_project, name=args.wandb_name, tags=args.wandb_tags)
 
@@ -127,7 +125,7 @@ def main():
     """Main training function."""
     args = parse_args()
     config = create_config_from_args(args)
-    print(config.evaluation)
+    print(config)
 
     # Setup environment
     config.setup_environment()
@@ -169,20 +167,6 @@ def main():
         if args.dry_run:
             logger.info("Dry run completed successfully")
             return
-
-        if not args.no_eval:
-            logger.info("🔍 Running initial evaluation on base model...")
-            initial_results = run_lighteval_cli(
-                checkpoint_path=config.model.model_path,
-                step=0,
-                eval_config=config.evaluation,
-                hf_home=config.hf_home,
-            )
-            if initial_results:
-                parse_and_log_results(initial_results, step=0)
-                logger.info("✅ Initial evaluation completed")
-            else:
-                logger.warning("⚠️ Initial evaluation failed")
 
         # Setup trainer
         logger.info("Setting up trainer...")
