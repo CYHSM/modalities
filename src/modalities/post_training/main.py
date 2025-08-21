@@ -35,10 +35,10 @@ def parse_args():
     parser.add_argument("--num-epochs", type=int, default=1, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=1, help="Per-device batch size")
     parser.add_argument("--grad-accum", type=int, default=4, help="Gradient accumulation steps")
-    parser.add_argument("--learning-rate", type=float, default=1e-5, help="Learning rate")
+    parser.add_argument("--learning-rate", type=float, default=3e-5, help="Learning rate")
     parser.add_argument("--save-steps", type=int, default=1000, help="Save checkpoint every N steps")
     parser.add_argument("--eval-steps", type=int, default=1000, help="Evaluate every N steps")
-    parser.add_argument("--logging-steps", type=int, default=10, help="Log every N steps")
+    parser.add_argument("--logging-steps", type=int, default=100, help="Log every N steps")
 
     # Evaluation arguments
     parser.add_argument("--eval-gpu", type=int, default=7, help="GPU for evaluation")
@@ -163,6 +163,9 @@ def main():
             config.data.seed,
             config.data.max_length,
         )
+
+        print("Testing dataset format:")
+        print(tokenizer.apply_chat_template(dataset["train"][0]["messages"], tokenize=False))
 
         if args.dry_run:
             logger.info("Dry run completed successfully")

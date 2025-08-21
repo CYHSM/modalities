@@ -90,6 +90,8 @@ def create_sft_config(training_config: TrainingConfig) -> SFTConfig:
         fp16=training_config.fp16,
         bf16=training_config.bf16,
         push_to_hub=training_config.push_to_hub,
+        use_liger_kernel=True,
+        packing=True,
     )
 
 
