@@ -1,0 +1,46 @@
+{
+  "top_changed_layers": [
+    [
+      20,
+      3.5539106889204546
+    ],
+    [
+      17,
+      3.5225941051136362
+    ],
+    [
+      19,
+      3.5220170454545454
+    ],
+    [
+      21,
+      3.519131747159091
+    ],
+    [
+      18,
+      3.5055486505681817
+    ]
+  ],
+  "top_changed_components": [
+    [
+      "mlp",
+      7.6259765625
+    ],
+    [
+      "attention",
+      2.0195732017358146
+    ],
+    [
+      "norm",
+      0.017708995125510475
+    ]
+  ],
+  "vocabulary_changes": [],
+  "recommendations": [
+    "Focus analysis on mlp components as they show the highest changes",
+    "Layers 20, 17, 19 show the most adaptation during fine-tuning"
+  ],
+  "key_findings": [
+    "Layer 20 changed most, layer 18 changed least"
+  ]
+}

@@ -92,6 +92,7 @@ def create_sft_config(training_config: TrainingConfig) -> SFTConfig:
         push_to_hub=training_config.push_to_hub,
         use_liger_kernel=True,
         packing=True,
+        completion_only_loss=False,
     )
 
 

@@ -39,6 +39,7 @@ def parse_args():
     parser.add_argument("--save-steps", type=int, default=1000, help="Save checkpoint every N steps")
     parser.add_argument("--eval-steps", type=int, default=1000, help="Evaluate every N steps")
     parser.add_argument("--logging-steps", type=int, default=100, help="Log every N steps")
+    parser.add_argument("--warmup-ratio", type=float, default=0.01, help="Warmup ratio for learning rate scheduler")
 
     # Evaluation arguments
     parser.add_argument("--eval-gpu", type=int, default=7, help="GPU for evaluation")
@@ -78,6 +79,7 @@ def create_config_from_args(args) -> Config:
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
+        warmup_ratio=args.warmup_ratio,
         learning_rate=args.learning_rate,
         save_steps=args.save_steps,
         eval_steps=args.eval_steps,
@@ -163,7 +165,9 @@ def main():
             config.data.seed,
             config.data.max_length,
         )
-
+        logger.info(
+            f"Dataset loaded with {len(dataset['train'])} training samples and {len(dataset['test'])} test samples"
+        )
         print("Testing dataset format:")
         print(tokenizer.apply_chat_template(dataset["train"][0]["messages"], tokenize=False))
 

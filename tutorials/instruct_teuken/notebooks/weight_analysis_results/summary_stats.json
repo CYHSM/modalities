@@ -1,0 +1,17 @@
+{
+  "total_parameters": 6979854336,
+  "total_parameter_groups": 354,
+  "l2_change_stats": {
+    "mean": 3.1667248542699435,
+    "std": 3.0984882950840134,
+    "min": 0.0,
+    "max": 8.8125,
+    "total": 1121.02059841156
+  },
+  "relative_change_stats": {
+    "mean": 1.4382244591827447,
+    "std": 1.7059971216711458,
+    "min": 0.0,
+    "max": 16.5
+  }
+}
