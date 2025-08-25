@@ -23,6 +23,7 @@ def parse_args():
     # Model arguments
     parser.add_argument("--model-path", required=True, help="Path to the base model")
     parser.add_argument("--torch-dtype", default="bfloat16", choices=["float16", "bfloat16", "float32"])
+    parser.add_argument("--trainable-layers", help="Layers to train: '20' or 'last_5' or '18,19,20'")
 
     # Data arguments
     parser.add_argument("--dataset", default="meta-math/MetaMathQA", help="Dataset name")
@@ -64,7 +65,15 @@ def parse_args():
 
 def create_config_from_args(args) -> Config:
     """Create configuration from command line arguments."""
-    model_config = ModelConfig(model_path=args.model_path, torch_dtype=args.torch_dtype)
+    trainable_layers = None
+    if args.trainable_layers:
+        if args.trainable_layers == "all" or args.trainable_layers.startswith("last_"):
+            trainable_layers = args.trainable_layers
+        else:
+            trainable_layers = [int(x.strip()) for x in args.trainable_layers.split(",")]
+    model_config = ModelConfig(
+        model_path=args.model_path, torch_dtype=args.torch_dtype, trainable_layers=trainable_layers
+    )
 
     data_config = DataConfig(
         dataset_name=args.dataset,
@@ -148,6 +157,7 @@ def main():
             torch_dtype=config.model.get_torch_dtype(),
             trust_remote_code=config.model.trust_remote_code,
             device_map=config.model.device_map,
+            trainable_layers=config.model.trainable_layers,
         )
 
         # Log model info

@@ -1,7 +1,7 @@
 """Configuration classes and default settings."""
 import os
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import torch
 
@@ -15,6 +15,7 @@ class ModelConfig:
     torch_dtype: str = "bfloat16"
     trust_remote_code: bool = True
     device_map: str = "auto"
+    trainable_layers: Optional[Union[List[int], str]] = None
 
     def get_torch_dtype(self):
         """Convert string to torch dtype."""

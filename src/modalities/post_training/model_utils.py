@@ -11,12 +11,56 @@ from trl import setup_chat_format
 logger = logging.getLogger(__name__)
 
 
+def freeze_model_layers(model, trainable_layers):
+    """Freeze all layers except specified ones."""
+    if trainable_layers is None:
+        return
+
+    total_layers = len(model.model.layers)
+    logger.info(f"Model has {total_layers} layers")
+
+    # Parse trainable layers
+    if trainable_layers == "all":
+        return  # Don't freeze anything
+    elif isinstance(trainable_layers, str) and trainable_layers.startswith("last_"):
+        n = int(trainable_layers.split("_")[1])
+        trainable_indices = list(range(total_layers - n, total_layers))
+    else:
+        trainable_indices = trainable_layers if isinstance(trainable_layers, list) else [trainable_layers]
+
+    # Freeze all parameters first
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # Unfreeze specified layers
+    for i in trainable_indices:
+        for param in model.model.layers[i].parameters():
+            param.requires_grad = True
+
+    # Always keep LM head trainable
+    if hasattr(model, "lm_head"):
+        for param in model.lm_head.parameters():
+            param.requires_grad = True
+
+    # also embedding
+    # if hasattr(model.model, 'embed_tokens'):
+    #     for param in model.model.embed_tokens.parameters():
+    #         param.requires_grad = True
+
+    # Log stats
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    logger.info(f"Trainable layers: {trainable_indices}")
+    logger.info(f"Trainable params: {trainable_params:,} ({trainable_params/total_params*100:.1f}%)")
+
+
 def load_model_and_tokenizer(
     model_path: str,
     device: str = "cuda",
     torch_dtype: torch.dtype = torch.bfloat16,
     trust_remote_code: bool = True,
     device_map: str = "auto",
+    trainable_layers=None,
 ):
     """Load model and tokenizer with chat format setup."""
     logger.info(f"Loading model from: {model_path}")
@@ -33,6 +77,9 @@ def load_model_and_tokenizer(
     else:
         logger.info("Setting up chat format")
         model, tokenizer = setup_chat_format(model, tokenizer)
+
+    if trainable_layers is not None:
+        freeze_model_layers(model, trainable_layers)
 
     logger.info(f"Model loaded successfully. Device: {model.device}")
     return model, tokenizer
