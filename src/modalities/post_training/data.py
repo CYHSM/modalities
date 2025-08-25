@@ -100,3 +100,50 @@ def load_and_format_dataset(
         ds = {"train": ds, "test": None}
         logger.info(f"Using full dataset for training: {len(ds['train'])} samples")
     return ds
+
+
+def format_openmathinstruct2_grpo(example: Dict[str, Any]) -> Dict[str, Any]:
+    """Format OpenMathInstruct-2 dataset for GRPO training."""
+    instruction = "Solve the following math problem. Explain your reasoning and put the final answer in \\boxed{}."
+    formatted_problem = f"{instruction}\n\n{example['problem']}"
+
+    return {
+        "prompt": formatted_problem,
+        "expected_answer": example.get("expected_answer", ""),
+        # Keep original solution for reference if needed
+        "reference_solution": example.get("generated_solution", ""),
+    }
+
+
+def load_grpo_dataset(
+    dataset_name: str, dataset_split: str = "train", test_size: float = 0.01, seed: int = 42, max_samples: int = None
+):
+    """Load and format dataset for GRPO training."""
+    logger.info(f"Loading dataset for GRPO: {dataset_name}")
+
+    # Load dataset
+    ds = load_dataset(dataset_name, split=dataset_split)
+
+    # Limit samples if specified (useful for testing)
+    if max_samples:
+        ds = ds.select(range(min(max_samples, len(ds))))
+
+    # Format for GRPO - only keep prompt and expected_answer
+    if dataset_name == "nvidia/OpenMathInstruct-2":
+        ds = ds.map(format_openmathinstruct2_grpo)
+        # Remove columns not needed for GRPO
+        columns_to_keep = ["prompt", "expected_answer"]
+        columns_to_remove = [col for col in ds.column_names if col not in columns_to_keep]
+        ds = ds.remove_columns(columns_to_remove)
+    else:
+        raise ValueError(f"GRPO formatting not implemented for {dataset_name}")
+
+    # Split dataset
+    if test_size > 0:
+        ds = ds.train_test_split(test_size=test_size, seed=seed)
+        logger.info(f"Split dataset - Train: {len(ds['train'])}, Test: {len(ds['test'])}")
+    else:
+        ds = {"train": ds, "test": None}
+        logger.info(f"Using full dataset for training: {len(ds['train'])} samples")
+
+    return ds
