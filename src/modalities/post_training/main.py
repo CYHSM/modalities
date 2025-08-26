@@ -102,6 +102,7 @@ def create_config_from_args(args) -> Config:
     if lora_target_modules is None:
         # Default to all linear layers for maximum adaptation
         lora_target_modules = [
+            "embed_tokens",
             "q_proj",
             "k_proj",
             "v_proj",
