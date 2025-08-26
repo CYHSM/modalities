@@ -366,6 +366,8 @@ def create_grpo_config(
         vllm_mode="server" if use_vllm else None,
         vllm_server_host=vllm_server_host or "localhost",
         vllm_server_port=vllm_server_port,
+        dataloader_num_workers=8,
+        dataloader_pin_memory=True,
     )
 
     if use_vllm:
