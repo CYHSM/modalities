@@ -7,6 +7,49 @@ import torch
 
 
 @dataclass
+class LoRAConfig:
+    """LoRA configuration for parameter-efficient fine-tuning."""
+
+    # Enable LoRA
+    use_lora: bool = False
+
+    # LoRA rank - higher for better performance (64-128 for full-FT comparable results)
+    lora_r: int = 128
+
+    # LoRA alpha - typically 2x rank for aggressive adaptation
+    lora_alpha: int = 256
+
+    # LoRA dropout for regularization
+    lora_dropout: float = 0.05
+
+    # Target modules - targeting all linear layers for maximum adaptation
+    target_modules: List[str] = field(
+        default_factory=lambda: [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",  # Attention layers
+            "gate_proj",
+            "up_proj",
+            "down_proj",  # MLP layers
+            "lm_head",  # Output head
+        ]
+    )
+
+    # LoRA bias - can help with performance
+    bias: str = "none"  # Options: "none", "all", "lora_only"
+
+    # Task type
+    task_type: str = "CAUSAL_LM"
+
+    # Use DoRA (Weight-Decomposed Low-Rank Adaptation) - can improve performance
+    use_dora: bool = False
+
+    # Use RSLoRA (Rank-Stabilized LoRA) - helps with higher ranks
+    use_rslora: bool = True
+
+
+@dataclass
 class ModelConfig:
     """Model configuration."""
 
@@ -16,6 +59,7 @@ class ModelConfig:
     trust_remote_code: bool = True
     device_map: str = "auto"
     trainable_layers: Optional[Union[List[int], str]] = None
+    lora: LoRAConfig = field(default_factory=LoRAConfig)
 
     def get_torch_dtype(self):
         """Convert string to torch dtype."""
@@ -31,7 +75,7 @@ class ModelConfig:
 class DataConfig:
     """Dataset configuration."""
 
-    dataset_name: str = "meta-math/MetaMathQA"
+    dataset_name: str = "nvidia/OpenMathInstruct-2"
     dataset_split: str = "train"
     test_size: float = 0.01
     seed: int = 42
@@ -54,7 +98,7 @@ class TrainingConfig:
     save_steps: int = 1000
     eval_steps: int = 1000
     save_total_limit: int = 3
-    gradient_checkpointing: bool = True
+    gradient_checkpointing: bool = False
     fp16: bool = False
     bf16: bool = True
     push_to_hub: bool = False

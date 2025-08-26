@@ -1,7 +1,8 @@
 """GRPO trainer implementation with separate GPU for inference."""
 import logging
 import re
-from typing import List
+from fractions import Fraction
+from typing import List, Union
 
 from evaluation import AsyncEvaluator
 from model_utils import save_model_with_custom_code
@@ -16,20 +17,226 @@ logger = logging.getLogger(__name__)
 def extract_boxed_answer(text: str) -> str:
     """Extract answer from \\boxed{} format."""
     match = re.search(r"\\boxed\{([^}]+)\}", text)
-    return match.group(1) if match else ""
+    return match.group(1).strip() if match else ""
+
+
+def normalize_math_expression(expr: str) -> str:
+    """Normalize mathematical expressions for comparison."""
+    if not expr:
+        return ""
+
+    # Remove whitespace and convert to lowercase
+    expr = expr.replace(" ", "").lower()
+
+    # Handle common mathematical notation
+    expr = expr.replace("\\cdot", "*")
+    expr = expr.replace("\\times", "*")
+    expr = expr.replace("\\frac", "")
+    expr = expr.replace("{", "").replace("}", "")
+    expr = expr.replace("\\", "")
+
+    return expr
+
+
+def try_parse_number(text: str) -> Union[float, Fraction, None]:
+    """Try to parse text as a number, fraction, or mathematical expression."""
+    if not text:
+        return None
+
+    # Clean up the text
+    text = normalize_math_expression(text)
+
+    # Try direct float conversion
+    try:
+        return float(text)
+    except ValueError:
+        pass
+
+    # Try fraction conversion
+    try:
+        return float(Fraction(text))
+    except (ValueError, ZeroDivisionError):
+        pass
+
+    # Try parsing fractions in different formats
+    fraction_patterns = [
+        r"^(\d+)/(\d+)$",  # Simple fraction like 3/4
+        r"^(\d+)\\div(\d+)$",  # Division notation
+        r"^(\d+)\s*over\s*(\d+)$",  # "over" notation
+    ]
+
+    for pattern in fraction_patterns:
+        match = re.match(pattern, text)
+        if match:
+            try:
+                num, den = float(match.group(1)), float(match.group(2))
+                if den != 0:
+                    return num / den
+            except ValueError:
+                continue
+
+    return None
+
+
+def calculate_numerical_similarity(val1: float, val2: float, tolerance: float = 1e-6) -> float:
+    """Calculate similarity between two numerical values."""
+    if abs(val1 - val2) <= tolerance:
+        return 1.0
+
+    # Use relative error for large numbers, absolute error for small numbers
+    if max(abs(val1), abs(val2)) > 1:
+        relative_error = abs(val1 - val2) / max(abs(val1), abs(val2))
+        # Give partial credit based on how close we are
+        if relative_error < 0.01:  # Within 1%
+            return 0.8
+        elif relative_error < 0.05:  # Within 5%
+            return 0.6
+        elif relative_error < 0.1:  # Within 10%
+            return 0.4
+        elif relative_error < 0.2:  # Within 20%
+            return 0.2
+    else:
+        absolute_error = abs(val1 - val2)
+        if absolute_error < 0.01:
+            return 0.8
+        elif absolute_error < 0.05:
+            return 0.6
+        elif absolute_error < 0.1:
+            return 0.4
+        elif absolute_error < 0.2:
+            return 0.2
+
+    return 0.0
+
+
+def has_mathematical_reasoning(text: str) -> float:
+    """Check if the text shows mathematical reasoning and give partial credit."""
+    reasoning_indicators = [
+        "therefore",
+        "thus",
+        "hence",
+        "because",
+        "since",
+        "so",
+        "step",
+        "first",
+        "next",
+        "then",
+        "finally",
+        "calculate",
+        "compute",
+        "solve",
+        "find",
+        "substitute",
+        "simplify",
+        "factor",
+        "equation",
+        "formula",
+        "method",
+    ]
+
+    math_symbols = ["=", "+", "-", "*", "/", "^", "(", ")", "sqrt", "log"]
+
+    text_lower = text.lower()
+    reasoning_score = sum(1 for indicator in reasoning_indicators if indicator in text_lower)
+    math_score = sum(1 for symbol in math_symbols if symbol in text)
+
+    # Normalize scores (cap at reasonable values)
+    reasoning_score = min(reasoning_score / 3, 1.0)  # Max 1.0 for reasoning
+    math_score = min(math_score / 5, 1.0)  # Max 1.0 for math symbols
+
+    return (reasoning_score + math_score) / 2
 
 
 def math_reward_func(completions: List[str], expected_answer: List[str], **kwargs) -> List[float]:
     """
-    Reward function for math problems.
-    Returns 1.0 if the boxed answer matches expected, -0.5 otherwise.
+    Improved reward function for math problems with partial credit.
+
+    Reward structure:
+    - 1.0: Exact match (after normalization)
+    - 0.8-0.9: Very close numerically (within 1-5%)
+    - 0.4-0.6: Somewhat close numerically (within 10-20%)
+    - 0.1-0.3: Has boxed answer format but wrong + shows reasoning
+    - 0.05-0.15: Shows good mathematical reasoning but no boxed answer
+    - -0.2: Has boxed format but completely wrong
+    - -0.5: No boxed answer and no mathematical reasoning
     """
+    logger.debug(
+        f"Reward function called with {len(completions)} completions and {len(expected_answer)} expected answers"
+    )
+
+    if len(completions) != len(expected_answer):
+        logger.warning(f"Length mismatch: {len(completions)} completions vs {len(expected_answer)} expected answers")
+        # Use the first expected answer for all completions as fallback
+        expected_answer = [expected_answer[0]] * len(completions) if expected_answer else [""] * len(completions)
+
     rewards = []
-    for completion, expected in zip(completions, expected_answer):
+
+    for i, (completion, expected) in enumerate(zip(completions, expected_answer)):
+        reward = 0.0
         extracted = extract_boxed_answer(completion)
-        # Simple exact match - could be enhanced with numeric comparison
-        reward = 1.0 if extracted == expected else -0.5
+
+        # Base reward components
+        has_boxed = bool(extracted)
+        reasoning_score = has_mathematical_reasoning(completion)
+
+        if has_boxed and expected:
+            # Try exact string match first (after normalization)
+            if normalize_math_expression(extracted) == normalize_math_expression(expected):
+                reward = 1.0
+            else:
+                # Try numerical comparison
+                extracted_num = try_parse_number(extracted)
+                expected_num = try_parse_number(expected)
+
+                if extracted_num is not None and expected_num is not None:
+                    numerical_similarity = calculate_numerical_similarity(extracted_num, expected_num)
+                    if numerical_similarity > 0:
+                        # Boost reward if numerical match
+                        reward = max(0.9 * numerical_similarity, 0.4)
+                    else:
+                        # Wrong answer but has format
+                        reward = max(0.1 + 0.2 * reasoning_score, -0.2)
+                else:
+                    # Could not parse as numbers - give small credit for format + reasoning
+                    reward = max(0.05 + 0.25 * reasoning_score, -0.2)
+
+        elif has_boxed and not expected:
+            # Has boxed format but no expected answer to compare
+            reward = 0.3 + 0.2 * reasoning_score
+
+        elif not has_boxed and expected:
+            # No boxed format but shows reasoning
+            reasoning_reward = 0.15 * reasoning_score
+            # Check if the expected answer appears anywhere in the text
+            if expected.lower() in completion.lower():
+                reasoning_reward += 0.1
+            reward = max(reasoning_reward, -0.5)
+
+        else:
+            # No boxed format and no expected answer
+            reward = max(0.1 * reasoning_score, -0.5)
+
+        # Cap rewards to reasonable range
+        reward = max(-0.5, min(1.0, reward))
         rewards.append(reward)
+
+        # Log first few examples for debugging
+        if i < 3:
+            logger.debug(f"Sample {i}:")
+            logger.debug(f"  Extracted: '{extracted}'")
+            logger.debug(f"  Expected: '{expected}'")
+            logger.debug(f"  Has boxed: {has_boxed}")
+            logger.debug(f"  Reasoning score: {reasoning_score:.3f}")
+            logger.debug(f"  Final reward: {reward:.3f}")
+
+    # Log statistics
+    reward_mean = sum(rewards) / len(rewards)
+    reward_std = (sum((r - reward_mean) ** 2 for r in rewards) / len(rewards)) ** 0.5
+    logger.debug(
+        f"Reward statistics: mean={reward_mean:.3f}, std={reward_std:.3f}, min={min(rewards):.3f}, max={max(rewards):.3f}"  # noqa E501
+    )
+
     return rewards
 
 
@@ -108,11 +315,11 @@ def create_grpo_config(
         # GRPO specific settings
         num_generations=num_generations,
         max_completion_length=512,
-        temperature=0.7,
-        beta=0.0,  # No KL penalty by default (following recent practices)
+        temperature=0.8,
+        beta=0.001,  # No KL penalty by default (following recent practices)
         scale_rewards=False,
         log_completions=True,
-        num_completions_to_print=5,
+        num_completions_to_print=1,
         # vLLM settings
         use_vllm=use_vllm,
         vllm_mode="server" if use_vllm else None,

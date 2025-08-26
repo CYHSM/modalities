@@ -5,10 +5,28 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import torch
+from peft import LoraConfig, TaskType, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import setup_chat_format
 
+from config import LoRAConfig
+
 logger = logging.getLogger(__name__)
+
+
+def create_peft_config(lora_config: LoRAConfig) -> LoraConfig:
+    """Create PEFT LoRA configuration from our config."""
+    return LoraConfig(
+        task_type=TaskType.CAUSAL_LM,
+        inference_mode=False,
+        r=lora_config.lora_r,
+        lora_alpha=lora_config.lora_alpha,
+        lora_dropout=lora_config.lora_dropout,
+        target_modules=lora_config.target_modules,
+        bias=lora_config.bias,
+        use_dora=lora_config.use_dora,
+        use_rslora=lora_config.use_rslora,
+    )
 
 
 def freeze_model_layers(model, trainable_layers):
@@ -42,11 +60,6 @@ def freeze_model_layers(model, trainable_layers):
         for param in model.lm_head.parameters():
             param.requires_grad = True
 
-    # also embedding
-    # if hasattr(model.model, 'embed_tokens'):
-    #     for param in model.model.embed_tokens.parameters():
-    #         param.requires_grad = True
-
     # Log stats
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
@@ -61,13 +74,29 @@ def load_model_and_tokenizer(
     trust_remote_code: bool = True,
     device_map: str = "auto",
     trainable_layers=None,
+    lora_config: Optional[LoRAConfig] = None,
 ):
-    """Load model and tokenizer with chat format setup."""
+    """Load model and tokenizer with optional LoRA and chat format setup."""
     logger.info(f"Loading model from: {model_path}")
 
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path, trust_remote_code=trust_remote_code, device_map=device_map, torch_dtype=torch_dtype
-    )
+    # Try to load with flash attention, fallback to default if not available
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            trust_remote_code=trust_remote_code,
+            device_map=device_map,
+            torch_dtype=torch_dtype,
+            attn_implementation="flash_attention_2",
+        )
+        logger.info("Using Flash Attention 2")
+    except (ImportError, RuntimeError) as e:
+        logger.warning(f"Flash Attention 2 not available ({e}), using default attention")
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            trust_remote_code=trust_remote_code,
+            device_map=device_map,
+            torch_dtype=torch_dtype,
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
@@ -78,7 +107,25 @@ def load_model_and_tokenizer(
         logger.info("Setting up chat format")
         model, tokenizer = setup_chat_format(model, tokenizer)
 
-    if trainable_layers is not None:
+    # Apply LoRA if configured
+    if lora_config and lora_config.use_lora:
+        logger.info(f"Applying LoRA with rank {lora_config.lora_r}, alpha {lora_config.lora_alpha}")
+        logger.info(f"Target modules: {lora_config.target_modules}")
+
+        peft_config = create_peft_config(lora_config)
+        model = get_peft_model(model, peft_config)
+
+        # Print trainable parameters info
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in model.parameters())
+        logger.info(f"LoRA trainable params: {trainable_params:,}")
+        logger.info(f"LoRA trainable %: {trainable_params/total_params*100:.2f}%")
+
+        # Print the model to see LoRA structure
+        model.print_trainable_parameters()
+
+    elif trainable_layers is not None:
+        # Apply layer freezing if not using LoRA
         freeze_model_layers(model, trainable_layers)
 
     logger.info(f"Model loaded successfully. Device: {model.device}")
@@ -90,7 +137,7 @@ def save_model_with_custom_code(model, save_path: str, source_model_path: str):
     save_path = Path(save_path)
     source_path = Path(source_model_path)
 
-    # Save the model
+    # Save the model (handles both regular and PEFT models)
     if hasattr(model, "save_pretrained"):
         model.save_pretrained(save_path)
         logger.info(f"Model saved to: {save_path}")
@@ -207,7 +254,7 @@ def estimate_model_size(model) -> str:
 
 def get_model_info(model, tokenizer) -> Dict[str, Any]:
     """Get comprehensive model information."""
-    return {
+    info = {
         "model_size": estimate_model_size(model),
         "vocab_size": tokenizer.vocab_size,
         "model_type": model.config.model_type if hasattr(model, "config") else "unknown",
@@ -216,3 +263,18 @@ def get_model_info(model, tokenizer) -> Dict[str, Any]:
         "num_parameters": sum(p.numel() for p in model.parameters()),
         "num_trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
     }
+
+    # Add LoRA specific info if it's a PEFT model
+    if hasattr(model, "peft_config"):
+        info["is_peft_model"] = True
+        peft_config = model.peft_config
+        if hasattr(peft_config, "default"):
+            config = peft_config["default"]
+            info["lora_r"] = config.r
+            info["lora_alpha"] = config.lora_alpha
+            info["lora_dropout"] = config.lora_dropout
+            info["target_modules"] = config.target_modules
+    else:
+        info["is_peft_model"] = False
+
+    return info

@@ -9,7 +9,7 @@ from grpo_trainer import setup_grpo_trainer
 from model_utils import get_model_info, load_model_and_tokenizer
 from trainer import setup_trainer
 
-from config import Config, DataConfig, EvaluationConfig, ModelConfig, TrainingConfig, WandBConfig
+from config import Config, DataConfig, EvaluationConfig, LoRAConfig, ModelConfig, TrainingConfig, WandBConfig
 from data import load_and_format_dataset, load_grpo_dataset
 
 # Setup logging
@@ -30,6 +30,18 @@ def parse_args():
     parser.add_argument("--model-path", required=True, help="Path to the base model")
     parser.add_argument("--torch-dtype", default="bfloat16", choices=["float16", "bfloat16", "float32"])
     parser.add_argument("--trainable-layers", help="Layers to train: '20' or 'last_5' or '18,19,20'")
+
+    # LoRA arguments
+    parser.add_argument("--use-lora", action="store_true", help="Use LoRA for parameter-efficient fine-tuning")
+    parser.add_argument("--lora-r", type=int, default=128, help="LoRA rank (default: 128 for full-FT performance)")
+    parser.add_argument("--lora-alpha", type=int, default=256, help="LoRA alpha (default: 256)")
+    parser.add_argument("--lora-dropout", type=float, default=0.05, help="LoRA dropout (default: 0.05)")
+    parser.add_argument(
+        "--lora-target-modules", nargs="+", default=None, help="LoRA target modules (default: all linear layers)"
+    )
+    parser.add_argument("--lora-bias", default="none", choices=["none", "all", "lora_only"], help="LoRA bias strategy")
+    parser.add_argument("--use-dora", action="store_true", help="Use DoRA (Weight-Decomposed LoRA)")
+    parser.add_argument("--use-rslora", action="store_true", default=True, help="Use RSLoRA (Rank-Stabilized LoRA)")
 
     # Data arguments
     parser.add_argument("--dataset", default="nvidia/OpenMathInstruct-2", help="Dataset name")
@@ -85,8 +97,34 @@ def create_config_from_args(args) -> Config:
         else:
             trainable_layers = [int(x.strip()) for x in args.trainable_layers.split(",")]
 
+    # Create LoRA config
+    lora_target_modules = args.lora_target_modules
+    if lora_target_modules is None:
+        # Default to all linear layers for maximum adaptation
+        lora_target_modules = [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",  # Attention layers
+            "gate_proj",
+            "up_proj",
+            "down_proj",  # MLP layers
+            "lm_head",  # Output head
+        ]
+
+    lora_config = LoRAConfig(
+        use_lora=args.use_lora,
+        lora_r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        target_modules=lora_target_modules,
+        bias=args.lora_bias,
+        use_dora=args.use_dora,
+        use_rslora=args.use_rslora,
+    )
+
     model_config = ModelConfig(
-        model_path=args.model_path, torch_dtype=args.torch_dtype, trainable_layers=trainable_layers
+        model_path=args.model_path, torch_dtype=args.torch_dtype, trainable_layers=trainable_layers, lora=lora_config
     )
 
     data_config = DataConfig(
@@ -96,6 +134,14 @@ def create_config_from_args(args) -> Config:
         max_length=args.max_length,
     )
 
+    # Adjust learning rate for LoRA if needed
+    learning_rate = args.learning_rate
+    if args.use_lora:
+        # LoRA can typically use higher learning rates
+        if learning_rate == 3e-5:  # If using default
+            learning_rate = 1e-4  # Increase for LoRA
+            logger.info(f"Using higher learning rate for LoRA: {learning_rate}")
+
     training_config = TrainingConfig(
         output_dir=args.output_dir,
         num_train_epochs=args.num_epochs,
@@ -103,7 +149,7 @@ def create_config_from_args(args) -> Config:
         per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
         warmup_ratio=args.warmup_ratio,
-        learning_rate=args.learning_rate,
+        learning_rate=learning_rate,
         save_steps=args.save_steps,
         eval_steps=args.eval_steps,
         logging_steps=args.logging_steps,
@@ -112,10 +158,14 @@ def create_config_from_args(args) -> Config:
 
     eval_config = EvaluationConfig(gpu_id=args.eval_gpu, max_samples=args.eval_samples)
 
+    wandb_tags = args.wandb_tags + [args.mode]
+    if args.use_lora:
+        wandb_tags.append("lora")
+
     wandb_config = WandBConfig(
         project=args.wandb_project,
-        name=args.wandb_name or f"{args.mode}-{args.dataset.split('/')[-1]}",
-        tags=args.wandb_tags + [args.mode],  # Add training mode as tag
+        name=args.wandb_name or f"{args.mode}-{args.dataset.split('/')[-1]}-{'lora' if args.use_lora else 'full'}",
+        tags=wandb_tags,
     )
 
     config = Config(
@@ -144,6 +194,7 @@ def setup_wandb(config: Config, mode: str):
                 "data": config.data.__dict__,
                 "training": config.training.__dict__,
                 "evaluation": config.evaluation.__dict__,
+                "lora": config.model.lora.__dict__,
             },
         )
         logger.info(f"WandB initialized: {wandb.run.name}")
@@ -163,6 +214,9 @@ def main():
     logger.info(f"Model: {config.model.model_path}")
     logger.info(f"Dataset: {config.data.dataset_name}")
     logger.info(f"Output: {config.training.output_dir}")
+    if args.use_lora:
+        logger.info(f"LoRA: r={args.lora_r}, alpha={args.lora_alpha}, dropout={args.lora_dropout}")
+        logger.info(f"LoRA targets: {config.model.lora.target_modules}")
 
     print(config)
     try:
@@ -177,6 +231,7 @@ def main():
             trust_remote_code=config.model.trust_remote_code,
             device_map=config.model.device_map,
             trainable_layers=config.model.trainable_layers,
+            lora_config=config.model.lora,
         )
 
         # Log model info
