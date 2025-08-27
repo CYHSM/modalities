@@ -44,7 +44,7 @@ class DataConfig:
     """Dataset configuration."""
 
     train_size: Optional[int] = None  # Limit training samples (for testing)
-    eval_size: int = 500  # Number of test samples for evaluation
+    eval_size: int = 25  # Number of test samples for evaluation
     seed: int = 42
 
 
@@ -56,7 +56,7 @@ class TrainingConfig:
     num_train_epochs: int = 1
     per_device_train_batch_size: int = 1
     gradient_accumulation_steps: int = 16  # Effective batch size = 16
-    learning_rate: float = 5e-5
+    learning_rate: float = 5e-6
     warmup_steps: int = 100
     logging_steps: int = 10
     save_steps: int = 500

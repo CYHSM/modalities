@@ -41,10 +41,10 @@ def parse_args():
 
     # Data arguments
     parser.add_argument("--train-size", type=int, help="Limit training samples")
-    parser.add_argument("--eval-size", type=int, default=500)
+    parser.add_argument("--eval-size", type=int, default=50)
 
     # Other arguments
-    parser.add_argument("--wandb-project", default="grpo-gsm8k")
+    parser.add_argument("--wandb-project", default="grpo-runs")
     parser.add_argument("--no-wandb", action="store_true")
 
     return parser.parse_args()
@@ -143,7 +143,7 @@ def main():
     if not args.no_wandb:
         wandb.init(
             project=args.wandb_project,
-            name=f"grpo-{strategy}-b{args.batch_size}x{args.grad_accum}",
+            name=f"grpo-{strategy}-b{args.batch_size}-g{args.num_generations}-lr{args.lr}-t{args.temperature}-lr{args.lora_r}-la{args.lora_alpha}",
             config=vars(args),
         )
 
