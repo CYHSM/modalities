@@ -91,12 +91,23 @@ def load_model_and_tokenizer(
         logger.info("Using Flash Attention 2")
     except (ImportError, RuntimeError) as e:
         logger.warning(f"Flash Attention 2 not available ({e}), using default attention")
-        model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            trust_remote_code=trust_remote_code,
-            device_map=device_map,
-            torch_dtype=torch_dtype,
-        )
+        try:
+            model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                trust_remote_code=trust_remote_code,
+                device_map=device_map,
+                torch_dtype=torch_dtype,
+                attn_implementation="sdpa",  # Use PyTorch's built-in optimized attention
+            )
+            logger.info("Using PyTorch built-in optimized attention (SDPA)")
+        except Exception as e:
+            logger.warning(f"SDPA not available ({e}), using default attention")
+            model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                trust_remote_code=trust_remote_code,
+                device_map=device_map,
+                torch_dtype=torch_dtype,
+            )
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 

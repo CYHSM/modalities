@@ -397,7 +397,8 @@ def create_grpo_config(
         gradient_checkpointing=training_config.gradient_checkpointing,
         bf16=training_config.bf16,
         # GRPO specific settings
-        # max_grad_norm=0.1,
+        max_grad_norm=1.0,
+        weight_decay=0.1,
         num_generations=num_generations,
         max_completion_length=512,
         temperature=0.7,

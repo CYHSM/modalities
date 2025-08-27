@@ -106,11 +106,11 @@ def create_config_from_args(args) -> Config:
             "q_proj",
             "k_proj",
             "v_proj",
-            "o_proj",  # Attention layers
+            "o_proj",
             "gate_proj",
             "up_proj",
-            "down_proj",  # MLP layers
-            "lm_head",  # Output head
+            "down_proj",
+            "lm_head",
         ]
 
     lora_config = LoRAConfig(
