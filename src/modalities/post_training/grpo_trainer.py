@@ -5,7 +5,6 @@ from fractions import Fraction
 from typing import Dict, List, Union
 
 from evaluation import AsyncEvaluator
-from model_utils import save_model_with_custom_code
 from transformers import TrainerCallback
 from trl import GRPOConfig, GRPOTrainer
 
@@ -281,6 +280,50 @@ def binary_math_reward_func(completions: List[str], expected_answer: List[str], 
     return rewards
 
 
+def math_length_reward(completions: List[str], expected_answer: List[str], **kwargs) -> List[float]:
+    """
+    Reward function similar to TRL's len_reward but for math problems.
+    - Correct answers get higher reward for being shorter
+    - Incorrect answers get penalized more for being longer
+    """
+    rewards = []
+    lengths = [len(comp.split()) for comp in completions]  # Word count
+    min_len = min(lengths) if lengths else 1
+    max_len = max(lengths) if lengths else 1
+
+    if len(expected_answer) == 1:
+        expected_answer = expected_answer * len(completions)
+
+    for completion, expected, length in zip(completions, expected_answer, lengths):
+        # Check correctness
+        extracted = extract_boxed_answer(completion)
+        is_correct = False
+        if extracted and expected:
+            extracted_norm = extracted.replace(" ", "").lower().replace(",", "")
+            expected_norm = expected.replace(" ", "").lower().replace(",", "")
+            is_correct = extracted_norm == expected_norm
+
+        # Length-based reward calculation
+        if max_len == min_len:
+            # All same length, just use correctness
+            reward = 1.0 if is_correct else 0.0
+        else:
+            # Length penalty/bonus
+            length_factor = 0.5 - (length - min_len) / (max_len - min_len)
+
+            if is_correct:
+                # Correct answers: reward decreases with length (0.5 to -0.5 range)
+                # But ensure positive reward for correct answers
+                reward = max(0.1, length_factor + 0.5)  # Range: 0.1 to 1.0
+            else:
+                # Incorrect answers: more penalty for longer responses
+                reward = min(0.0, length_factor)  # Range: -0.5 to 0.0
+
+        rewards.append(float(reward))
+
+    return rewards
+
+
 class GRPOEvalCallback(TrainerCallback):
     """Evaluation callback for GRPO training."""
 
@@ -298,7 +341,7 @@ class GRPOEvalCallback(TrainerCallback):
     def on_train_begin(self, args, state, control, **kwargs):
         """Run initial evaluation on base model."""
         logger.info("🔍 Running initial evaluation on base model...")
-        self.evaluator.submit_evaluation(self.source_model_path, step=0)
+        # self.evaluator.submit_evaluation(self.source_model_path, step=0)
 
     def on_save(self, args, state, control, **kwargs):
         """Trigger evaluation when checkpoint is saved."""
@@ -322,11 +365,11 @@ class CustomGRPOTrainer(GRPOTrainer):
         """Save model with custom code files."""
         super().save_model(output_dir, _internal_call)
 
-        if output_dir is None:
-            output_dir = self.args.output_dir
+        # if output_dir is None:
+        #     output_dir = self.args.output_dir
 
-        save_model_with_custom_code(self.model, output_dir, self.source_model_path)
-        logger.info(f"Model saved with custom code to: {output_dir}")
+        # save_model_with_custom_code(self.model, output_dir, self.source_model_path)
+        # logger.info(f"Model saved with custom code to: {output_dir}")
 
 
 def create_grpo_config(
@@ -354,6 +397,7 @@ def create_grpo_config(
         gradient_checkpointing=training_config.gradient_checkpointing,
         bf16=training_config.bf16,
         # GRPO specific settings
+        # max_grad_norm=0.1,
         num_generations=num_generations,
         max_completion_length=512,
         temperature=0.7,

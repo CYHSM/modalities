@@ -24,17 +24,78 @@ def setup_wandb_metrics():
         logger.info("✅ WandB metrics configured for out-of-order evaluation logging")
 
 
+def merge_peft_model(peft_path: str, base_model_path: str, output_dir: str) -> bool:
+    """Merge PEFT adapters into base model."""
+    try:
+        logger.info(f"Merging PEFT model: {peft_path} with base: {base_model_path}")
+
+        from peft import PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        # Load base model
+        base_model = AutoModelForCausalLM.from_pretrained(
+            base_model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
+        )
+
+        # Load PEFT adapters
+        model = PeftModel.from_pretrained(base_model, peft_path)
+
+        # Merge adapters
+        merged_model = model.merge_and_unload()
+
+        # Save merged model
+        os.makedirs(output_dir, exist_ok=True)
+        merged_model.save_pretrained(output_dir)
+
+        # Save tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(base_model_path)
+        tokenizer.save_pretrained(output_dir)
+
+        # Copy custom files if they exist
+        for filename in ["modeling_gpt2.py", "configuration_gpt2.py"]:
+            src_file = Path(base_model_path) / filename
+            if src_file.exists():
+                dst_file = Path(output_dir) / filename
+                dst_file.write_text(src_file.read_text())
+                logger.info(f"Copied {filename}")
+
+        logger.info(f"Successfully merged model to: {output_dir}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to merge PEFT model: {e}")
+        return False
+
+
 def run_lighteval_cli(
     checkpoint_path: str, step: int, eval_config: EvaluationConfig, hf_home: str = "/raid/s3/opengptx/mfrey/huggingface"
 ) -> Optional[Dict[str, Any]]:
     """Run LightEval CLI evaluation and return results."""
     try:
-        logger.info(f"🔍 Starting CLI evaluation for step {step} on {checkpoint_path}")
+        logger.info(f"Starting CLI evaluation for step {step} on {checkpoint_path}")
 
         checkpoint_dir = Path(checkpoint_path)
+        eval_model_path = checkpoint_path
+        merged_dir = None
 
-        # Define the argument strings
-        model_args = f"model_name={checkpoint_path}," f"use_chat_template=True," f"trust_remote_code=True,"
+        # Check if it's a PEFT model and merge if needed
+        if os.path.exists(os.path.join(checkpoint_path, "adapter_config.json")):
+            logger.info("PEFT model detected, merging with base model...")
+            merged_dir = os.path.join(checkpoint_path, "merged")
+
+            # Only merge if merged directory doesn't exist (avoid re-merging)
+            if not os.path.exists(merged_dir):
+                if not merge_peft_model(checkpoint_path, eval_config.source_model_path, merged_dir):
+                    return None
+            else:
+                logger.info(f"Using existing merged model at {merged_dir}")
+
+            eval_model_path = merged_dir
+            # Results will still be saved to the merged directory
+            checkpoint_dir = Path(merged_dir)
+
+        # Standard model args for merged/full model
+        model_args = f"model_name={eval_model_path},use_chat_template=True,trust_remote_code=True"
 
         # Construct the full command
         cmd_string = (
@@ -49,7 +110,7 @@ def run_lighteval_cli(
         env["CUDA_VISIBLE_DEVICES"] = str(eval_config.gpu_id)
         env["HF_HOME"] = hf_home
 
-        logger.info(f"🚀 Running command: CUDA_VISIBLE_DEVICES={eval_config.gpu_id} {cmd_string}")
+        logger.info(f"Running command: CUDA_VISIBLE_DEVICES={eval_config.gpu_id} {cmd_string}")
 
         # Run the evaluation
         result = subprocess.run(
@@ -64,22 +125,22 @@ def run_lighteval_cli(
         )
 
         if result.returncode != 0:
-            logger.error(f"❌ Evaluation failed for step {step}")
+            logger.error(f"Evaluation failed for step {step}")
             logger.error(f"STDOUT: {result.stdout}")
             logger.error(f"STDERR: {result.stderr}")
             return None
 
-        logger.info(f"✅ CLI evaluation completed for step {step}")
+        logger.info(f"CLI evaluation completed for step {step}")
 
         # Find the results JSON file
         json_files = list(checkpoint_dir.glob("results_*.json"))
         if not json_files:
-            logger.error(f"❌ No results JSON file found in {checkpoint_dir}")
+            logger.error(f"No results JSON file found in {checkpoint_dir}")
             return None
 
         # Read the most recent results file
         results_file = max(json_files, key=lambda p: p.stat().st_mtime)
-        logger.info(f"📖 Reading results from {results_file}")
+        logger.info(f"Reading results from {results_file}")
 
         with open(results_file, "r") as f:
             eval_results = json.load(f)
@@ -87,10 +148,10 @@ def run_lighteval_cli(
         return eval_results
 
     except subprocess.TimeoutExpired:
-        logger.error(f"❌ Evaluation timed out for step {step}")
+        logger.error(f"Evaluation timed out for step {step}")
         return None
     except Exception as e:
-        logger.error(f"❌ Evaluation failed for step {step}: {e}")
+        logger.error(f"Evaluation failed for step {step}: {e}")
         return None
 
 

@@ -104,7 +104,9 @@ def load_and_format_dataset(
 
 def format_openmathinstruct2_grpo(example: Dict[str, Any]) -> Dict[str, Any]:
     """Format OpenMathInstruct-2 dataset for GRPO training."""
-    instruction = "Solve the following math problem. Explain your reasoning and put the final answer in \\boxed{}."
+    instruction = (
+        "Solve the following math problem. Explain your reasoning and put the final answer in \\boxed{}."  # noqa: E501
+    )
     formatted_problem = f"{instruction}\nQuestion:{example['problem']}\nPlease reason step by step, and put your final answer within \\boxed{{}}\nAnswer:"  # noqa: E501
 
     return {

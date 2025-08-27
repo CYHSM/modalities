@@ -109,6 +109,7 @@ class TrainingConfig:
 class EvaluationConfig:
     """Evaluation configuration."""
 
+    source_model_path: str = "/raid/s3/opengptx/mfrey/instruct/checkpoints/checkpoint-70000"
     gpu_id: int = 7
     max_samples: int = 100
     max_workers: int = 1

@@ -46,7 +46,7 @@ def parse_args():
     # Data arguments
     parser.add_argument("--dataset", default="nvidia/OpenMathInstruct-2", help="Dataset name")
     parser.add_argument("--dataset-split", default="train", help="Dataset split")
-    parser.add_argument("--test-size", type=float, default=0.01, help="Test split size")
+    parser.add_argument("--test-size", type=float, default=0.002, help="Test split size")
     parser.add_argument("--max-length", type=int, help="Maximum sequence length filter")
     parser.add_argument("--max-samples", type=int, help="Maximum samples to use (for testing)")
 
@@ -147,7 +147,7 @@ def create_config_from_args(args) -> Config:
         output_dir=args.output_dir,
         num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
+        per_device_eval_batch_size=args.batch_size * args.grad_accum,
         gradient_accumulation_steps=args.grad_accum,
         warmup_ratio=args.warmup_ratio,
         learning_rate=learning_rate,
