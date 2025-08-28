@@ -17,19 +17,6 @@ class LoRAConfig:
     target_modules: List[str] = field(
         default_factory=lambda: ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     )
-    # target_modules: List[str] = field(
-    #     default_factory=lambda: [
-    #         "embed_tokens",
-    #         "q_proj",
-    #         "k_proj",
-    #         "v_proj",
-    #         "o_proj",
-    #         "gate_proj",
-    #         "up_proj",
-    #         "down_proj",
-    #         "lm_head",
-    #     ]
-    # )
 
 
 @dataclass

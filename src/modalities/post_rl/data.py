@@ -19,47 +19,17 @@ def extract_answer(text: str) -> str:
 
 def format_gsm8k_for_grpo(example: Dict[str, Any]) -> Dict[str, Any]:
     """Format GSM8K for GRPO training."""
-    # System prompt with explicit boxed format instruction
-    # system_prompt = (
-    #     "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. "
-    #     "The assistant first thinks about the reasoning process in the mind and then provides the user "
-    #     "with the answer. The reasoning process and answer are enclosed within <think> </think> and "
-    #     "<answer> </answer> tags, respectively. Put your final numerical answer within \\boxed{} inside the <answer> tags." # noqa: E501
-    # )
-    system_prompt = (
-        "A conversation between User and Assistant. The user asks a question, and the Assistant solves it. "
-        "The assistant first thinks about the reasoning process and then provides the user with the answer. "
-        "Use this exact format:\n\n"
-        "<think>\n"
-        "[Your step-by-step reasoning here]\n"
-        "</think>\n"
-        "<answer>\n"
-        "\\boxed{[final numerical answer]}\n"
-        "</answer>\n\n"
-        "Example:\n"
-        "<think>\n"
-        "I need to solve 2 + 3. This is simple addition.\n"
-        "</think>\n"
-        "<answer>\n"
-        "\\boxed{5}\n"
-        "</answer>"
+    prompt = (
+        "Solve the following math problem step by step. "
+        "Show your work and put the final answer after ####\n\n"
+        f"Question: {example['question']}\nAnswer:"
     )
 
-    # Extract numerical answer
-    answer = example["answer"]
-    match = re.search(r"####\s*(\S+)", answer)
-    if match:
-        expected_answer = match.group(1).replace(",", "")
-    else:
-        expected_answer = ""
-
-    # Extract reasoning part (everything before ####)
-    reasoning = answer.split("####")[0].strip() if "####" in answer else answer
+    expected_answer = extract_answer(example["answer"])
 
     return {
-        "prompt": [{"role": "system", "content": system_prompt}, {"role": "user", "content": example["question"]}],
+        "prompt": prompt,
         "expected_answer": expected_answer,
-        "solution": reasoning,  # Keep the reasoning for potential reward functions
     }
 
 
@@ -79,8 +49,9 @@ def load_gsm8k_dataset(train_size: Optional[int] = None, eval_size: int = 500, s
     eval_ds = dataset["test"].select(range(min(eval_size, len(dataset["test"]))))
 
     # Format for GRPO
-    train_ds = train_ds.map(format_gsm8k_for_grpo, remove_columns=train_ds.column_names, load_from_cache_file=False)
-    eval_ds = eval_ds.map(format_gsm8k_for_grpo, remove_columns=eval_ds.column_names, load_from_cache_file=False)
+    train_ds = train_ds.map(format_gsm8k_for_grpo, remove_columns=train_ds.column_names)
+    eval_ds = eval_ds.map(format_gsm8k_for_grpo, remove_columns=eval_ds.column_names)
 
     logger.info(f"Dataset loaded - Train: {len(train_ds)}, Eval: {len(eval_ds)}")
+
     return {"train": train_ds, "test": eval_ds}
