@@ -41,6 +41,37 @@ def create_lora_config(lora_config: LoRAConfig) -> LoraConfig:
     )
 
 
+def setup_custom_chat_format(model, tokenizer):
+    """Setup custom chat format that starts with <think>."""
+
+    # Custom chat template that forces <think> at start of assistant responses
+    chat_template = """{% for message in messages %}
+{%- if message['role'] == 'system' -%}
+<|im_start|>system
+{{ message['content'] }}<|im_end|>
+{%- elif message['role'] == 'user' -%}
+<|im_start|>user
+{{ message['content'] }}<|im_end|>
+{%- elif message['role'] == 'assistant' -%}
+<|im_start|>assistant
+<think>
+{{ message['content'] }}
+{%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+<|im_start|>assistant
+<think>\n
+{%- endif -%}"""
+
+    tokenizer.chat_template = chat_template
+
+    # Set special tokens if not already set
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    return model, tokenizer
+
+
 def load_model_and_tokenizer(model_config: ModelConfig):
     """Load model with memory optimization options."""
     logger.info(f"Loading model: {model_config.model_path}")
@@ -70,6 +101,9 @@ def load_model_and_tokenizer(model_config: ModelConfig):
     if not hasattr(tokenizer, "chat_template") or tokenizer.chat_template is None:
         model, tokenizer = setup_chat_format(model, tokenizer)
         logger.info("Chat format applied")
+    else:  # use custom one
+        model, tokenizer = setup_custom_chat_format(model, tokenizer)
+        logger.info("Custom chat format applied")
 
     # Apply LoRA if configured
     if model_config.lora.use_lora or model_config.lora.use_qlora:

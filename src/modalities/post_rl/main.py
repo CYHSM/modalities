@@ -143,7 +143,7 @@ def main():
     if not args.no_wandb:
         wandb.init(
             project=args.wandb_project,
-            name=f"grpo-{strategy}-b{args.batch_size}-g{args.num_generations}-lr{args.lr}-t{args.temperature}-lr{args.lora_r}-la{args.lora_alpha}",
+            name=f"grpo6-{strategy}-b{args.batch_size}-g{args.num_generations}-lr{args.lr}-t{args.temperature}-lr{args.lora_r}-la{args.lora_alpha}",
             config=vars(args),
         )
 

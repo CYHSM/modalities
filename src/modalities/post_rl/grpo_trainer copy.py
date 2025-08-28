@@ -153,34 +153,70 @@ def format_reward(completions: list[list[dict[str, str]]], solution: list[str], 
 
 def tag_count_reward(completions: list[list[dict[str, str]]], solution: list[str], **kwargs) -> list[float]:
     """
-    Reward function that checks if we produce the desired number of think and answer tags.
-    Gives partial credit for each correctly formatted tag.
-
-    Args:
-        completions: List of completions, each containing content
-        solution: List of ground truth solutions (not used in this function)
-        **kwargs: Additional keyword arguments
+    Progressive reward function for think/answer tag formatting.
+    Gives incremental rewards for:
+    1. Basic tag presence
+    2. Correct tag pairing
+    3. Proper newline formatting
+    4. Correct tag ordering
 
     Returns:
-        List of tag count scores (0.0 to 1.0 based on correct tag usage)
+        List of tag count scores (0.0 to 1.0 based on progressive correctness)
     """
+    import re
+
     contents = [completion[0]["content"] for completion in completions]
     rewards = []
 
-    def count_tags(text: str) -> float:
-        count = 0.0
-        if text.count("<think>\n") == 1:
-            count += 0.25
-        if text.count("\n</think>\n") == 1:
-            count += 0.25
-        if text.count("\n<answer>\n") == 1:
-            count += 0.25
-        if text.count("\n</answer>") == 1:
-            count += 0.25
-        return count
+    def progressive_tag_score(text: str) -> float:
+        score = 0.0
+
+        # Level 1: Basic tag presence (0.1 points each, 0.4 total)
+        think_open_count = len(re.findall(r"<think>", text))
+        think_close_count = len(re.findall(r"</think>", text))
+        answer_open_count = len(re.findall(r"<answer>", text))
+        answer_close_count = len(re.findall(r"</answer>", text))
+
+        if think_open_count >= 1:
+            score += 0.1
+        if think_close_count >= 1:
+            score += 0.1
+        if answer_open_count >= 1:
+            score += 0.1
+        if answer_close_count >= 1:
+            score += 0.1
+
+        # Level 2: Correct pairing (0.1 points each, 0.2 total)
+        if think_open_count == 1 and think_close_count == 1:
+            score += 0.1
+        if answer_open_count == 1 and answer_close_count == 1:
+            score += 0.1
+
+        # Level 3: Proper newline formatting (0.05 points each, 0.2 total)
+        if re.search(r"<think>\s*\n", text):  # <think> followed by whitespace/newline
+            score += 0.05
+        if re.search(r"\n\s*</think>", text):  # </think> preceded by newline/whitespace
+            score += 0.05
+        if re.search(r"<answer>\s*\n", text):  # <answer> followed by whitespace/newline
+            score += 0.05
+        if re.search(r"\n\s*</answer>", text):  # </answer> preceded by newline/whitespace
+            score += 0.05
+
+        # Level 4: Correct ordering (0.2 points)
+        think_pattern = r"<think>.*?</think>"
+        answer_pattern = r"<answer>.*?</answer>"
+
+        think_match = re.search(think_pattern, text, re.DOTALL)
+        answer_match = re.search(answer_pattern, text, re.DOTALL)
+
+        if think_match and answer_match:
+            if think_match.start() < answer_match.start():  # think comes before answer
+                score += 0.2
+
+        return min(score, 1.0)  # Cap at 1.0
 
     for content in contents:
-        tag_score = count_tags(content)
+        tag_score = progressive_tag_score(content)
         rewards.append(tag_score)
 
     return rewards

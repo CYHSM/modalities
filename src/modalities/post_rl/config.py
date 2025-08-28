@@ -10,11 +10,26 @@ class LoRAConfig:
     """LoRA/QLoRA configuration for memory-efficient training."""
 
     use_lora: bool = False
-    use_qlora: bool = False  # 4-bit quantization
-    lora_r: int = 64
-    lora_alpha: int = 128
-    lora_dropout: float = 0.1
-    target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj", "k_proj", "o_proj"])
+    use_qlora: bool = False
+    lora_r: int = 32
+    lora_alpha: int = 32
+    lora_dropout: float = 0.0
+    target_modules: List[str] = field(
+        default_factory=lambda: ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    )
+    # target_modules: List[str] = field(
+    #     default_factory=lambda: [
+    #         "embed_tokens",
+    #         "q_proj",
+    #         "k_proj",
+    #         "v_proj",
+    #         "o_proj",
+    #         "gate_proj",
+    #         "up_proj",
+    #         "down_proj",
+    #         "lm_head",
+    #     ]
+    # )
 
 
 @dataclass
@@ -57,7 +72,6 @@ class TrainingConfig:
     per_device_train_batch_size: int = 1
     gradient_accumulation_steps: int = 16  # Effective batch size = 16
     learning_rate: float = 5e-6
-    warmup_steps: int = 100
     logging_steps: int = 10
     save_steps: int = 500
     eval_steps: int = 500
