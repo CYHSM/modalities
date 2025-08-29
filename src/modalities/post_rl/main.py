@@ -44,7 +44,7 @@ def parse_args():
     parser.add_argument("--eval-size", type=int, default=50)
 
     # Other arguments
-    parser.add_argument("--wandb-project", default="grpo-runs")
+    parser.add_argument("--wandb-project", default="grpo-runs2")
     parser.add_argument("--no-wandb", action="store_true")
 
     return parser.parse_args()

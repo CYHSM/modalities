@@ -1,7 +1,7 @@
 """GRPO trainer with binary reward for GSM8K."""
 import logging
 import re
-from typing import Optional
+from typing import List, Optional
 
 from trl import GRPOConfig, GRPOTrainer
 
@@ -10,56 +10,48 @@ from config import TrainingConfig
 logger = logging.getLogger(__name__)
 
 
-# def extract_answer_from_completion(text: str) -> str:
-#     """Extract answer from model completion."""
-#     # Look for \boxed{} format first (matching their approach)
-#     import re
-#     match = re.search(r'\\boxed\{(.*?)\}', text)
-#     if match:
-#         return match.group(1).strip()
+def extract_answer_from_completion(text: str) -> str:
+    """Extract answer from model completion."""
+    # Look for \boxed{} format first (matching their approach)
+    import re
 
-#     # Fallback to #### format
-#     match = re.search(r"####\s*(\S+)", text)
-#     if match:
-#         return match.group(1).replace(",", "")
+    match = re.search(r"\\boxed\{(.*?)\}", text)
+    if match:
+        return match.group(1).strip()
 
-#     # Final fallback: look for last number
-#     numbers = re.findall(r"\b\d+\b", text)
-#     if numbers:
-#         return numbers[-1]
+    return ""
 
-#     return ""
 
-# def binary_reward_func(completions: List[str], expected_answer: List[str], **kwargs) -> List[float]:
-#     """Binary reward: 1.0 for correct answer, 0.0 otherwise."""
-#     if len(expected_answer) == 1:
-#         expected_answer = expected_answer * len(completions)
+def binary_reward_func(completions: List[str], expected_answer: List[str], **kwargs) -> List[float]:
+    """Binary reward: 1.0 for correct answer, 0.0 otherwise."""
+    if len(expected_answer) == 1:
+        expected_answer = expected_answer * len(completions)
 
-#     rewards = []
-#     correct_count = 0
+    rewards = []
+    correct_count = 0
 
-#     for completion, expected in zip(completions, expected_answer):
-#         extracted = extract_answer_from_completion(completion)
+    for completion, expected in zip(completions, expected_answer):
+        extracted = extract_answer_from_completion(completion)
 
-#         # Try to convert both to integers for numerical comparison
-#         try:
-#             extracted_int = int(extracted)
-#             expected_int = int(expected)
-#             is_correct = extracted_int == expected_int
-#         except (ValueError, TypeError):
-#             # Fallback to string comparison
-#             is_correct = extracted.strip() == expected.strip()
+        # Try to convert both to integers for numerical comparison
+        try:
+            extracted_int = int(extracted)
+            expected_int = int(expected)
+            is_correct = extracted_int == expected_int
+        except (ValueError, TypeError):
+            # Fallback to string comparison
+            is_correct = extracted.strip() == expected.strip()
 
-#         reward = 1.0 if is_correct else 0.0
-#         rewards.append(reward)
-#         if is_correct:
-#             correct_count += 1
+        reward = 1.0 if is_correct else 0.0
+        rewards.append(reward)
+        if is_correct:
+            correct_count += 1
 
-#     # Log accuracy
-#     accuracy = correct_count / len(completions) if completions else 0
-#     logger.debug(f"Batch accuracy: {accuracy:.2%} ({correct_count}/{len(completions)})")
+    # Log accuracy
+    accuracy = correct_count / len(completions) if completions else 0
+    logger.debug(f"Batch accuracy: {accuracy:.2%} ({correct_count}/{len(completions)})")
 
-#     return rewards
+    return rewards
 
 
 def accuracy_reward_advanced(
@@ -239,11 +231,14 @@ def create_grpo_config(training_config: TrainingConfig) -> GRPOConfig:
         log_completions=True,
         num_completions_to_print=1,
         dataloader_num_workers=4,
+        # max_steps=1000,
         # Stability
         weight_decay=0.1,
         warmup_ratio=0.1,
         lr_scheduler_type="cosine",
         max_grad_norm=0.1,
+        adam_beta1=0.9,
+        adam_beta2=0.99,
     )
 
 
@@ -261,11 +256,7 @@ def setup_grpo_trainer(
     trainer = GRPOTrainer(
         model=model,
         args=grpo_config,
-        reward_funcs=[
-            accuracy_reward_advanced,  # Logged as reward_0
-            format_reward,  # Logged as reward_1
-            tag_count_reward,  # Logged as reward_2
-        ],
+        reward_funcs=[binary_reward_func],
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=tokenizer,

@@ -21,7 +21,7 @@ def format_gsm8k_for_grpo(example: Dict[str, Any]) -> Dict[str, Any]:
     """Format GSM8K for GRPO training."""
     prompt = (
         "Solve the following math problem step by step. "
-        "Show your work and put the final answer after ####\n\n"
+        "Show your work and put the final answer after \\boxed{}\n\n"
         f"Question: {example['question']}\nAnswer:"
     )
 
@@ -49,8 +49,8 @@ def load_gsm8k_dataset(train_size: Optional[int] = None, eval_size: int = 500, s
     eval_ds = dataset["test"].select(range(min(eval_size, len(dataset["test"]))))
 
     # Format for GRPO
-    train_ds = train_ds.map(format_gsm8k_for_grpo, remove_columns=train_ds.column_names)
-    eval_ds = eval_ds.map(format_gsm8k_for_grpo, remove_columns=eval_ds.column_names)
+    train_ds = train_ds.map(format_gsm8k_for_grpo, remove_columns=train_ds.column_names, load_from_cache_file=False)
+    eval_ds = eval_ds.map(format_gsm8k_for_grpo, remove_columns=eval_ds.column_names, load_from_cache_file=False)
 
     logger.info(f"Dataset loaded - Train: {len(train_ds)}, Eval: {len(eval_ds)}")
 
