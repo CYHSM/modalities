@@ -8,7 +8,7 @@ from grpo_trainer import setup_grpo_trainer
 from model_utils import load_model_and_tokenizer
 
 from config import Config, DataConfig, LoRAConfig, ModelConfig, TrainingConfig
-from data import load_gsm8k_dataset
+from data import load_gsm8k_dataset, load_openmathinstruct2_dataset
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -143,7 +143,7 @@ def main():
     if not args.no_wandb:
         wandb.init(
             project=args.wandb_project,
-            name=f"grpo6-{strategy}-b{args.batch_size}-g{args.num_generations}-lr{args.lr}-t{args.temperature}-lr{args.lora_r}-la{args.lora_alpha}",
+            name=f"grpoOMI2-{strategy}-b{args.batch_size}-g{args.num_generations}-lr{args.lr}-t{args.temperature}-lr{args.lora_r}-la{args.lora_alpha}",
             config=vars(args),
         )
 
@@ -161,7 +161,7 @@ def main():
 
         # Load dataset
         logger.info("Loading GSM8K dataset...")
-        dataset = load_gsm8k_dataset(
+        dataset = load_openmathinstruct2_dataset(
             train_size=config.data.train_size,
             eval_size=config.data.eval_size,
             seed=config.data.seed,

@@ -55,6 +55,17 @@ def format_tulu3_sft(example: Dict[str, Any]) -> Dict[str, Any]:
     return example
 
 
+def format_infinity_instruct(example: Dict[str, Any]) -> Dict[str, Any]:
+    """Format Infinity-Instruct dataset to chat format."""
+    messages = []
+    
+    for turn in example["conversations"]:
+        role = "user" if turn["from"] == "human" else "assistant"
+        messages.append({"role": role, "content": turn["value"]})
+    
+    return {"messages": messages}
+
+
 def format_dataset(dataset_name: str, example: Dict[str, Any]) -> Dict[str, Any]:
     """Format dataset based on its name/type."""
     formatters = {
@@ -62,14 +73,14 @@ def format_dataset(dataset_name: str, example: Dict[str, Any]) -> Dict[str, Any]
         "meta-math/MetaMathQA": format_metamath,
         "nvidia/OpenMathInstruct-2": format_openmathinstruct2,
         "allenai/tulu-3-sft-mixture": format_tulu3_sft,
+        "BAAI/Infinity-Instruct": format_infinity_instruct,
     }
-
+    
     formatter = formatters.get(dataset_name)
     if formatter is None:
         # Default formatting for unknown datasets
         logger.warning(f"No specific formatter for {dataset_name}, using default")
         return example
-
     return formatter(example)
 
 
@@ -85,12 +96,7 @@ def load_and_format_dataset(
     # Format dataset
     def format_fn(example):
         return format_dataset(dataset_name, example)
-
-    # Change this line:
-    if dataset_name == "allenai/tulu-3-sft-mixture":
-        ds = ds.map(format_fn)
-    else:
-        ds = ds.map(format_fn, remove_columns=ds.column_names)
+    ds = ds.map(format_fn)
 
     # Split dataset
     if test_size > 0:
@@ -99,53 +105,4 @@ def load_and_format_dataset(
     else:
         ds = {"train": ds, "test": None}
         logger.info(f"Using full dataset for training: {len(ds['train'])} samples")
-    return ds
-
-
-def format_openmathinstruct2_grpo(example: Dict[str, Any]) -> Dict[str, Any]:
-    """Format OpenMathInstruct-2 dataset for GRPO training."""
-    instruction = (
-        "Solve the following math problem. Explain your reasoning and put the final answer in \\boxed{}."  # noqa: E501
-    )
-    formatted_problem = f"{instruction}\nQuestion:{example['problem']}\nPlease reason step by step, and put your final answer within \\boxed{{}}\nAnswer:"  # noqa: E501
-
-    return {
-        "prompt": formatted_problem,
-        "expected_answer": example.get("expected_answer", ""),
-        # Keep original solution for reference if needed
-        "reference_solution": example.get("generated_solution", ""),
-    }
-
-
-def load_grpo_dataset(
-    dataset_name: str, dataset_split: str = "train", test_size: float = 0.01, seed: int = 42, max_samples: int = None
-):
-    """Load and format dataset for GRPO training."""
-    logger.info(f"Loading dataset for GRPO: {dataset_name}")
-
-    # Load dataset
-    ds = load_dataset(dataset_name, split=dataset_split)
-
-    # Limit samples if specified (useful for testing)
-    if max_samples:
-        ds = ds.select(range(min(max_samples, len(ds))))
-
-    # Format for GRPO - only keep prompt and expected_answer
-    if dataset_name == "nvidia/OpenMathInstruct-2":
-        ds = ds.map(format_openmathinstruct2_grpo)
-        # Remove columns not needed for GRPO
-        columns_to_keep = ["prompt", "expected_answer"]
-        columns_to_remove = [col for col in ds.column_names if col not in columns_to_keep]
-        ds = ds.remove_columns(columns_to_remove)
-    else:
-        raise ValueError(f"GRPO formatting not implemented for {dataset_name}")
-
-    # Split dataset
-    if test_size > 0:
-        ds = ds.train_test_split(test_size=test_size, seed=seed)
-        logger.info(f"Split dataset - Train: {len(ds['train'])}, Test: {len(ds['test'])}")
-    else:
-        ds = {"train": ds, "test": None}
-        logger.info(f"Using full dataset for training: {len(ds['train'])} samples")
-
     return ds

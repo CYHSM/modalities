@@ -234,11 +234,12 @@ def create_grpo_config(training_config: TrainingConfig) -> GRPOConfig:
         # max_steps=1000,
         # Stability
         weight_decay=0.1,
-        warmup_ratio=0.1,
         lr_scheduler_type="cosine",
         max_grad_norm=0.1,
         adam_beta1=0.9,
         adam_beta2=0.99,
+        warmup_steps=100,
+        # warmup_ratio=0.1,
     )
 
 
