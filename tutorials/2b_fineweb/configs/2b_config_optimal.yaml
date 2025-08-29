@@ -14,21 +14,21 @@ settings:
     train_dataset_path: /raid/s3/opengptx/mfrey/fineweb-30B/packed/deu_Latn_train.pbin
     val_dataset_path: /raid/s3/opengptx/mfrey/fineweb-30B/packed/deu_Latn_val.pbin
   intervals:
-    training_log_interval_in_steps: 100
-    checkpointing_interval_in_steps: 10000
-    evaluation_interval_in_steps: 1000
+    training_log_interval_in_steps: 58
+    checkpointing_interval_in_steps: 13079
+    evaluation_interval_in_steps: 1189
   consistency_enforcement:
     enforce_tokens_per_step_consistency: true
     enforce_last_step_logged: false
     enforce_last_step_evaluated: false
     enforce_last_step_checkpointed: false
   step_profile: 
-    gradient_accumulation_steps: 4
+    gradient_accumulation_steps: 5
     local_train_micro_batch_size: 8
     sequence_length: 2048
   training_target:
-    num_target_tokens: 22937600000 # bs8 #20971520000 bs16 # In dataset: 36538570752
-    num_target_steps: 70000
+    num_target_tokens: 30000087040 # bs8 #20971520000 bs16 # In dataset: 36538570752
+    num_target_steps: 52316
   training_progress:
     global_num_seen_tokens: 0
     num_seen_steps: 0
@@ -88,7 +88,7 @@ train_dataloader:
   component_key: data_loader
   variant_key: default
   config:
-    num_workers: 2
+    num_workers: 8
     pin_memory: true
     dataloader_tag: train
     dataset:
@@ -310,21 +310,24 @@ model_raw:
 
 lr_scheduler:
   component_key: scheduler
-  variant_key: linear_lr
+  variant_key: onecycle_lr
   config:
-    start_factor: 0.001
-    end_factor: 1.0
-    total_iters: 500
-    last_epoch: ${settings.training_progress.last_step}
     optimizer:
       instance_key: optimizer
       pass_type: BY_REFERENCE
+    max_lr: 6.95e-4
+    div_factor: 100
+    final_div_factor: 0.695
+    total_steps: ${settings.training_target.num_target_steps}
+    pct_start: 0.037
+    anneal_strategy: cos
+    last_epoch: ${settings.training_progress.last_step}
 
 optimizer:
   component_key: optimizer
   variant_key: adam_w
   config:
-    lr: 0.000314
+    lr: 0.0001
     betas: [0.9, 0.95]
     eps: 1e-8
     weight_decay: 1e-1
