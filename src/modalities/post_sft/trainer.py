@@ -93,6 +93,11 @@ def create_sft_config(training_config: TrainingConfig) -> SFTConfig:
         use_liger_kernel=True,
         packing=True,
         completion_only_loss=False,
+        max_grad_norm=0.1,
+        optim="paged_adamw_8bit",
+        adam_beta1=0.9,
+        adam_beta2=0.99,
+        lr_scheduler_type="cosine",
     )
 
 

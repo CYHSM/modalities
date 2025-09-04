@@ -117,6 +117,11 @@ def load_model_and_tokenizer(
     else:
         logger.info("Setting up chat format")
         model, tokenizer = setup_chat_format(model, tokenizer)
+    # Check if model is openGPT-X/Teuken-7B-instruct-v0.6 then set chat_template to None and reassign
+    if "opengpt-x/teuken-7b-instruct-v0.6" in model_path.lower():
+        logger.info("Detected opengpt-x/teuken-7b-instruct-v0.6, resetting chat_template")
+        tokenizer.chat_template = None
+        model, tokenizer = setup_chat_format(model, tokenizer)
 
     # Apply LoRA if configured
     if lora_config and lora_config.use_lora:

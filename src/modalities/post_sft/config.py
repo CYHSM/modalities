@@ -10,19 +10,10 @@ import torch
 class LoRAConfig:
     """LoRA configuration for parameter-efficient fine-tuning."""
 
-    # Enable LoRA
     use_lora: bool = False
-
-    # LoRA rank - higher for better performance (64-128 for full-FT comparable results)
     lora_r: int = 128
-
-    # LoRA alpha - typically 2x rank for aggressive adaptation
     lora_alpha: int = 256
-
-    # LoRA dropout for regularization
     lora_dropout: float = 0.05
-
-    # Target modules - targeting all linear layers for maximum adaptation
     target_modules: List[str] = field(
         default_factory=lambda: [
             "q_proj",
@@ -35,17 +26,9 @@ class LoRAConfig:
             "lm_head",  # Output head
         ]
     )
-
-    # LoRA bias - can help with performance
     bias: str = "none"  # Options: "none", "all", "lora_only"
-
-    # Task type
     task_type: str = "CAUSAL_LM"
-
-    # Use DoRA (Weight-Decomposed Low-Rank Adaptation) - can improve performance
     use_dora: bool = False
-
-    # Use RSLoRA (Rank-Stabilized LoRA) - helps with higher ranks
     use_rslora: bool = True
 
 
@@ -77,7 +60,7 @@ class DataConfig:
 
     dataset_name: str = "nvidia/OpenMathInstruct-2"
     dataset_split: str = "train"
-    test_size: float = 0.01
+    test_size: float = 0.0001
     seed: int = 42
     max_length: Optional[int] = None
 
@@ -91,9 +74,9 @@ class TrainingConfig:
     per_device_train_batch_size: int = 1
     per_device_eval_batch_size: int = 1
     gradient_accumulation_steps: int = 4
-    learning_rate: float = 3e-5
-    weight_decay: float = 0.01
-    warmup_ratio: float = 0.01
+    learning_rate: float = 2e-5
+    weight_decay: float = 0.1
+    warmup_ratio: float = 0.1
     logging_steps: int = 10
     save_steps: int = 1000
     eval_steps: int = 1000
@@ -113,7 +96,7 @@ class EvaluationConfig:
     gpu_id: int = 7
     max_samples: int = 100
     max_workers: int = 1
-    tasks: str = "leaderboard|hellaswag|10|1,leaderboard|gsm8k|8|1"
+    tasks: str = "leaderboard|arc:challenge|3|1,leaderboard|hellaswag|10|1,helm|mmlu|5|1,leaderboard|gsm8k|8|1,leaderboard|truthfulqa:mc|0|1"  # noqa: E501
     timeout: int = 3600
 
 

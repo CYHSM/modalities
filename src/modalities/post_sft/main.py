@@ -5,12 +5,11 @@ import logging
 import sys
 
 import wandb
-from grpo_trainer import setup_grpo_trainer
 from model_utils import get_model_info, load_model_and_tokenizer
 from trainer import setup_trainer
 
 from config import Config, DataConfig, EvaluationConfig, LoRAConfig, ModelConfig, TrainingConfig, WandBConfig
-from data import load_and_format_dataset, load_grpo_dataset
+from data import load_and_format_dataset
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -20,11 +19,6 @@ logger = logging.getLogger(__name__)
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Fine-tune language model with TRL (SFT or GRPO)")
-
-    # Training mode
-    parser.add_argument(
-        "--mode", choices=["sft", "grpo"], default="sft", help="Training mode: SFT (supervised fine-tuning) or GRPO"
-    )
 
     # Model arguments
     parser.add_argument("--model-path", required=True, help="Path to the base model")
@@ -46,7 +40,7 @@ def parse_args():
     # Data arguments
     parser.add_argument("--dataset", default="nvidia/OpenMathInstruct-2", help="Dataset name")
     parser.add_argument("--dataset-split", default="train", help="Dataset split")
-    parser.add_argument("--test-size", type=float, default=0.002, help="Test split size")
+    parser.add_argument("--test-size", type=float, default=0.0001, help="Test split size")
     parser.add_argument("--max-length", type=int, help="Maximum sequence length filter")
     parser.add_argument("--max-samples", type=int, help="Maximum samples to use (for testing)")
 
@@ -75,7 +69,7 @@ def parse_args():
     parser.add_argument("--hf-home", default="/raid/s3/opengptx/mfrey/huggingface", help="HF cache dir")
 
     # WandB arguments
-    parser.add_argument("--wandb-project", default="trl-training", help="WandB project name")
+    parser.add_argument("--wandb-project", default="sft-Aug2025", help="WandB project name")
     parser.add_argument("--wandb-name", help="WandB run name")
     parser.add_argument("--wandb-tags", nargs="*", default=[], help="WandB tags")
     parser.add_argument("--no-wandb", action="store_true", help="Disable WandB logging")
@@ -159,13 +153,13 @@ def create_config_from_args(args) -> Config:
 
     eval_config = EvaluationConfig(gpu_id=args.eval_gpu, max_samples=args.eval_samples)
 
-    wandb_tags = args.wandb_tags + [args.mode]
+    wandb_tags = args.wandb_tags
     if args.use_lora:
         wandb_tags.append("lora")
 
     wandb_config = WandBConfig(
         project=args.wandb_project,
-        name=args.wandb_name or f"{args.mode}-{args.dataset.split('/')[-1]}-{'lora' if args.use_lora else 'full'}",
+        name=f"{args.dataset.split('/')[-1]}-ga{args.grad_accum}-wr{args.warmup_ratio}-lr{learning_rate}",
         tags=wandb_tags,
     )
 
@@ -181,7 +175,7 @@ def create_config_from_args(args) -> Config:
     return config
 
 
-def setup_wandb(config: Config, mode: str):
+def setup_wandb(config: Config):
     """Setup Weights & Biases logging."""
     if config.training.report_to == "wandb":
         wandb.init(
@@ -190,7 +184,6 @@ def setup_wandb(config: Config, mode: str):
             tags=config.wandb.tags,
             notes=config.wandb.notes,
             config={
-                "mode": mode,
                 "model": config.model.__dict__,
                 "data": config.data.__dict__,
                 "training": config.training.__dict__,
@@ -211,7 +204,6 @@ def main():
     # Setup environment
     config.setup_environment()
 
-    logger.info(f"Starting {args.mode.upper()} training pipeline")
     logger.info(f"Model: {config.model.model_path}")
     logger.info(f"Dataset: {config.data.dataset_name}")
     logger.info(f"Output: {config.training.output_dir}")
@@ -222,7 +214,7 @@ def main():
     print(config)
     try:
         # Setup WandB
-        setup_wandb(config, args.mode)
+        setup_wandb(config)
 
         # Load model and tokenizer
         logger.info("Loading model and tokenizer...")
@@ -242,93 +234,32 @@ def main():
             wandb.log({"model_info": model_info})
 
         # Load dataset based on training mode
-        if args.mode == "grpo":
-            logger.info("Loading dataset for GRPO training...")
-            dataset = load_grpo_dataset(
-                config.data.dataset_name,
-                config.data.dataset_split,
-                config.data.test_size,
-                config.data.seed,
-                args.max_samples,
-            )
-            logger.info(f"GRPO dataset loaded: {len(dataset['train'])} training samples")
-
-            # Show sample
-            if dataset["train"]:
-                sample = dataset["train"][0]
-                logger.info(f"Sample prompt: {sample['prompt'][:200]}...")
-                logger.info(f"Expected answer: {sample['expected_answer']}")
-        else:
-            logger.info("Loading dataset for SFT training...")
-            dataset = load_and_format_dataset(
-                config.data.dataset_name,
-                config.data.dataset_split,
-                config.data.test_size,
-                config.data.seed,
-                config.data.max_length,
-            )
-            logger.info(f"SFT dataset loaded: {len(dataset['train'])} training samples")
+        logger.info("Loading dataset for SFT training...")
+        dataset = load_and_format_dataset(
+            config.data.dataset_name,
+            config.data.dataset_split,
+            config.data.test_size,
+            config.data.seed,
+            config.data.max_length,
+        )
+        logger.info(f"SFT dataset loaded: {len(dataset['train'])} training samples")
 
         if args.dry_run:
             logger.info("Dry run completed successfully")
             return
 
         # Setup trainer based on mode
-        if args.mode == "grpo":
-            logger.info("Setting up GRPO trainer...")
-
-            # Check if vLLM server is reachable if using vLLM
-            if args.use_vllm:
-                import time
-
-                import requests
-
-                server_url = f"http://{args.vllm_server_host}:{args.vllm_server_port}/health"
-                logger.info(f"Checking vLLM server at {server_url}...")
-
-                max_retries = 5
-                for i in range(max_retries):
-                    try:
-                        response = requests.get(server_url, timeout=5)
-                        if response.status_code == 200:
-                            logger.info("✅ vLLM server is ready")
-                            break
-                    except requests.RequestException:
-                        if i < max_retries - 1:
-                            logger.info(f"Waiting for vLLM server... ({i+1}/{max_retries})")
-                            time.sleep(5)
-                        else:
-                            logger.error(
-                                "❌ vLLM server not reachable. Start it with: trl vllm-serve --model <model_path>"
-                            )
-                            sys.exit(1)
-
-            trainer = setup_grpo_trainer(
-                model=model,
-                tokenizer=tokenizer,
-                train_dataset=dataset["train"],
-                eval_dataset=dataset["test"],
-                source_model_path=config.model.model_path,
-                training_config=config.training,
-                eval_config=config.evaluation if not args.no_eval else None,
-                num_generations=args.num_generations,
-                use_vllm=args.use_vllm,
-                vllm_server_host=args.vllm_server_host,
-                vllm_server_port=args.vllm_server_port,
-                hf_home=config.hf_home,
-            )
-        else:
-            logger.info("Setting up SFT trainer...")
-            trainer = setup_trainer(
-                model=model,
-                tokenizer=tokenizer,
-                train_dataset=dataset["train"],
-                eval_dataset=dataset["test"],
-                source_model_path=config.model.model_path,
-                training_config=config.training,
-                eval_config=config.evaluation if not args.no_eval else None,
-                hf_home=config.hf_home,
-            )
+        logger.info("Setting up SFT trainer...")
+        trainer = setup_trainer(
+            model=model,
+            tokenizer=tokenizer,
+            train_dataset=dataset["train"],
+            eval_dataset=dataset["test"],
+            source_model_path=config.model.model_path,
+            training_config=config.training,
+            eval_config=config.evaluation if not args.no_eval else None,
+            hf_home=config.hf_home,
+        )
 
         # Resume from checkpoint if specified
         if args.resume_from:
@@ -336,14 +267,14 @@ def main():
             trainer.train(resume_from_checkpoint=args.resume_from)
         else:
             # Start training
-            logger.info(f"🚀 Starting {args.mode.upper()} training...")
+            logger.info("🚀 Starting training...")
             trainer.train()
 
         # Save final model
         logger.info("Saving final model...")
         trainer.save_model()
 
-        logger.info(f"✨ {args.mode.upper()} training completed successfully!")
+        logger.info("✨ training completed successfully!")
 
     except KeyboardInterrupt:
         logger.info("Training interrupted by user")

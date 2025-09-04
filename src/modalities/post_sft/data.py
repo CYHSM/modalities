@@ -58,11 +58,11 @@ def format_tulu3_sft(example: Dict[str, Any]) -> Dict[str, Any]:
 def format_infinity_instruct(example: Dict[str, Any]) -> Dict[str, Any]:
     """Format Infinity-Instruct dataset to chat format."""
     messages = []
-    
+
     for turn in example["conversations"]:
         role = "user" if turn["from"] == "human" else "assistant"
         messages.append({"role": role, "content": turn["value"]})
-    
+
     return {"messages": messages}
 
 
@@ -75,7 +75,7 @@ def format_dataset(dataset_name: str, example: Dict[str, Any]) -> Dict[str, Any]
         "allenai/tulu-3-sft-mixture": format_tulu3_sft,
         "BAAI/Infinity-Instruct": format_infinity_instruct,
     }
-    
+
     formatter = formatters.get(dataset_name)
     if formatter is None:
         # Default formatting for unknown datasets
@@ -91,12 +91,13 @@ def load_and_format_dataset(
     logger.info(f"Loading dataset: {dataset_name}")
 
     # Load dataset
-    ds = load_dataset(dataset_name, split=dataset_split)
+    ds = load_dataset(dataset_name, dataset_split)
 
     # Format dataset
     def format_fn(example):
         return format_dataset(dataset_name, example)
-    ds = ds.map(format_fn)
+
+    ds = ds.map(format_fn)["train"]
 
     # Split dataset
     if test_size > 0:
