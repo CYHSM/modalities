@@ -79,67 +79,58 @@ def load_model_and_tokenizer(
     """Load model and tokenizer with optional LoRA and chat format setup."""
     logger.info(f"Loading model from: {model_path}")
 
-    # Try to load with flash attention, fallback to default if not available
-    try:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            trust_remote_code=trust_remote_code,
-            device_map=device_map,
-            torch_dtype=torch_dtype,
-            attn_implementation="flash_attention_2",
-        )
-        logger.info("Using Flash Attention 2")
-    except (ImportError, RuntimeError) as e:
-        logger.warning(f"Flash Attention 2 not available ({e}), using default attention")
+    # Try optimized attention implementations with fallbacks
+    attention_implementations = ["flash_attention_2", "sdpa", None]
+    model = None
+    
+    for attn_impl in attention_implementations:
         try:
-            model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                trust_remote_code=trust_remote_code,
-                device_map=device_map,
-                torch_dtype=torch_dtype,
-                attn_implementation="sdpa",  # Use PyTorch's built-in optimized attention
-            )
-            logger.info("Using PyTorch built-in optimized attention (SDPA)")
-        except Exception as e:
-            logger.warning(f"SDPA not available ({e}), using default attention")
-            model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                trust_remote_code=trust_remote_code,
-                device_map=device_map,
-                torch_dtype=torch_dtype,
-            )
+            model_kwargs = {
+                "trust_remote_code": trust_remote_code,
+                "device_map": device_map,
+                "torch_dtype": torch_dtype,
+            }
+            if attn_impl:
+                model_kwargs["attn_implementation"] = attn_impl
+            
+            model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
+            
+            if attn_impl == "flash_attention_2":
+                logger.info("Using Flash Attention 2")
+            elif attn_impl == "sdpa":
+                logger.info("Using PyTorch SDPA")
+            else:
+                logger.info("Using default attention")
+            break
+            
+        except (ImportError, RuntimeError, ValueError) as e:
+            if attn_impl:
+                logger.warning(f"{attn_impl} not available: {e}")
+                continue
+            else:
+                raise
 
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     # Setup chat format
     if hasattr(tokenizer, "chat_template") and tokenizer.chat_template is not None:
-        logger.info("Chat template already exists, skipping setup_chat_format")
+        logger.info("Chat template already exists")
     else:
         logger.info("Setting up chat format")
         model, tokenizer = setup_chat_format(model, tokenizer)
-    # Check if model is openGPT-X/Teuken-7B-instruct-v0.6 then set chat_template to None and reassign
+    
+    # Special handling for Teuken model
     if "opengpt-x/teuken-7b-instruct-v0.6" in model_path.lower():
-        logger.info("Detected opengpt-x/teuken-7b-instruct-v0.6, resetting chat_template")
+        logger.info("Detected Teuken model, resetting chat template")
         tokenizer.chat_template = None
         model, tokenizer = setup_chat_format(model, tokenizer)
 
     # Apply LoRA if configured
     if lora_config and lora_config.use_lora:
-        logger.info(f"Applying LoRA with rank {lora_config.lora_r}, alpha {lora_config.lora_alpha}")
-        logger.info(f"Target modules: {lora_config.target_modules}")
-
+        logger.info(f"Applying LoRA: r={lora_config.lora_r}, alpha={lora_config.lora_alpha}")
         peft_config = create_peft_config(lora_config)
         model = get_peft_model(model, peft_config)
-
-        # Print trainable parameters info
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        total_params = sum(p.numel() for p in model.parameters())
-        logger.info(f"LoRA trainable params: {trainable_params:,}")
-        logger.info(f"LoRA trainable %: {trainable_params/total_params*100:.2f}%")
-
-        # Print the model to see LoRA structure
         model.print_trainable_parameters()
-
     elif trainable_layers is not None:
         # Apply layer freezing if not using LoRA
         freeze_model_layers(model, trainable_layers)
@@ -153,107 +144,19 @@ def save_model_with_custom_code(model, save_path: str, source_model_path: str):
     save_path = Path(save_path)
     source_path = Path(source_model_path)
 
-    # Save the model (handles both regular and PEFT models)
+    # Save the model
     if hasattr(model, "save_pretrained"):
         model.save_pretrained(save_path)
         logger.info(f"Model saved to: {save_path}")
 
     # Copy custom code files
-    custom_files = ["modeling_gpt2.py", "configuration_gpt2.py"]
-
-    for file_name in custom_files:
+    for file_name in ["modeling_gpt2.py", "configuration_gpt2.py"]:
         source_file = source_path / file_name
         dest_file = save_path / file_name
 
         if source_file.exists():
             shutil.copy(source_file, dest_file)
-            logger.info(f"✅ Copied {file_name} to {save_path}")
-        else:
-            logger.warning(f"⚠️  Warning: {file_name} not found in {source_path}")
-
-
-def generate_response(
-    model,
-    tokenizer,
-    prompt: str,
-    max_new_tokens: int = 512,
-    temperature: float = 0.7,
-    do_sample: bool = True,
-    top_p: float = 0.9,
-    pad_token_id: Optional[int] = None,
-) -> str:
-    """Generate a response from the model."""
-    # Format as chat if needed
-    if isinstance(prompt, str):
-        messages = [{"role": "user", "content": prompt}]
-        formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    else:
-        formatted_prompt = prompt
-
-    # Tokenize
-    inputs = tokenizer(formatted_prompt, return_tensors="pt")
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
-
-    # Set pad_token_id if not provided
-    if pad_token_id is None:
-        pad_token_id = tokenizer.eos_token_id
-
-    # Generate
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            do_sample=do_sample,
-            top_p=top_p,
-            pad_token_id=pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
-        )
-
-    # Decode only the new tokens
-    new_tokens = outputs[0][inputs["input_ids"].shape[1] :]
-    response = tokenizer.decode(new_tokens, skip_special_tokens=True)
-
-    return response.strip()
-
-
-def batch_generate_responses(
-    model,
-    tokenizer,
-    prompts: List[str],
-    max_new_tokens: int = 512,
-    temperature: float = 0.7,
-    do_sample: bool = True,
-    top_p: float = 0.9,
-    batch_size: int = 4,
-) -> List[str]:
-    """Generate responses for multiple prompts."""
-    responses = []
-
-    for i in range(0, len(prompts), batch_size):
-        batch_prompts = prompts[i : i + batch_size]
-        batch_responses = []
-
-        for prompt in batch_prompts:
-            try:
-                response = generate_response(
-                    model,
-                    tokenizer,
-                    prompt,
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    do_sample=do_sample,
-                    top_p=top_p,
-                )
-                batch_responses.append(response)
-            except Exception as e:
-                logger.error(f"Error generating response for prompt: {e}")
-                batch_responses.append(f"ERROR: {str(e)}")
-
-        responses.extend(batch_responses)
-        logger.info(f"Processed batch {i//batch_size + 1}/{(len(prompts)-1)//batch_size + 1}")
-
-    return responses
+            logger.info(f"✅ Copied {file_name}")
 
 
 def estimate_model_size(model) -> str:

@@ -15,12 +15,7 @@ logger = logging.getLogger(__name__)
 class EvalCallback(TrainerCallback):
     """Callback to trigger async LightEval CLI on checkpoint saves and at training start."""
 
-    def __init__(
-        self,
-        eval_config: EvaluationConfig,
-        source_model_path: str,
-        hf_home: str = "/raid/s3/opengptx/mfrey/huggingface",
-    ):
+    def __init__(self, eval_config: EvaluationConfig, source_model_path: str, hf_home: str):
         self.eval_config = eval_config
         self.source_model_path = source_model_path
         self.hf_home = hf_home
@@ -34,14 +29,11 @@ class EvalCallback(TrainerCallback):
     def on_save(self, args, state, control, **kwargs):
         """Trigger evaluation when checkpoint is saved."""
         checkpoint_path = os.path.join(args.output_dir, f"checkpoint-{state.global_step}")
-
-        # Check if checkpoint directory exists
-        if not os.path.exists(checkpoint_path):
-            logger.warning(f"⚠️  Checkpoint path {checkpoint_path} does not exist, skipping evaluation")
-            return
-
-        logger.info(f"💾 Checkpoint saved at step {state.global_step}, triggering evaluation...")
-        self.evaluator.submit_evaluation(checkpoint_path, state.global_step)
+        if os.path.exists(checkpoint_path):
+            logger.info(f"💾 Checkpoint saved at step {state.global_step}, triggering evaluation...")
+            self.evaluator.submit_evaluation(checkpoint_path, state.global_step)
+        else:
+            logger.warning(f"⚠️ Checkpoint path {checkpoint_path} does not exist, skipping evaluation")
 
     def on_train_end(self, args, state, control, **kwargs):
         """Wait for all evaluations to complete."""
@@ -58,10 +50,10 @@ class CustomSFTTrainer(SFTTrainer):
     def save_model(self, output_dir=None, _internal_call=False):
         """Save model with custom code files."""
         super().save_model(output_dir, _internal_call)
-
+        
         if output_dir is None:
             output_dir = self.args.output_dir
-
+        
         save_model_with_custom_code(self.model, output_dir, self.source_model_path)
         logger.info(f"Model saved with custom code to: {output_dir}")
 
@@ -71,8 +63,8 @@ def create_sft_config(training_config: TrainingConfig) -> SFTConfig:
     return SFTConfig(
         output_dir=training_config.output_dir,
         num_train_epochs=training_config.num_train_epochs,
-        per_device_train_batch_size=training_config.per_device_train_batch_size,
-        per_device_eval_batch_size=training_config.per_device_eval_batch_size,
+        per_device_train_batch_size=training_config.batch_size,
+        per_device_eval_batch_size=training_config.batch_size * training_config.gradient_accumulation_steps,
         gradient_accumulation_steps=training_config.gradient_accumulation_steps,
         learning_rate=training_config.learning_rate,
         weight_decay=training_config.weight_decay,
@@ -87,16 +79,18 @@ def create_sft_config(training_config: TrainingConfig) -> SFTConfig:
         greater_is_better=False,
         report_to=training_config.report_to,
         gradient_checkpointing=training_config.gradient_checkpointing,
-        fp16=training_config.fp16,
-        bf16=training_config.bf16,
         push_to_hub=training_config.push_to_hub,
-        use_liger_kernel=True,
-        packing=True,
-        completion_only_loss=False,
-        max_grad_norm=0.1,
-        optim="paged_adamw_8bit",
-        lr_scheduler_type="constant_with_warmup",
-        dataloader_num_workers=4,
+        # Performance optimizations from config
+        max_grad_norm=training_config.max_grad_norm,
+        optim=training_config.optim,
+        lr_scheduler_type=training_config.lr_scheduler_type,
+        dataloader_num_workers=training_config.dataloader_num_workers,
+        use_liger_kernel=training_config.use_liger_kernel,
+        packing=training_config.packing,
+        completion_only_loss=training_config.completion_only_loss,
+        # Fixed optimizations for research
+        bf16=True,
+        fp16=False,
     )
 
 
@@ -107,17 +101,22 @@ def setup_trainer(
     eval_dataset,
     source_model_path: str,
     training_config: TrainingConfig,
-    eval_config: EvaluationConfig,
+    eval_config: EvaluationConfig = None,
     hf_home: str = "/raid/s3/opengptx/mfrey/huggingface",
 ) -> CustomSFTTrainer:
     """Set up the custom SFT trainer with all configurations."""
-
+    
     # Create SFT config
     sft_config = create_sft_config(training_config)
-
+    
     # Create callbacks
-    callbacks = [EvalCallback(eval_config, source_model_path, hf_home)]
-
+    callbacks = []
+    if eval_config and eval_config.eval_enabled:
+        callbacks.append(EvalCallback(eval_config, source_model_path, hf_home))
+        logger.info("✅ Evaluation callback enabled")
+    else:
+        logger.info("⚠️ Evaluation callback disabled")
+    
     # Create trainer
     trainer = CustomSFTTrainer(
         source_model_path=source_model_path,
@@ -128,6 +127,6 @@ def setup_trainer(
         processing_class=tokenizer,
         callbacks=callbacks,
     )
-
+    
     logger.info("Trainer setup completed")
     return trainer

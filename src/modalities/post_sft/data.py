@@ -110,7 +110,7 @@ def load_single_dataset(
     logger.info(f"Loaded and formatted {len(ds)} examples from {dataset_name}")
     return ds
 
-def load_and_shuffle_multiple_datasets(
+def load_datasets(
     dataset_string: str,
     total_samples: int = None,
     eval_ratio: float = 0.001,
@@ -198,24 +198,3 @@ def display_dataset_samples(dataset, num_samples: int = 3):
                 else:
                     value_str = str(value)
                 print(f"  {key}: {value_str}")
-
-# Legacy function to maintain compatibility with existing code
-def load_and_format_dataset(
-    dataset_name: str, dataset_split: str = "train", test_size: float = 0.01, seed: int = 42, max_length: int = None
-):
-    """Load and format dataset for training."""
-    logger.info(f"Loading dataset: {dataset_name}")
-    # Load dataset
-    ds = load_dataset(dataset_name, dataset_split)
-    # Format dataset
-    def format_fn(example):
-        return format_dataset(dataset_name, example)
-    ds = ds.map(format_fn)['train']
-    # Split dataset
-    if test_size > 0:
-        ds = ds.train_test_split(test_size=test_size, seed=seed)
-        logger.info(f"Split dataset - Train: {len(ds['train'])}, Test: {len(ds['test'])}")
-    else:
-        ds = {"train": ds, "test": None}
-        logger.info(f"Using full dataset for training: {len(ds['train'])} samples")
-    return ds

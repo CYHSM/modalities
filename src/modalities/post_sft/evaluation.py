@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import wandb
-from model_utils import generate_response
-
 from config import EvaluationConfig
 
 logger = logging.getLogger(__name__)
@@ -101,16 +99,16 @@ def run_lighteval_cli(
         cmd_string = (
             f"lighteval accelerate "
             f'"{model_args}" '
-            f'"{eval_config.tasks}" '
-            f"--max-samples {eval_config.max_samples} "
+            f'"{eval_config.eval_tasks}" '
+            f"--max-samples {eval_config.eval_max_samples} "
         )
 
         # Set environment variables
         env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = str(eval_config.gpu_id)
+        env["CUDA_VISIBLE_DEVICES"] = str(eval_config.eval_gpu)
         env["HF_HOME"] = hf_home
 
-        logger.info(f"Running command: CUDA_VISIBLE_DEVICES={eval_config.gpu_id} {cmd_string}")
+        logger.info(f"Running command: CUDA_VISIBLE_DEVICES={eval_config.eval_gpu} {cmd_string}")
 
         # Run the evaluation
         result = subprocess.run(
@@ -120,7 +118,7 @@ def run_lighteval_cli(
             capture_output=True,
             text=True,
             check=False,
-            timeout=eval_config.timeout,
+            timeout=eval_config.eval_timeout,
             cwd=os.getcwd(),
         )
 
@@ -189,66 +187,13 @@ def parse_and_log_results(eval_results: Dict[str, Any], step: int) -> Dict[str, 
     return results_to_log
 
 
-def manual_evaluation(
-    model,
-    tokenizer,
-    test_problems: List[str] = None,
-    max_new_tokens: int = 512,
-    temperature: float = 0.7,
-    num_samples: int = 5,
-) -> Dict[str, Any]:
-    # Limit to num_samples
-    test_problems = test_problems[:num_samples]
-
-    logger.info(f"Running manual evaluation on {len(test_problems)} problems")
-
-    results = {"problems": [], "responses": [], "problem_response_pairs": []}
-
-    for i, problem in enumerate(test_problems):
-        logger.info(f"Evaluating problem {i+1}/{len(test_problems)}")
-
-        try:
-            response = generate_response(
-                model, tokenizer, problem, max_new_tokens=max_new_tokens, temperature=temperature
-            )
-
-            results["problems"].append(problem)
-            results["responses"].append(response)
-            results["problem_response_pairs"].append({"problem": problem, "response": response, "problem_index": i})
-
-            logger.info(f"Problem: {problem[:100]}...")
-            logger.info(f"Response: {response[:200]}...")
-            logger.info("-" * 50)
-
-        except Exception as e:
-            logger.error(f"Error evaluating problem {i}: {e}")
-            results["problems"].append(problem)
-            results["responses"].append(f"ERROR: {str(e)}")
-            results["problem_response_pairs"].append(
-                {"problem": problem, "response": f"ERROR: {str(e)}", "problem_index": i}
-            )
-
-    return results
-
-
-def save_manual_evaluation_results(results: Dict[str, Any], save_path: str):
-    """Save manual evaluation results to file."""
-    save_path = Path(save_path)
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(save_path, "w") as f:
-        json.dump(results, f, indent=2)
-
-    logger.info(f"Manual evaluation results saved to: {save_path}")
-
-
 class AsyncEvaluator:
     """Asynchronous evaluator for running evaluations in background."""
 
     def __init__(self, eval_config: EvaluationConfig, hf_home: str = "/raid/s3/opengptx/mfrey/huggingface"):
         self.eval_config = eval_config
         self.hf_home = hf_home
-        self.executor = ThreadPoolExecutor(max_workers=eval_config.max_workers)
+        self.executor = ThreadPoolExecutor(max_workers=eval_config.eval_max_workers)
         self.futures = []
 
         # Setup WandB metrics when evaluator is created
@@ -277,7 +222,7 @@ class AsyncEvaluator:
             logger.info("⏳ Waiting for remaining evaluations to complete...")
             for future, step in self.futures:
                 try:
-                    future.result(timeout=self.eval_config.timeout)
+                    future.result(timeout=self.eval_config.eval_timeout)
                     logger.info(f"✅ Evaluation completed for step {step}")
                 except Exception as e:
                     logger.error(f"❌ Evaluation failed for step {step}: {e}")
