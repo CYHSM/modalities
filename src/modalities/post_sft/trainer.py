@@ -95,9 +95,8 @@ def create_sft_config(training_config: TrainingConfig) -> SFTConfig:
         completion_only_loss=False,
         max_grad_norm=0.1,
         optim="paged_adamw_8bit",
-        adam_beta1=0.9,
-        adam_beta2=0.99,
-        lr_scheduler_type="cosine",
+        lr_scheduler_type="constant_with_warmup",
+        dataloader_num_workers=4,
     )
 
 

@@ -1,7 +1,7 @@
 """Configuration classes and default settings."""
 import os
 from dataclasses import dataclass, field
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Any
 
 import torch
 
@@ -60,9 +60,12 @@ class DataConfig:
 
     dataset_name: str = "nvidia/OpenMathInstruct-2"
     dataset_split: str = "train"
-    test_size: float = 0.0001
+    test_size: float = 0.00001
     seed: int = 42
     max_length: Optional[int] = None
+    use_multiple_datasets: bool = False
+    dataset_configs: List[Dict[str, Any]] = None
+
 
 
 @dataclass

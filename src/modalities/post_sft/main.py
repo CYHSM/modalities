@@ -9,7 +9,7 @@ from model_utils import get_model_info, load_model_and_tokenizer
 from trainer import setup_trainer
 
 from config import Config, DataConfig, EvaluationConfig, LoRAConfig, ModelConfig, TrainingConfig, WandBConfig
-from data import load_and_format_dataset
+from data import load_and_format_dataset, load_and_shuffle_multiple_datasets
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -235,13 +235,16 @@ def main():
 
         # Load dataset based on training mode
         logger.info("Loading dataset for SFT training...")
-        dataset = load_and_format_dataset(
-            config.data.dataset_name,
-            config.data.dataset_split,
-            config.data.test_size,
-            config.data.seed,
-            config.data.max_length,
-        )
+        # dataset = load_and_format_dataset(
+        #     config.data.dataset_name,
+        #     config.data.dataset_split,
+        #     config.data.test_size,
+        #     config.data.seed,
+        #     config.data.max_length,
+        # )
+
+        # Shuffled
+        dataset = load_and_shuffle_multiple_datasets(config.data.dataset_name, eval_ratio=config.data.test_size, total_samples=21e6)
         logger.info(f"SFT dataset loaded: {len(dataset['train'])} training samples")
 
         if args.dry_run:
@@ -267,14 +270,14 @@ def main():
             trainer.train(resume_from_checkpoint=args.resume_from)
         else:
             # Start training
-            logger.info("🚀 Starting training...")
+            logger.info(f"🚀 Starting training...")
             trainer.train()
 
         # Save final model
         logger.info("Saving final model...")
         trainer.save_model()
 
-        logger.info("✨ training completed successfully!")
+        logger.info(f"✨ training completed successfully!")
 
     except KeyboardInterrupt:
         logger.info("Training interrupted by user")
