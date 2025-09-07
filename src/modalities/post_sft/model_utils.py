@@ -110,6 +110,9 @@ def load_model_and_tokenizer(
             else:
                 raise
 
+    # model = torch.compile(model)
+    # logger.info("Model compiled with torch.compile")
+
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     # Setup chat format

@@ -20,7 +20,7 @@ def setup_wandb(config: Config):
         wandb_name = config.wandb.name
         if not wandb_name:
             dataset_name = config.data.dataset.split(':')[0].split('/')[-1]
-            wandb_name = f"{dataset_name}-ga{config.training.gradient_accumulation_steps}-lr{config.training.learning_rate}"
+            wandb_name = f"{dataset_name}-ga{config.training.gradient_accumulation_steps}-lr{config.training.learning_rate}-wd{config.training.weight_decay}-mgn{config.training.max_grad_norm}"
             if config.model.lora.use_lora:
                 wandb_name += f"-lora{config.model.lora.lora_r}"
         
@@ -114,7 +114,7 @@ def main():
         
         # Start training
         logger.info("🚀 Starting training...")
-        trainer.train()
+        trainer.train(resume_from_checkpoint=config.training.resume_from_checkpoint)
         
         # Save final model
         logger.info("Saving final model...")

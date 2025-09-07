@@ -53,7 +53,8 @@ class DataConfig:
 @dataclass
 class TrainingConfig:
     """Training configuration."""
-    output_dir: str = ""  # REQUIRED: set via --training.output-dir
+    resume_from_checkpoint: Optional[str] = None
+    output_dir: str = "" 
     num_train_epochs: int = 1
     batch_size: int = 1
     gradient_accumulation_steps: int = 4
@@ -71,7 +72,7 @@ class TrainingConfig:
     optim: str = "paged_adamw_8bit"
     lr_scheduler_type: str = "constant_with_warmup"
     dataloader_num_workers: int = 4
-    use_liger_kernel: bool = True
+    use_liger_kernel: bool = False
     packing: bool = True
     completion_only_loss: bool = False
 
@@ -82,10 +83,9 @@ class EvaluationConfig:
     eval_enabled: bool = True
     source_model_path: str = ""
     eval_gpu: int = 7
-    eval_max_samples: int = 100
+    eval_max_samples: int = 50
     eval_max_workers: int = 1
     eval_tasks: str = "leaderboard|arc:challenge|3|1,leaderboard|hellaswag|10|1,helm|mmlu|5|1,leaderboard|gsm8k|8|1,leaderboard|truthfulqa:mc|0|1"
-    eval_timeout: int = 3600
 
 
 @dataclass

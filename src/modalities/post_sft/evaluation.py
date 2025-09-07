@@ -115,10 +115,10 @@ def run_lighteval_cli(
             cmd_string,
             shell=True,
             env=env,
-            capture_output=True,
+            capture_output=False,
             text=True,
             check=False,
-            timeout=eval_config.eval_timeout,
+            preexec_fn=os.setsid,
             cwd=os.getcwd(),
         )
 

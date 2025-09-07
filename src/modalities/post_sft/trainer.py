@@ -58,8 +58,9 @@ class CustomSFTTrainer(SFTTrainer):
         logger.info(f"Model saved with custom code to: {output_dir}")
 
 
-def create_sft_config(training_config: TrainingConfig) -> SFTConfig:
+def create_sft_config(training_config: TrainingConfig, eval_config) -> SFTConfig:
     """Create SFTConfig from TrainingConfig."""
+    print(training_config)
     return SFTConfig(
         output_dir=training_config.output_dir,
         num_train_epochs=training_config.num_train_epochs,
@@ -72,15 +73,14 @@ def create_sft_config(training_config: TrainingConfig) -> SFTConfig:
         logging_steps=training_config.logging_steps,
         save_steps=training_config.save_steps,
         eval_steps=training_config.eval_steps,
-        eval_strategy="steps",
+        eval_strategy="steps" if eval_config.eval_enabled else "no",
         save_total_limit=training_config.save_total_limit,
-        load_best_model_at_end=True,
+        load_best_model_at_end=True if eval_config.eval_enabled else False,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         report_to=training_config.report_to,
         gradient_checkpointing=training_config.gradient_checkpointing,
         push_to_hub=training_config.push_to_hub,
-        # Performance optimizations from config
         max_grad_norm=training_config.max_grad_norm,
         optim=training_config.optim,
         lr_scheduler_type=training_config.lr_scheduler_type,
@@ -88,9 +88,9 @@ def create_sft_config(training_config: TrainingConfig) -> SFTConfig:
         use_liger_kernel=training_config.use_liger_kernel,
         packing=training_config.packing,
         completion_only_loss=training_config.completion_only_loss,
-        # Fixed optimizations for research
         bf16=True,
         fp16=False,
+        torch_compile=True,
     )
 
 
@@ -107,12 +107,12 @@ def setup_trainer(
     """Set up the custom SFT trainer with all configurations."""
     
     # Create SFT config
-    sft_config = create_sft_config(training_config)
+    sft_config = create_sft_config(training_config, eval_config)
     
     # Create callbacks
     callbacks = []
     if eval_config and eval_config.eval_enabled:
-        callbacks.append(EvalCallback(eval_config, source_model_path, hf_home))
+        callbacks.append(EvalCallback(eval_config, source_model_path if training_config.resume_from_checkpoint is None else training_config.resume_from_checkpoint, hf_home))
         logger.info("✅ Evaluation callback enabled")
     else:
         logger.info("⚠️ Evaluation callback disabled")
