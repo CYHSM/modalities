@@ -1,11 +1,14 @@
 """Custom trainer implementation with evaluation callbacks."""
 import logging
 import os
+import re
+import math
 
 from evaluation import AsyncEvaluator
 from model_utils import save_model_with_custom_code
 from transformers import TrainerCallback
 from trl import SFTConfig, SFTTrainer
+from torch.optim.lr_scheduler import LambdaLR
 
 from config import EvaluationConfig, TrainingConfig
 
@@ -57,11 +60,40 @@ class CustomSFTTrainer(SFTTrainer):
         save_model_with_custom_code(self.model, output_dir, self.source_model_path)
         logger.info(f"Model saved with custom code to: {output_dir}")
 
+    def create_scheduler(self, num_training_steps: int, optimizer=None):
+        """Override scheduler creation for custom LR decay from checkpoint."""
+        if optimizer is None:
+            optimizer = self.optimizer
+        
+        # Check if custom decay is configured
+        if (hasattr(self.args, 'lr_decay_from_step') and 
+            self.args.lr_decay_from_step is not None):
+            
+            decay_start = self.args.lr_decay_from_step
+            decay_steps = self.args.lr_decay_steps
+            
+            def lr_lambda(current_step):
+                if current_step < decay_start:
+                    return 1.0  # Full LR before decay
+                
+                # Cosine decay to 10% of original
+                progress = min((current_step - decay_start) / decay_steps, 1.0)
+                cosine_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
+                return 0.1 + 0.9 * cosine_factor  # From 100% to 10%
+            
+            self.lr_scheduler = LambdaLR(optimizer, lr_lambda)
+            logger.info(f"✅ Custom LR: cosine decay from step {decay_start} "
+                       f"over {decay_steps} steps (100% → 10%)")
+            return self.lr_scheduler
+        
+        # Default scheduler
+        return super().create_scheduler(num_training_steps, optimizer)
+
 
 def create_sft_config(training_config: TrainingConfig, eval_config) -> SFTConfig:
     """Create SFTConfig from TrainingConfig."""
     print(training_config)
-    return SFTConfig(
+    config = SFTConfig(
         output_dir=training_config.output_dir,
         num_train_epochs=training_config.num_train_epochs,
         per_device_train_batch_size=training_config.batch_size,
@@ -92,6 +124,11 @@ def create_sft_config(training_config: TrainingConfig, eval_config) -> SFTConfig
         fp16=False,
         torch_compile=True,
     )
+
+    config.lr_decay_from_step = training_config.lr_decay_from_step
+    config.lr_decay_steps = training_config.lr_decay_steps
+
+    return config
 
 
 def setup_trainer(
@@ -127,6 +164,6 @@ def setup_trainer(
         processing_class=tokenizer,
         callbacks=callbacks,
     )
-    
+
     logger.info("Trainer setup completed")
     return trainer

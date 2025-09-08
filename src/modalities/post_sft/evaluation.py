@@ -115,7 +115,7 @@ def run_lighteval_cli(
             cmd_string,
             shell=True,
             env=env,
-            capture_output=False,
+            capture_output=True,
             text=True,
             check=False,
             preexec_fn=os.setsid,
@@ -145,9 +145,6 @@ def run_lighteval_cli(
 
         return eval_results
 
-    except subprocess.TimeoutExpired:
-        logger.error(f"Evaluation timed out for step {step}")
-        return None
     except Exception as e:
         logger.error(f"Evaluation failed for step {step}: {e}")
         return None
@@ -222,7 +219,7 @@ class AsyncEvaluator:
             logger.info("⏳ Waiting for remaining evaluations to complete...")
             for future, step in self.futures:
                 try:
-                    future.result(timeout=self.eval_config.eval_timeout)
+                    future.result()
                     logger.info(f"✅ Evaluation completed for step {step}")
                 except Exception as e:
                     logger.error(f"❌ Evaluation failed for step {step}: {e}")

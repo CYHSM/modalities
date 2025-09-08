@@ -71,6 +71,8 @@ class TrainingConfig:
     max_grad_norm: float = 0.1
     optim: str = "paged_adamw_8bit"
     lr_scheduler_type: str = "constant_with_warmup"
+    lr_decay_from_step: Optional[int] = None
+    lr_decay_steps: int = 30000
     dataloader_num_workers: int = 4
     use_liger_kernel: bool = False
     packing: bool = True
