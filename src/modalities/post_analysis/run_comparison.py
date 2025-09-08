@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Example script to run model comparison
+Script to run model comparison and analysis
 """
 
 from model_compare import ModelComparator, ComparisonConfig
@@ -18,8 +18,6 @@ def main():
                        help="Directory to save results")
     parser.add_argument("--max_samples", type=int, default=100,
                        help="Maximum number of GSM8K samples to process")
-    parser.add_argument("--batch_size", type=int, default=1,
-                       help="Batch size for processing")
     parser.add_argument("--device", type=str, default="cuda",
                        help="Device to use (cuda/cpu)")
     parser.add_argument("--skip_weights", action="store_true",
@@ -34,7 +32,7 @@ def main():
     if not args.analyze_only:
         # Run comparison
         print("="*60)
-        print("STARTING MODEL COMPARISON")
+        print("🔍 STARTING MODEL COMPARISON")
         print("="*60)
         print(f"Base model: {args.base_model}")
         print(f"Fine-tuned model: {args.finetuned_model}")
@@ -47,7 +45,6 @@ def main():
             finetuned_model_path=args.finetuned_model,
             output_dir=args.output_dir,
             device=args.device,
-            batch_size=args.batch_size,
             max_samples=args.max_samples,
             compare_weights=not args.skip_weights,
             compare_activations=not args.skip_activations
@@ -57,19 +54,19 @@ def main():
         results = comparator.run_full_comparison()
         
         print("\n" + "="*60)
-        print("COMPARISON COMPLETE")
+        print("✅ COMPARISON COMPLETE")
         print("="*60)
     
     # Run analysis
     if Path(args.output_dir).exists():
         print("\n" + "="*60)
-        print("RUNNING ANALYSIS")
+        print("📊 RUNNING ANALYSIS")
         print("="*60)
         
         analyzer = ComparisonAnalyzer(args.output_dir)
         analyzer.run_full_analysis()
     else:
-        print(f"No results found in {args.output_dir}")
+        print(f"❌ No results found in {args.output_dir}")
 
 if __name__ == "__main__":
     main()

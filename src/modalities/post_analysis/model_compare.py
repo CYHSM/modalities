@@ -23,11 +23,10 @@ class ComparisonConfig:
     output_dir: str = "./comparison_results"
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     batch_size: int = 1
-    max_samples: Optional[int] = None  # Limit samples for testing
+    max_samples: Optional[int] = None
     max_length: int = 512
     compare_weights: bool = True
     compare_activations: bool = True
-    activation_layers: List[str] = None  # None means all layers
     
 class ModelComparator:
     """Main class for comparing two models"""
@@ -54,7 +53,7 @@ class ModelComparator:
             device_map=config.device
         )
         
-        # Load tokenizer (assuming same for both)
+        # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
             config.base_model_path,
             trust_remote_code=True
@@ -70,38 +69,36 @@ class ModelComparator:
         print("Comparing model weights...")
         results = {
             "layer_comparisons": {},
-            "summary_stats": {},
-            "skipped_layers": []
+            "summary_stats": {}
         }
         
         base_state = self.base_model.state_dict()
         ft_state = self.finetuned_model.state_dict()
         
         total_params = 0
-        total_diff = 0
-        skipped_count = 0
+        total_l1_diff = 0
+        total_l2_diff = 0
         
         for name in tqdm(base_state.keys(), desc="Comparing parameters"):
             if name not in ft_state:
                 print(f"Warning: {name} not in finetuned model - skipping")
-                results["skipped_layers"].append({"name": name, "reason": "not_in_finetuned"})
-                skipped_count += 1
                 continue
             
             base_param = base_state[name].float()
             ft_param = ft_state[name].float()
 
-            # Better method, base is [250880, 4096] and ft is [250882, 4096] so we just pad the base
+            # Handle size mismatch (tokenizer expansion)
             if base_param.numel() != ft_param.numel():
                 print(f"Warning: Parameter size mismatch for {name}: "
-                      f"base={base_param.shape}, ft={ft_param.shape} - attempting to pad")
-                ft_param = ft_param[0:base_param.shape[0], ...] # hack due to tokenizer adding extra tokens
-                print(f"After hack: base={base_param.shape}, ft={ft_param.shape}")
-
-            # Calculate metrics
+                      f"base={base_param.shape}, ft={ft_param.shape} - trimming ft")
+                ft_param = ft_param[0:base_param.shape[0], ...]
+            
+            # Calculate differences
             diff = ft_param - base_param
-            l2_distance = torch.norm(diff).item()
-            relative_change = l2_distance / (torch.norm(base_param).item() + 1e-8)
+            l1_distance = torch.norm(diff, p=1).item()
+            l2_distance = torch.norm(diff, p=2).item()
+            base_norm = torch.norm(base_param, p=2).item()
+            relative_change = l2_distance / (base_norm + 1e-8)
             
             # Cosine similarity
             base_flat = base_param.flatten()
@@ -111,31 +108,29 @@ class ModelComparator:
                 ft_flat.unsqueeze(0)
             ).item()
             
-            # Statistics
+            # Store statistics
             param_stats = {
                 "shape": list(base_param.shape),
                 "num_params": base_param.numel(),
+                "l1_distance": l1_distance,
                 "l2_distance": l2_distance,
                 "relative_change": relative_change,
                 "cosine_similarity": cosine_sim,
-                "base_mean": base_param.mean().item(),
-                "base_std": base_param.std().item(),
-                "ft_mean": ft_param.mean().item(),
-                "ft_std": ft_param.std().item(),
                 "max_abs_diff": diff.abs().max().item(),
             }
             
             results["layer_comparisons"][name] = param_stats
             total_params += base_param.numel()
-            total_diff += l2_distance
+            total_l1_diff += l1_distance
+            total_l2_diff += l2_distance
         
         # Summary statistics
+        num_layers = len(results["layer_comparisons"])
         results["summary_stats"] = {
             "total_parameters": total_params,
-            "average_l2_distance": total_diff / max(len(results["layer_comparisons"]), 1),
-            "num_layers_compared": len(results["layer_comparisons"]),
-            "num_layers_skipped": skipped_count,
-            "total_layers": len(base_state)
+            "average_l1_distance": total_l1_diff / max(num_layers, 1),
+            "average_l2_distance": total_l2_diff / max(num_layers, 1),
+            "num_layers_compared": num_layers,
         }
         
         # Save results
@@ -151,7 +146,6 @@ class ModelComparator:
         def hook(module, input, output):
             if isinstance(output, tuple):
                 output = output[0]
-            # Store on CPU to save GPU memory
             activations_dict[name] = output.detach().cpu()
         return hook
     
@@ -168,14 +162,10 @@ class ModelComparator:
             "layer_statistics": {}
         }
         
-        # Register hooks for both models
-        base_hooks = []
-        ft_hooks = []
-        
         # Identify layers to monitor
         layers_to_monitor = []
         for name, module in self.base_model.named_modules():
-            if 'layers' in name and name.endswith(('self_attn', 'mlp', 'norm', 'layernorm')):
+            if 'layers' in name and name.endswith(('self_attn', 'mlp', 'norm', 'layernorm', 'lm_head')):
                 layers_to_monitor.append(name)
         
         print(f"Monitoring {len(layers_to_monitor)} layers")
@@ -196,6 +186,8 @@ class ModelComparator:
             # Capture activations
             base_activations = {}
             ft_activations = {}
+            base_hooks = []
+            ft_hooks = []
             
             # Add hooks
             for name, module in self.base_model.named_modules():
@@ -218,12 +210,8 @@ class ModelComparator:
                 ft_outputs = self.finetuned_model(**inputs)
             
             # Remove hooks
-            for hook in base_hooks:
+            for hook in base_hooks + ft_hooks:
                 hook.remove()
-            for hook in ft_hooks:
-                hook.remove()
-            base_hooks.clear()
-            ft_hooks.clear()
             
             # Compare activations
             sample_comparison = {
@@ -240,51 +228,41 @@ class ModelComparator:
                 base_act = base_activations[layer_name]
                 ft_act = ft_activations[layer_name]
                 
-                # Check shape compatibility
                 if base_act.shape != ft_act.shape:
-                    print(f"Warning: Activation shape mismatch for {layer_name}: "
-                          f"base={base_act.shape}, ft={ft_act.shape} - skipping")
+                    print(f"Warning: Activation shape mismatch for {layer_name} - skipping")
                     continue
                 
                 # Calculate differences
                 diff = ft_act - base_act
                 layer_stats = {
-                    "l2_distance": torch.norm(diff).item(),
+                    "l1_distance": torch.norm(diff, p=1).item(),
+                    "l2_distance": torch.norm(diff, p=2).item(),
                     "cosine_similarity": torch.nn.functional.cosine_similarity(
                         base_act.flatten().unsqueeze(0),
                         ft_act.flatten().unsqueeze(0)
                     ).item(),
-                    "base_mean": base_act.mean().item(),
-                    "base_std": base_act.std().item(),
-                    "ft_mean": ft_act.mean().item(),
-                    "ft_std": ft_act.std().item(),
                     "max_abs_diff": diff.abs().max().item(),
-                    "mean_abs_diff": diff.abs().mean().item(),
                 }
                 sample_comparison["layer_comparisons"][layer_name] = layer_stats
                 
                 # Update layer statistics
                 if layer_name not in results["layer_statistics"]:
                     results["layer_statistics"][layer_name] = {
+                        "l1_distances": [],
                         "l2_distances": [],
-                        "cosine_similarities": [],
-                        "mean_abs_diffs": []
+                        "cosine_similarities": []
                     }
+                results["layer_statistics"][layer_name]["l1_distances"].append(
+                    layer_stats["l1_distance"]
+                )
                 results["layer_statistics"][layer_name]["l2_distances"].append(
                     layer_stats["l2_distance"]
                 )
                 results["layer_statistics"][layer_name]["cosine_similarities"].append(
                     layer_stats["cosine_similarity"]
                 )
-                results["layer_statistics"][layer_name]["mean_abs_diffs"].append(
-                    layer_stats["mean_abs_diff"]
-                )
             
             results["samples"].append(sample_comparison)
-            
-            # Save intermediate results every 10 samples
-            if (sample_idx + 1) % 10 == 0:
-                self._save_activation_results(results, intermediate=True)
             
             # Clear memory
             del base_activations, ft_activations
@@ -294,46 +272,31 @@ class ModelComparator:
         
         # Calculate aggregate statistics
         for layer_name, stats in results["layer_statistics"].items():
+            stats["mean_l1_distance"] = np.mean(stats["l1_distances"])
             stats["mean_l2_distance"] = np.mean(stats["l2_distances"])
-            stats["std_l2_distance"] = np.std(stats["l2_distances"])
             stats["mean_cosine_similarity"] = np.mean(stats["cosine_similarities"])
+            stats["std_l1_distance"] = np.std(stats["l1_distances"])
+            stats["std_l2_distance"] = np.std(stats["l2_distances"])
             stats["std_cosine_similarity"] = np.std(stats["cosine_similarities"])
         
-        self._save_activation_results(results, intermediate=False)
-        return results
-    
-    def _save_activation_results(self, results: Dict, intermediate: bool = False):
-        """Save activation comparison results"""
-        suffix = "_intermediate" if intermediate else ""
-        
-        # Save detailed results
-        output_file = self.output_dir / f"activation_comparison{suffix}.json"
-        
-        # Create a serializable version (exclude raw activation tensors)
+        # Save results
+        output_file = self.output_dir / "activation_comparison.json"
         save_results = {
             "layer_statistics": results["layer_statistics"],
-            "num_samples": len(results["samples"]),
-            "sample_summaries": [
-                {
-                    "sample_idx": s["sample_idx"],
-                    "question_preview": s["question"][:100],
-                    "num_layers_compared": len(s["layer_comparisons"])
-                }
-                for s in results["samples"]
-            ]
+            "num_samples": len(results["samples"])
         }
         
         with open(output_file, 'w') as f:
             json.dump(save_results, f, indent=2)
         
-        # Save per-sample details separately
-        samples_file = self.output_dir / f"activation_samples{suffix}.json"
+        samples_file = self.output_dir / "activation_samples.json"
         with open(samples_file, 'w') as f:
             json.dump(results["samples"], f, indent=2)
         
-        if not intermediate:
-            print(f"Activation comparison saved to {output_file}")
-            print(f"Sample details saved to {samples_file}")
+        print(f"Activation comparison saved to {output_file}")
+        print(f"Sample details saved to {samples_file}")
+        
+        return results
     
     def run_full_comparison(self):
         """Run complete comparison pipeline"""

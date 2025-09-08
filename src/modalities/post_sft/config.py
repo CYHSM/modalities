@@ -9,14 +9,22 @@ import torch
 @dataclass
 class LoRAConfig:
     """LoRA configuration for parameter-efficient fine-tuning."""
+
     use_lora: bool = False
     lora_r: int = 128
     lora_alpha: int = 256
     lora_dropout: float = 0.05
     target_modules: List[str] = field(
         default_factory=lambda: [
-            "embed_tokens", "q_proj", "k_proj", "v_proj", "o_proj",
-            "gate_proj", "up_proj", "down_proj", "lm_head"
+            "embed_tokens",
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            "lm_head",
         ]
     )
     bias: str = "none"
@@ -28,6 +36,7 @@ class LoRAConfig:
 @dataclass
 class ModelConfig:
     """Model configuration."""
+
     model_path: str = ""
     device: str = "cuda"
     trust_remote_code: bool = True
@@ -43,6 +52,7 @@ class ModelConfig:
 @dataclass
 class DataConfig:
     """Dataset configuration."""
+
     dataset: str = "nvidia/OpenMathInstruct-2:train:1.0"  # format: "dataset:subset:weight,dataset2:subset2:weight2"
     test_size: float = 0.0001
     seed: int = 42
@@ -53,8 +63,9 @@ class DataConfig:
 @dataclass
 class TrainingConfig:
     """Training configuration."""
+
     resume_from_checkpoint: Optional[str] = None
-    output_dir: str = "" 
+    output_dir: str = ""
     num_train_epochs: int = 1
     batch_size: int = 1
     gradient_accumulation_steps: int = 4
@@ -82,6 +93,7 @@ class TrainingConfig:
 @dataclass
 class EvaluationConfig:
     """Evaluation configuration."""
+
     eval_enabled: bool = True
     source_model_path: str = ""
     eval_gpu: int = 7
@@ -93,6 +105,7 @@ class EvaluationConfig:
 @dataclass
 class WandBConfig:
     """Weights & Biases configuration."""
+
     project: str = "sft-Aug2025"
     name: Optional[str] = None
     tags: List[str] = field(default_factory=list)
@@ -102,6 +115,7 @@ class WandBConfig:
 @dataclass
 class Config:
     """Main configuration class."""
+
     model: ModelConfig = field(default_factory=ModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
