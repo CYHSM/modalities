@@ -140,7 +140,9 @@ class ComparisonAnalyzer:
                 layer_data.append({
                     'layer': name,
                     'short_name': self._shorten_layer_name(name),
-                    'l1_distance': stats.get('l1_distance', 0),
+                    'mean_diff': stats.get('mean_diff', 0),
+                    'std_diff': stats.get('std_diff', 0),
+                    'abs_mean_diff': stats.get('abs_mean_diff', 0),
                     'cosine_similarity': stats['cosine_similarity'],
                     'layer_number': self._get_layer_number(name)
                 })
@@ -151,7 +153,9 @@ class ComparisonAnalyzer:
                 layer_data.append({
                     'layer': name,
                     'short_name': self._shorten_layer_name(name),
-                    'l1_distance': stats.get('mean_l1_distance', 0),
+                    'mean_diff': stats.get('mean_mean_diff', 0),
+                    'std_diff': stats.get('mean_std_diff', 0), 
+                    'abs_mean_diff': stats.get('mean_abs_mean_diff', 0),
                     'cosine_similarity': stats['mean_cosine_similarity'],
                     'layer_number': self._get_layer_number(name)
                 })
@@ -165,25 +169,25 @@ class ComparisonAnalyzer:
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         fig.suptitle(f'{title_prefix} Comparison Analysis', fontsize=15, fontweight='bold')
         
-        # 1. L1 distance across layers (top left)
+        # 1. Mean absolute difference across layers (top left)
         ax = axes[0, 0]
         if len(df_sorted) > 0:
             x_indices = range(len(df_sorted))
-            ax.plot(x_indices, df_sorted['l1_distance'].values, marker='o', markersize=6, 
+            ax.plot(x_indices, df_sorted['abs_mean_diff'].values, marker='o', markersize=6, 
                     linewidth=2, color='steelblue', markerfacecolor='white', 
                     markeredgewidth=2)
             
             # Add trend line
             if len(df_sorted) > 1:
-                z = np.polyfit(x_indices, df_sorted['l1_distance'].values, 1)
+                z = np.polyfit(x_indices, df_sorted['abs_mean_diff'].values, 1)
                 p = np.poly1d(z)
                 ax.plot(x_indices, p(x_indices), "--", alpha=0.7, color='red', 
                         label=f'Trend: {z[0]:.2e}')
                 ax.legend()
         
         ax.set_xlabel('Layer Index')
-        ax.set_ylabel('L1 Distance')
-        ax.set_title('L1 Distance Across Layers', fontweight='bold')
+        ax.set_ylabel('Mean |Δ| per Parameter')
+        ax.set_title('Average Parameter Change Magnitude', fontweight='bold')
         ax.grid(True, alpha=0.4)
         ax.set_facecolor('white')
         
@@ -280,10 +284,14 @@ class ComparisonAnalyzer:
         print("\n" + "="*60)
         print("WEIGHT COMPARISON SUMMARY")
         print("="*60)
-        print(f"Total parameters compared: {self.weight_results['summary_stats']['total_parameters']:,}")
-        print(f"Average L1 distance: {self.weight_results['summary_stats']['average_l1_distance']:.4f}")
-        print(f"Average L2 distance: {self.weight_results['summary_stats']['average_l2_distance']:.4f}")
+        print(f"Total layers compared: {len(df)}")
+        print(f"Average |change| per parameter: {df['abs_mean_diff'].mean():.6f}")
+        print(f"Average change variability (std): {df['std_diff'].mean():.6f}")
         print(f"Median cosine similarity: {df['cosine_similarity'].median():.4f}")
+        
+        print(f"\nLayers with largest parameter changes:")
+        for _, row in df.nlargest(5, 'abs_mean_diff').iterrows():
+            print(f"  {row['short_name']}: {row['abs_mean_diff']:.6f}")
         
         print(f"\nMost different layers (lowest cosine similarity):")
         for _, row in df.nsmallest(5, 'cosine_similarity').iterrows():
@@ -308,12 +316,140 @@ class ComparisonAnalyzer:
         print("="*60)
         print(f"Number of samples analyzed: {self.activation_results['num_samples']}")
         print(f"Number of layers compared: {len(df)}")
-        print(f"Average L1 distance: {df['l1_distance'].mean():.4f}")
+        print(f"Average activation difference: {df['abs_mean_diff'].mean():.6f}")
         print(f"Average cosine similarity: {df['cosine_similarity'].mean():.4f}")
+        
+        print(f"\nLayers with largest activation differences:")
+        for _, row in df.nlargest(5, 'abs_mean_diff').iterrows():
+            print(f"  {row['short_name']}: {row['abs_mean_diff']:.6f}")
         
         print(f"\nMost different layers (lowest cosine similarity):")
         for _, row in df.nsmallest(5, 'cosine_similarity').iterrows():
             print(f"  {row['short_name']}: {row['cosine_similarity']:.4f}")
+    
+    def create_distribution_analysis(self):
+        """Create detailed distribution analysis plots"""
+        if not self.weight_results:
+            print("No weight comparison results found")
+            return
+        
+        # Extract distribution data
+        layers = []
+        for name, stats in self.weight_results['layer_comparisons'].items():
+            layer_data = {
+                'layer': name,
+                'short_name': self._shorten_layer_name(name),
+                'mean_diff': stats.get('mean_diff', 0),
+                'median_diff': stats.get('median_diff', 0),
+                'std_diff': stats.get('std_diff', 0),
+                'min_diff': stats.get('min_diff', 0),
+                'max_diff': stats.get('max_diff', 0),
+                'num_positive': stats.get('num_positive', 0),
+                'num_negative': stats.get('num_negative', 0),
+                'num_unchanged': stats.get('num_unchanged', 0),
+                'layer_number': self._get_layer_number(name)
+            }
+            layers.append(layer_data)
+        
+        df = pd.DataFrame(layers)
+        df_sorted = df[df['layer_number'] >= 0].sort_values('layer_number')
+        
+        # Create distribution analysis plots
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        fig.suptitle('Parameter Change Distribution Analysis', fontsize=16, fontweight='bold')
+        
+        # 1. Mean vs Median (bias detection)
+        ax = axes[0, 0]
+        if len(df_sorted) > 0:
+            ax.scatter(df_sorted['mean_diff'], df_sorted['median_diff'], 
+                      alpha=0.7, s=60, color='steelblue')
+            # Add diagonal line
+            min_val = min(df_sorted['mean_diff'].min(), df_sorted['median_diff'].min())
+            max_val = max(df_sorted['mean_diff'].max(), df_sorted['median_diff'].max())
+            ax.plot([min_val, max_val], [min_val, max_val], 'r--', alpha=0.7)
+        ax.set_xlabel('Mean Difference')
+        ax.set_ylabel('Median Difference')
+        ax.set_title('Mean vs Median Change\n(Bias Detection)')
+        ax.grid(True, alpha=0.3)
+        
+        # 2. Standard deviation across layers
+        ax = axes[0, 1]
+        if len(df_sorted) > 0:
+            x_indices = range(len(df_sorted))
+            ax.plot(x_indices, df_sorted['std_diff'].values, marker='o', 
+                   linewidth=2, color='forestgreen')
+        ax.set_xlabel('Layer Index')
+        ax.set_ylabel('Standard Deviation')
+        ax.set_title('Parameter Change Variability')
+        ax.grid(True, alpha=0.3)
+        
+        # 3. Range (max - min) across layers
+        ax = axes[0, 2]
+        if len(df_sorted) > 0:
+            range_vals = df_sorted['max_diff'] - df_sorted['min_diff']
+            ax.plot(x_indices, range_vals, marker='s', 
+                   linewidth=2, color='orange')
+        ax.set_xlabel('Layer Index')
+        ax.set_ylabel('Range (Max - Min)')
+        ax.set_title('Parameter Change Range')
+        ax.grid(True, alpha=0.3)
+        
+        # 4. Positive vs Negative changes
+        ax = axes[1, 0]
+        if len(df_sorted) > 0:
+            total_params = df_sorted['num_positive'] + df_sorted['num_negative'] + df_sorted['num_unchanged']
+            pos_ratio = df_sorted['num_positive'] / total_params
+            neg_ratio = df_sorted['num_negative'] / total_params
+            
+            ax.plot(x_indices, pos_ratio, marker='o', label='Positive', linewidth=2)
+            ax.plot(x_indices, neg_ratio, marker='s', label='Negative', linewidth=2)
+            ax.legend()
+        ax.set_xlabel('Layer Index')
+        ax.set_ylabel('Ratio of Parameters')
+        ax.set_title('Positive vs Negative Changes')
+        ax.grid(True, alpha=0.3)
+        
+        # 6. Extreme changes (outliers)
+        ax = axes[1, 2]
+        if len(df_sorted) > 0:
+            ax.plot(x_indices, np.abs(df_sorted['min_diff']), 
+                   marker='v', label='|Min|', linewidth=2)
+            ax.plot(x_indices, df_sorted['max_diff'], 
+                   marker='^', label='Max', linewidth=2)
+            ax.legend()
+        ax.set_xlabel('Layer Index')
+        ax.set_ylabel('Extreme Values')
+        ax.set_title('Largest Parameter Changes')
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        output_file = self.results_dir / "distribution_analysis.png"
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        print(f"Distribution analysis saved to {output_file}")
+        plt.show()
+        
+        # Print distribution insights
+        print("\n" + "="*60)
+        print("DISTRIBUTION ANALYSIS INSIGHTS")
+        print("="*60)
+        
+        # Bias analysis
+        systematic_bias = df['mean_diff'].mean()
+        print(f"Overall systematic bias: {systematic_bias:.6f}")
+        if abs(systematic_bias) > 1e-6:
+            bias_direction = "increasing" if systematic_bias > 0 else "decreasing"
+            print(f"  → Model parameters are {bias_direction} on average")
+        else:
+            print("  → No significant systematic bias detected")
+        
+        # Variability analysis
+        avg_std = df['std_diff'].mean()
+        print(f"Average parameter variability: {avg_std:.6f}")
+        
+        # Most variable layers
+        print("\nLayers with highest parameter change variability:")
+        for _, row in df.nlargest(3, 'std_diff').iterrows():
+            print(f"  {row['short_name']}: std={row['std_diff']:.6f}")
     
     def run_full_analysis(self):
         """Run all analyses"""
@@ -321,6 +457,7 @@ class ComparisonAnalyzer:
         
         if self.weight_results:
             self.analyze_weight_changes()
+            self.create_distribution_analysis()
         
         if self.activation_results:
             self.analyze_activation_differences()

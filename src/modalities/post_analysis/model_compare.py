@@ -64,6 +64,22 @@ class ModelComparator:
         self.base_model.eval()
         self.finetuned_model.eval()
     
+    def _calculate_distribution_stats(self, diff_tensor):
+        """Calculate comprehensive distribution statistics for parameter differences"""
+        diff_flat = diff_tensor.flatten()
+        
+        return {
+            "mean_diff": float(torch.mean(diff_flat)),
+            "median_diff": float(torch.median(diff_flat)),
+            "std_diff": float(torch.std(diff_flat)),
+            "min_diff": float(torch.min(diff_flat)),
+            "max_diff": float(torch.max(diff_flat)),
+            "abs_mean_diff": float(torch.mean(torch.abs(diff_flat))),
+            "num_positive": int(torch.sum(diff_flat > 0)),
+            "num_negative": int(torch.sum(diff_flat < 0)),
+            "num_unchanged": int(torch.sum(diff_flat == 0)),
+        }
+    
     def compare_weights(self) -> Dict[str, Any]:
         """Compare weights between base and finetuned models"""
         print("Comparing model weights...")
@@ -76,8 +92,6 @@ class ModelComparator:
         ft_state = self.finetuned_model.state_dict()
         
         total_params = 0
-        total_l1_diff = 0
-        total_l2_diff = 0
         
         for name in tqdm(base_state.keys(), desc="Comparing parameters"):
             if name not in ft_state:
@@ -93,12 +107,9 @@ class ModelComparator:
                       f"base={base_param.shape}, ft={ft_param.shape} - trimming ft")
                 ft_param = ft_param[0:base_param.shape[0], ...]
             
-            # Calculate differences
+            # Calculate differences and distribution stats
             diff = ft_param - base_param
-            l1_distance = torch.norm(diff, p=1).item()
-            l2_distance = torch.norm(diff, p=2).item()
-            base_norm = torch.norm(base_param, p=2).item()
-            relative_change = l2_distance / (base_norm + 1e-8)
+            dist_stats = self._calculate_distribution_stats(diff)
             
             # Cosine similarity
             base_flat = base_param.flatten()
@@ -108,28 +119,21 @@ class ModelComparator:
                 ft_flat.unsqueeze(0)
             ).item()
             
-            # Store statistics
+            # Store comprehensive statistics
             param_stats = {
                 "shape": list(base_param.shape),
                 "num_params": base_param.numel(),
-                "l1_distance": l1_distance,
-                "l2_distance": l2_distance,
-                "relative_change": relative_change,
                 "cosine_similarity": cosine_sim,
-                "max_abs_diff": diff.abs().max().item(),
+                **dist_stats  # Unpack all distribution statistics
             }
             
             results["layer_comparisons"][name] = param_stats
             total_params += base_param.numel()
-            total_l1_diff += l1_distance
-            total_l2_diff += l2_distance
         
         # Summary statistics
         num_layers = len(results["layer_comparisons"])
         results["summary_stats"] = {
             "total_parameters": total_params,
-            "average_l1_distance": total_l1_diff / max(num_layers, 1),
-            "average_l2_distance": total_l2_diff / max(num_layers, 1),
             "num_layers_compared": num_layers,
         }
         
@@ -232,35 +236,34 @@ class ModelComparator:
                     print(f"Warning: Activation shape mismatch for {layer_name} - skipping")
                     continue
                 
-                # Calculate differences
+                # Calculate differences and distribution stats
                 diff = ft_act - base_act
+                dist_stats = self._calculate_distribution_stats(diff)
+                
+                # Cosine similarity
+                cosine_sim = torch.nn.functional.cosine_similarity(
+                    base_act.flatten().unsqueeze(0),
+                    ft_act.flatten().unsqueeze(0)
+                ).item()
+                
                 layer_stats = {
-                    "l1_distance": torch.norm(diff, p=1).item(),
-                    "l2_distance": torch.norm(diff, p=2).item(),
-                    "cosine_similarity": torch.nn.functional.cosine_similarity(
-                        base_act.flatten().unsqueeze(0),
-                        ft_act.flatten().unsqueeze(0)
-                    ).item(),
-                    "max_abs_diff": diff.abs().max().item(),
+                    "cosine_similarity": cosine_sim,
+                    **dist_stats  # Include all distribution statistics
                 }
+                
                 sample_comparison["layer_comparisons"][layer_name] = layer_stats
                 
                 # Update layer statistics
                 if layer_name not in results["layer_statistics"]:
                     results["layer_statistics"][layer_name] = {
-                        "l1_distances": [],
-                        "l2_distances": [],
-                        "cosine_similarities": []
+                        stat_name: [] for stat_name in dist_stats.keys()
                     }
-                results["layer_statistics"][layer_name]["l1_distances"].append(
-                    layer_stats["l1_distance"]
-                )
-                results["layer_statistics"][layer_name]["l2_distances"].append(
-                    layer_stats["l2_distance"]
-                )
-                results["layer_statistics"][layer_name]["cosine_similarities"].append(
-                    layer_stats["cosine_similarity"]
-                )
+                    results["layer_statistics"][layer_name]["cosine_similarities"] = []
+                
+                # Collect all statistics for aggregation
+                for stat_name, value in dist_stats.items():
+                    results["layer_statistics"][layer_name][stat_name].append(value)
+                results["layer_statistics"][layer_name]["cosine_similarities"].append(cosine_sim)
             
             results["samples"].append(sample_comparison)
             
@@ -272,12 +275,13 @@ class ModelComparator:
         
         # Calculate aggregate statistics
         for layer_name, stats in results["layer_statistics"].items():
-            stats["mean_l1_distance"] = np.mean(stats["l1_distances"])
-            stats["mean_l2_distance"] = np.mean(stats["l2_distances"])
-            stats["mean_cosine_similarity"] = np.mean(stats["cosine_similarities"])
-            stats["std_l1_distance"] = np.std(stats["l1_distances"])
-            stats["std_l2_distance"] = np.std(stats["l2_distances"])
-            stats["std_cosine_similarity"] = np.std(stats["cosine_similarities"])
+            for stat_name in list(stats.keys()):
+                if stat_name == "cosine_similarities":
+                    stats["mean_cosine_similarity"] = np.mean(stats[stat_name])
+                    stats["std_cosine_similarity"] = np.std(stats[stat_name])
+                else:
+                    stats[f"mean_{stat_name}"] = np.mean(stats[stat_name])
+                    stats[f"std_{stat_name}"] = np.std(stats[stat_name])
         
         # Save results
         output_file = self.output_dir / "activation_comparison.json"
