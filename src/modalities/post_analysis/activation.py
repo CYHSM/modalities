@@ -1,44 +1,26 @@
 """
-Model Comparison Library
-Compare weights and activations between base and fine-tuned models
+Activation comparison between base and fine-tuned models
 """
 
 import torch
-import torch.nn as nn
+import json
+import gc
+import numpy as np
+from pathlib import Path
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
-from pathlib import Path
-import numpy as np
-import json
-from typing import Dict, List, Tuple, Optional, Any
-from dataclasses import dataclass, asdict
 from tqdm import tqdm
-import gc
-
+from typing import Dict, Any
 from utils import calculate_distribution_stats, calculate_cosine_similarity
 
-@dataclass
-class ComparisonConfig:
-    """Configuration for model comparison"""
-    base_model_path: str
-    finetuned_model_path: str
-    output_dir: str = "./comparison_results"
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    batch_size: int = 1
-    max_samples: Optional[int] = None
-    max_length: int = 512
-    compare_weights: bool = True
-    compare_activations: bool = True
+
+class ActivationComparator:
+    """Compare activations between base and fine-tuned models"""
     
-class ModelComparator:
-    """Main class for comparing two models"""
-    
-    def __init__(self, config: ComparisonConfig):
+    def __init__(self, config):
         self.config = config
         self.output_dir = Path(config.output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Load models
         print(f"Loading base model from {config.base_model_path}")
         self.base_model = AutoModelForCausalLM.from_pretrained(
             config.base_model_path,
@@ -66,66 +48,6 @@ class ModelComparator:
         self.base_model.eval()
         self.finetuned_model.eval()
     
-    def compare_weights(self) -> Dict[str, Any]:
-        """Compare weights between base and finetuned models"""
-        print("Comparing model weights...")
-        results = {
-            "layer_comparisons": {},
-            "summary_stats": {}
-        }
-        
-        base_state = self.base_model.state_dict()
-        ft_state = self.finetuned_model.state_dict()
-        
-        total_params = 0
-        
-        for name in tqdm(base_state.keys(), desc="Comparing parameters"):
-            if name not in ft_state:
-                print(f"Warning: {name} not in finetuned model - skipping")
-                continue
-            
-            base_param = base_state[name].float()
-            ft_param = ft_state[name].float()
-
-            # Handle size mismatch (tokenizer expansion)
-            if base_param.numel() != ft_param.numel():
-                print(f"Warning: Parameter size mismatch for {name}: "
-                      f"base={base_param.shape}, ft={ft_param.shape} - trimming ft")
-                ft_param = ft_param[0:base_param.shape[0], ...]
-            
-            # Calculate differences and distribution stats
-            diff = ft_param - base_param
-            dist_stats = calculate_distribution_stats(diff)
-            
-            # Cosine similarity
-            cosine_sim = calculate_cosine_similarity(base_param, ft_param)
-            
-            # Store comprehensive statistics
-            param_stats = {
-                "shape": list(base_param.shape),
-                "num_params": base_param.numel(),
-                "cosine_similarity": cosine_sim,
-                **dist_stats  # Unpack all distribution statistics
-            }
-            
-            results["layer_comparisons"][name] = param_stats
-            total_params += base_param.numel()
-        
-        # Summary statistics
-        num_layers = len(results["layer_comparisons"])
-        results["summary_stats"] = {
-            "total_parameters": total_params,
-            "num_layers_compared": num_layers,
-        }
-        
-        # Save results
-        output_file = self.output_dir / "weight_comparison.json"
-        with open(output_file, 'w') as f:
-            json.dump(results, f, indent=2)
-        print(f"Weight comparison saved to {output_file}")
-        
-        return results
-    
     def _get_activation_hook(self, activations_dict: Dict, name: str):
         """Create a hook to capture activations"""
         def hook(module, input, output):
@@ -134,7 +56,23 @@ class ModelComparator:
             activations_dict[name] = output.detach().cpu()
         return hook
     
-    def compare_activations_on_gsm8k(self) -> Dict[str, Any]:
+    def _get_all_layers_to_monitor(self):
+        """Get ALL layers to monitor, not just specific ones"""
+        layers_to_monitor = []
+        
+        # Get all named modules
+        for name, module in self.base_model.named_modules():
+            # Skip container modules that don't have their own parameters
+            if len(list(module.children())) == 0:  # Leaf modules only
+                # Skip very basic modules
+                if not any(skip_type in str(type(module)) for skip_type in 
+                          ['Dropout', 'Identity', 'ReLU', 'GELU', 'SiLU']):
+                    layers_to_monitor.append(name)
+        
+        print(f"Monitoring {len(layers_to_monitor)} layers out of {len(list(self.base_model.named_modules()))} total modules")
+        return layers_to_monitor
+    
+    def compare_activations(self) -> Dict[str, Any]:
         """Compare model activations on GSM8K dataset"""
         print("Loading GSM8K dataset...")
         dataset = load_dataset("gsm8k", "main", split="test")
@@ -147,15 +85,8 @@ class ModelComparator:
             "layer_statistics": {}
         }
         
-        # Identify layers to monitor
-        layers_to_monitor = []
-        for name, module in self.base_model.named_modules():
-            print(f"Checking layer: {name}")
-            if 'layers' in name and name.endswith(('self_attn', 'mlp', 'norm', 'layernorm', 'lm_head')):
-                print(f"Monitoring layer: {name}")
-                layers_to_monitor.append(name)
-        
-        print(f"Monitoring {len(layers_to_monitor)} of {len(list(self.base_model.named_modules()))} total layers")
+        # Get ALL layers to monitor
+        layers_to_monitor = self._get_all_layers_to_monitor()
         
         for sample_idx, sample in enumerate(tqdm(dataset, desc="Processing samples")):
             question = sample['question']
@@ -176,7 +107,7 @@ class ModelComparator:
             base_hooks = []
             ft_hooks = []
             
-            # Add hooks
+            # Add hooks for ALL layers
             for name, module in self.base_model.named_modules():
                 if name in layers_to_monitor:
                     hook = module.register_forward_hook(
@@ -216,8 +147,8 @@ class ModelComparator:
                 ft_act = ft_activations[layer_name]
                 
                 if base_act.shape != ft_act.shape:
-                    print(f"Warning: Activation shape mismatch for {layer_name} - skipping")
-                    continue
+                    print(f"Warning: Activation shape mismatch for {layer_name} - trimming")
+                    ft_act = ft_act[0:base_act.shape[0], ...]
                 
                 # Calculate differences and distribution stats
                 diff = ft_act - base_act
@@ -281,45 +212,3 @@ class ModelComparator:
         print(f"Sample details saved to {samples_file}")
         
         return results
-    
-    def run_full_comparison(self):
-        """Run complete comparison pipeline"""
-        results = {}
-        
-        if self.config.compare_weights:
-            results["weights"] = self.compare_weights()
-        
-        if self.config.compare_activations:
-            results["activations"] = self.compare_activations_on_gsm8k()
-        
-        # Save summary
-        summary_file = self.output_dir / "comparison_summary.json"
-        summary = {
-            "config": asdict(self.config),
-            "weights_compared": self.config.compare_weights,
-            "activations_compared": self.config.compare_activations,
-        }
-        
-        with open(summary_file, 'w') as f:
-            json.dump(summary, f, indent=2)
-        
-        print(f"Comparison complete! Results saved to {self.output_dir}")
-        return results
-
-
-def compare_models(
-    base_model_path: str,
-    finetuned_model_path: str,
-    output_dir: str = "./comparison_results",
-    **kwargs
-) -> Dict[str, Any]:
-    """Convenience function to compare two models"""
-    config = ComparisonConfig(
-        base_model_path=base_model_path,
-        finetuned_model_path=finetuned_model_path,
-        output_dir=output_dir,
-        **kwargs
-    )
-    
-    comparator = ModelComparator(config)
-    return comparator.run_full_comparison()

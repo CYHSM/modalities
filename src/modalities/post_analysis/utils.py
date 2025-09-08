@@ -89,15 +89,15 @@ def categorize_layers(layer_names: List[str]) -> List[str]:
     """Categorize layers by type"""
     layer_types = []
     for name in layer_names:
-        if 'self_attn' in name:
+        if 'self_attn' in name or 'attention' in name.lower():
             layer_types.append('Attention')
-        elif 'mlp' in name:
+        elif 'mlp' in name or 'feed_forward' in name:
             layer_types.append('MLP')
-        elif any(norm in name for norm in ['norm', 'layernorm']):
+        elif any(norm in name for norm in ['norm', 'layernorm', 'layer_norm']):
             layer_types.append('Normalization')
         elif 'embed' in name:
             layer_types.append('Embedding')
-        elif 'lm_head' in name:
+        elif 'lm_head' in name or 'output' in name:
             layer_types.append('LM Head')
         else:
             layer_types.append('Other')
@@ -114,14 +114,14 @@ def get_layer_number(name: str) -> int:
 
 
 def get_layer_type_colors():
-    """Get consistent colors for layer types"""
+    """Get consistent colors for layer types with better visibility"""
     return {
-        'Attention': '#FF6B6B',
-        'MLP': '#4ECDC4', 
-        'Normalization': '#45B7D1',
-        'Embedding': '#96CEB4',
-        'LM Head': '#FFEAA7',
-        'Other': '#DDA0DD'
+        'Attention': '#E74C3C',      # Bright red
+        'MLP': '#3498DB',           # Bright blue  
+        'Normalization': '#2ECC71',  # Bright green
+        'Embedding': '#F39C12',      # Bright orange
+        'LM Head': '#9B59B6',        # Bright purple
+        'Other': '#34495E'           # Dark gray
     }
 
 
@@ -129,7 +129,7 @@ def group_layers_by_actual_layer(layer_data: List[Dict]) -> Tuple[List[int], Lis
     """Group layers by actual layer number for cleaner x-axis"""
     # Filter out layers without layer numbers and sort
     numbered_layers = [l for l in layer_data if l['layer_number'] >= 0]
-    numbered_layers.sort(key=lambda x: x['layer_number'])
+    numbered_layers.sort(key=lambda x: (x['layer_number'], x['layer_type']))
     
     # Group by layer number
     layer_groups = {}
@@ -144,9 +144,12 @@ def group_layers_by_actual_layer(layer_data: List[Dict]) -> Tuple[List[int], Lis
     x_labels = []
     layer_types = []
     
-    for i, (layer_num, layers) in enumerate(sorted(layer_groups.items())):
-        x_positions.extend([i] * len(layers))
-        x_labels.extend([f"L{layer_num}"] * len(layers))
-        layer_types.extend([categorize_layers([l['layer']])[0] for l in layers])
+    for layer_num, layers in sorted(layer_groups.items()):
+        for i, layer in enumerate(layers):
+            # Spread components within each layer
+            x_pos = layer_num + (i - len(layers)/2 + 0.5) * 0.1
+            x_positions.append(x_pos)
+            x_labels.append(f"L{layer_num}")
+            layer_types.append(layer['layer_type'])
     
     return x_positions, x_labels, layer_types
