@@ -4,7 +4,7 @@ Script to run model comparison and analysis
 """
 
 from model_compare import ModelComparator, ComparisonConfig
-from analyze_results import ComparisonAnalyzer
+from analyzer import ComparisonAnalyzer
 import argparse
 from pathlib import Path
 

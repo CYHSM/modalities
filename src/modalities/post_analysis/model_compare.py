@@ -15,6 +15,8 @@ from dataclasses import dataclass, asdict
 from tqdm import tqdm
 import gc
 
+from utils import calculate_distribution_stats, calculate_cosine_similarity
+
 @dataclass
 class ComparisonConfig:
     """Configuration for model comparison"""
@@ -64,22 +66,6 @@ class ModelComparator:
         self.base_model.eval()
         self.finetuned_model.eval()
     
-    def _calculate_distribution_stats(self, diff_tensor):
-        """Calculate comprehensive distribution statistics for parameter differences"""
-        diff_flat = diff_tensor.flatten()
-        
-        return {
-            "mean_diff": float(torch.mean(diff_flat)),
-            "median_diff": float(torch.median(diff_flat)),
-            "std_diff": float(torch.std(diff_flat)),
-            "min_diff": float(torch.min(diff_flat)),
-            "max_diff": float(torch.max(diff_flat)),
-            "abs_mean_diff": float(torch.mean(torch.abs(diff_flat))),
-            "num_positive": int(torch.sum(diff_flat > 0)),
-            "num_negative": int(torch.sum(diff_flat < 0)),
-            "num_unchanged": int(torch.sum(diff_flat == 0)),
-        }
-    
     def compare_weights(self) -> Dict[str, Any]:
         """Compare weights between base and finetuned models"""
         print("Comparing model weights...")
@@ -109,15 +95,10 @@ class ModelComparator:
             
             # Calculate differences and distribution stats
             diff = ft_param - base_param
-            dist_stats = self._calculate_distribution_stats(diff)
+            dist_stats = calculate_distribution_stats(diff)
             
             # Cosine similarity
-            base_flat = base_param.flatten()
-            ft_flat = ft_param.flatten()
-            cosine_sim = torch.nn.functional.cosine_similarity(
-                base_flat.unsqueeze(0), 
-                ft_flat.unsqueeze(0)
-            ).item()
+            cosine_sim = calculate_cosine_similarity(base_param, ft_param)
             
             # Store comprehensive statistics
             param_stats = {
@@ -169,10 +150,12 @@ class ModelComparator:
         # Identify layers to monitor
         layers_to_monitor = []
         for name, module in self.base_model.named_modules():
+            print(f"Checking layer: {name}")
             if 'layers' in name and name.endswith(('self_attn', 'mlp', 'norm', 'layernorm', 'lm_head')):
+                print(f"Monitoring layer: {name}")
                 layers_to_monitor.append(name)
         
-        print(f"Monitoring {len(layers_to_monitor)} layers")
+        print(f"Monitoring {len(layers_to_monitor)} of {len(list(self.base_model.named_modules()))} total layers")
         
         for sample_idx, sample in enumerate(tqdm(dataset, desc="Processing samples")):
             question = sample['question']
@@ -238,13 +221,10 @@ class ModelComparator:
                 
                 # Calculate differences and distribution stats
                 diff = ft_act - base_act
-                dist_stats = self._calculate_distribution_stats(diff)
+                dist_stats = calculate_distribution_stats(diff)
                 
                 # Cosine similarity
-                cosine_sim = torch.nn.functional.cosine_similarity(
-                    base_act.flatten().unsqueeze(0),
-                    ft_act.flatten().unsqueeze(0)
-                ).item()
+                cosine_sim = calculate_cosine_similarity(base_act, ft_act)
                 
                 layer_stats = {
                     "cosine_similarity": cosine_sim,
