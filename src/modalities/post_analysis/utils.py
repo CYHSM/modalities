@@ -86,20 +86,69 @@ def shorten_layer_name(name: str) -> str:
 
 
 def categorize_layers(layer_names: List[str]) -> List[str]:
-    """Categorize layers by type"""
+    """Categorize layers by type with granular separation"""
     layer_types = []
     for name in layer_names:
-        if 'self_attn' in name or 'attention' in name.lower():
-            layer_types.append('Attention')
+        if any(norm in name for norm in ['norm', 'layernorm', 'layer_norm']):
+            if 'input' in name or 'pre' in name:
+                if 'weight' in name:
+                    layer_types.append('Input LayerNorm (W)')
+                elif 'bias' in name:
+                    layer_types.append('Input LayerNorm (B)')
+                else:
+                    layer_types.append('Pre LayerNorm')
+            elif 'post' in name or 'final' in name:
+                if 'weight' in name:
+                    layer_types.append('Post LayerNorm (W)')
+                elif 'bias' in name:
+                    layer_types.append('Post LayerNorm (B)')
+                else:
+                    layer_types.append('Post LayerNorm')
+            else:
+                if 'weight' in name:
+                    layer_types.append('LayerNorm (W)')
+                elif 'bias' in name:
+                    layer_types.append('LayerNorm (B)')
+                else:
+                    layer_types.append('LayerNorm')
+        elif 'self_attn' in name or 'attention' in name.lower():
+            if 'q_proj' in name:
+                layer_types.append('Q Projection')
+            elif 'k_proj' in name:
+                layer_types.append('K Projection')
+            elif 'v_proj' in name:
+                layer_types.append('V Projection')
+            elif 'o_proj' in name:
+                layer_types.append('Output Projection')
+            else:
+                print(f"Warning: Unrecognized attention layer name '{name}'")
+                layer_types.append('Attention Other')
+        # MLP components - separate each type
         elif 'mlp' in name or 'feed_forward' in name:
-            layer_types.append('MLP')
-        elif any(norm in name for norm in ['norm', 'layernorm', 'layer_norm']):
-            layer_types.append('Normalization')
-        elif 'embed' in name:
-            layer_types.append('Embedding')
+            if 'gate_proj' in name:
+                layer_types.append('Gate Projection')
+            elif 'up_proj' in name:
+                layer_types.append('Up Projection')
+            elif 'down_proj' in name:
+                layer_types.append('Down Projection')
+            else:
+                print(f"Warning: Unrecognized MLP layer name '{name}'")
+                layer_types.append('MLP Other')
+        elif 'embed' in name or 'emb' in name:
+            if 'token' in name:
+                layer_types.append('Token Embedding')
+            elif 'position' in name or 'pos' in name:
+                layer_types.append('Position Embedding')
+            elif 'rotary' in name:
+                layer_types.append('Position Embedding')
+            else:
+                print(f"Warning: Unrecognized embedding layer name '{name}'")
+                layer_types.append('Embedding')
+        # Output/head layers
         elif 'lm_head' in name or 'output' in name:
             layer_types.append('LM Head')
         else:
+            print(f"Warning: Unrecognized layer name '{name}'")
             layer_types.append('Other')
     return layer_types
 
@@ -114,14 +163,46 @@ def get_layer_number(name: str) -> int:
 
 
 def get_layer_type_colors():
-    """Get consistent colors for layer types with better visibility"""
+    """Get consistent colors for layer types with distinct groups and subcolors"""
     return {
-        'Attention': '#E74C3C',      # Bright red
-        'MLP': '#3498DB',           # Bright blue  
-        'Normalization': '#2ECC71',  # Bright green
-        'Embedding': '#F39C12',      # Bright orange
-        'LM Head': '#9B59B6',        # Bright purple
-        'Other': '#34495E'           # Dark gray
+        # Attention components (RED FAMILY)
+        'Q Projection': '#E74C3C',        # Bright red
+        'K Projection': '#C0392B',        # Dark red
+        'V Projection': '#F1948A',        # Light red
+        'Output Projection': '#EC7063',   # Medium red
+        'Attention Other': '#FADBD8',     # Very light red
+        
+        # MLP components (BLUE FAMILY)
+        'Gate Projection': '#3498DB',     # Bright blue
+        'Up Projection': '#2980B9',       # Dark blue
+        'Down Projection': '#85C1E9',     # Light blue
+        'MLP Other': '#D6EAF8',           # Very light blue
+        
+        # Normalization layers (GREEN FAMILY)
+        'Input LayerNorm (W)': '#27AE60',    # Bright green
+        'Input LayerNorm (B)': '#2ECC71',    # Medium green
+        'Input LayerNorm': '#58D68D',        # Light green
+        'Post LayerNorm (W)': '#1E8449',     # Dark green
+        'Post LayerNorm (B)': '#239B56',     # Medium dark green
+        'Post LayerNorm': '#82E0AA',         # Light green variant
+        'Final LayerNorm (W)': '#145A32',    # Very dark green
+        'Final LayerNorm (B)': '#186A3B',    # Dark green variant
+        'Final LayerNorm': '#A9DFBF',        # Very light green
+        'LayerNorm (W)': '#16A085',          # Teal green
+        'LayerNorm (B)': '#48C9B0',          # Light teal
+        'LayerNorm': '#A2D9CE',              # Very light teal
+        
+        # Embedding layers (ORANGE FAMILY)
+        'Token Embedding': '#FF8C00',        # Dark orange
+        'Position Embedding': '#FFA500',     # Orange
+        'Rotary Position Embedding': '#FFB347', # Light orange
+        'Embedding': '#FFDAB9',              # Very light orange
+        
+        # Output layers (PURPLE FAMILY)
+        'LM Head': '#8E44AD',             # Purple
+        
+        # Other (GRAY FAMILY)
+        'Other': '#7F8C8D'                # Gray
     }
 
 
@@ -146,8 +227,8 @@ def group_layers_by_actual_layer(layer_data: List[Dict]) -> Tuple[List[int], Lis
     
     for layer_num, layers in sorted(layer_groups.items()):
         for i, layer in enumerate(layers):
-            # Spread components within each layer
-            x_pos = layer_num + (i - len(layers)/2 + 0.5) * 0.1
+            # Spread components within each layer with more spacing for better visibility
+            x_pos = layer_num + (i - len(layers)/2 + 0.5) * 0.15  # Increased spacing from 0.1 to 0.15
             x_positions.append(x_pos)
             x_labels.append(f"L{layer_num}")
             layer_types.append(layer['layer_type'])
