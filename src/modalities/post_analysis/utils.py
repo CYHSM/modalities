@@ -92,18 +92,18 @@ def categorize_layers(layer_names: List[str]) -> List[str]:
         if any(norm in name for norm in ['norm', 'layernorm', 'layer_norm']):
             if 'input' in name or 'pre' in name:
                 if 'weight' in name:
-                    layer_types.append('Input LayerNorm (W)')
+                    layer_types.append('LayerNorm (W) Pre')
                 elif 'bias' in name:
-                    layer_types.append('Input LayerNorm (B)')
+                    layer_types.append('LayerNorm (B) Pre')
                 else:
-                    layer_types.append('Pre LayerNorm')
+                    layer_types.append('LayerNorm Pre')
             elif 'post' in name or 'final' in name:
                 if 'weight' in name:
-                    layer_types.append('Post LayerNorm (W)')
+                    layer_types.append('LayerNorm (W) Post')
                 elif 'bias' in name:
-                    layer_types.append('Post LayerNorm (B)')
+                    layer_types.append('LayerNorm (B) Post')
                 else:
-                    layer_types.append('Post LayerNorm')
+                    layer_types.append('LayerNorm Post')
             else:
                 if 'weight' in name:
                     layer_types.append('LayerNorm (W)')
@@ -113,24 +113,24 @@ def categorize_layers(layer_names: List[str]) -> List[str]:
                     layer_types.append('LayerNorm')
         elif 'self_attn' in name or 'attention' in name.lower():
             if 'q_proj' in name:
-                layer_types.append('Q Projection')
+                layer_types.append('Att Q')
             elif 'k_proj' in name:
-                layer_types.append('K Projection')
+                layer_types.append('Att K')
             elif 'v_proj' in name:
-                layer_types.append('V Projection')
+                layer_types.append('Att V')
             elif 'o_proj' in name:
-                layer_types.append('Output Projection')
+                layer_types.append('Att Out')
             else:
                 print(f"Warning: Unrecognized attention layer name '{name}'")
                 layer_types.append('Attention Other')
         # MLP components - separate each type
         elif 'mlp' in name or 'feed_forward' in name:
             if 'gate_proj' in name:
-                layer_types.append('Gate Projection')
+                layer_types.append('MLP Gate')
             elif 'up_proj' in name:
-                layer_types.append('Up Projection')
+                layer_types.append('MLP Up')
             elif 'down_proj' in name:
-                layer_types.append('Down Projection')
+                layer_types.append('MLP Down')
             else:
                 print(f"Warning: Unrecognized MLP layer name '{name}'")
                 layer_types.append('MLP Other')
@@ -165,44 +165,44 @@ def get_layer_number(name: str) -> int:
 def get_layer_type_colors():
     """Get consistent colors for layer types with distinct groups and subcolors"""
     return {
-        # Attention components (RED FAMILY)
-        'Q Projection': '#E74C3C',        # Bright red
-        'K Projection': '#C0392B',        # Dark red
-        'V Projection': '#F1948A',        # Light red
-        'Output Projection': '#EC7063',   # Medium red
-        'Attention Other': '#FADBD8',     # Very light red
+        # Attention components (RED FAMILY) - High contrast reds
+        'Att Q': '#FF4444',      # Bright red
+        'Att K': '#CC0000',      # Pure red  
+        'Att V': '#FF8888',      # Light red
+        'Att Out': '#880000',    # Dark red
+        'Attention Other': '#FFCCCC',  # Very light red
         
-        # MLP components (BLUE FAMILY)
-        'Gate Projection': '#3498DB',     # Bright blue
-        'Up Projection': '#2980B9',       # Dark blue
-        'Down Projection': '#85C1E9',     # Light blue
-        'MLP Other': '#D6EAF8',           # Very light blue
+        # MLP components (BLUE FAMILY) - High contrast blues
+        'MLP Gate': '#4444FF',   # Bright blue
+        'MLP Up': '#0000CC',     # Dark blue
+        'MLP Down': '#8888FF',   # Light blue
+        'MLP Other': '#CCCCFF',  # Very light blue
         
-        # Normalization layers (GREEN FAMILY)
-        'Input LayerNorm (W)': '#27AE60',    # Bright green
-        'Input LayerNorm (B)': '#2ECC71',    # Medium green
-        'Input LayerNorm': '#58D68D',        # Light green
-        'Post LayerNorm (W)': '#1E8449',     # Dark green
-        'Post LayerNorm (B)': '#239B56',     # Medium dark green
-        'Post LayerNorm': '#82E0AA',         # Light green variant
-        'Final LayerNorm (W)': '#145A32',    # Very dark green
-        'Final LayerNorm (B)': '#186A3B',    # Dark green variant
-        'Final LayerNorm': '#A9DFBF',        # Very light green
-        'LayerNorm (W)': '#16A085',          # Teal green
-        'LayerNorm (B)': '#48C9B0',          # Light teal
-        'LayerNorm': '#A2D9CE',              # Very light teal
+        # Normalization layers (GREEN FAMILY) - High contrast greens
+        'LayerNorm (W) Pre': '#00CC00',     # Bright green
+        'LayerNorm (B) Pre': '#44FF44',     # Light green  
+        'LayerNorm (W) Post': '#008800',    # Dark green
+        'LayerNorm (B) Post': '#006600',    # Very dark green
+        'Input LayerNorm': '#88FF88',       # Very light green
+        'LayerNorm Post': "#10B810",       # Light green variant
+        'Final LayerNorm (W)': '#004400',   # Darkest green
+        'Final LayerNorm (B)': '#66AA66',   # Medium green
+        'Final LayerNorm': '#CCFFCC',       # Palest green
+        'LayerNorm (W)': '#22AA22',         # Medium-dark green
+        'LayerNorm (B)': '#66CC66',         # Medium-light green
+        'LayerNorm': '#AAFFAA',             # Light green
         
         # Embedding layers (ORANGE FAMILY)
-        'Token Embedding': '#FF8C00',        # Dark orange
-        'Position Embedding': '#FFA500',     # Orange
-        'Rotary Position Embedding': '#FFB347', # Light orange
-        'Embedding': '#FFDAB9',              # Very light orange
+        'Token Embedding': '#FF8800',       # Dark orange
+        'Position Embedding': '#FFAA00',    # Orange
+        'Rotary Position Embedding': '#FFCC44',  # Light orange
+        'Embedding': '#FFDDAA',             # Very light orange
         
         # Output layers (PURPLE FAMILY)
-        'LM Head': '#8E44AD',             # Purple
+        'LM Head': '#8844AA',               # Purple
         
         # Other (GRAY FAMILY)
-        'Other': '#7F8C8D'                # Gray
+        'Other': '#888888'                  # Gray
     }
 
 

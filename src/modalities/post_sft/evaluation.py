@@ -6,7 +6,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
+from filelock import FileLock
 import wandb
 
 from config import EvaluationConfig
@@ -70,81 +70,76 @@ def run_lighteval_cli(
     checkpoint_path: str, step: int, eval_config: EvaluationConfig, hf_home: str = "/raid/s3/opengptx/mfrey/huggingface"
 ) -> Optional[Dict[str, Any]]:
     """Run LightEval CLI evaluation and return results."""
+    
+    # This creates a unique lock file for the given id
+    lock_path = f"/tmp/lighteval_gpu_{eval_config.eval_gpu}.lock"
+    gpu_lock = FileLock(lock_path)
+
     try:
-        logger.info(f"Starting CLI evaluation for step {step} on {checkpoint_path}")
+        logger.info(f"Process for step {step} is WAITING for GPU {eval_config.eval_gpu} lock...")
+        with gpu_lock: # pause here until the lock is acquired
+            logger.info(f"Process for step {step} has ACQUIRED lock for GPU {eval_config.eval_gpu}. Starting evaluation.")
+            logger.info(f"Starting CLI evaluation for step {step} on {checkpoint_path}")
 
-        checkpoint_dir = Path(checkpoint_path)
-        eval_model_path = checkpoint_path
-        merged_dir = None
+            checkpoint_dir = Path(checkpoint_path)
+            eval_model_path = checkpoint_path
+            merged_dir = None
 
-        # Check if it's a PEFT model and merge if needed
-        if os.path.exists(os.path.join(checkpoint_path, "adapter_config.json")):
-            logger.info("PEFT model detected, merging with base model...")
-            merged_dir = os.path.join(checkpoint_path, "merged")
+            # Check if it's a PEFT model and merge if needed
+            if os.path.exists(os.path.join(checkpoint_path, "adapter_config.json")):
+                logger.info("PEFT model detected, merging with base model...")
+                merged_dir = os.path.join(checkpoint_path, "merged")
+                if not os.path.exists(merged_dir):
+                    if not merge_peft_model(checkpoint_path, eval_config.source_model_path, merged_dir):
+                        return None
+                else:
+                    logger.info(f"Using existing merged model at {merged_dir}")
+                eval_model_path = merged_dir
+                checkpoint_dir = Path(merged_dir)
 
-            # Only merge if merged directory doesn't exist (avoid re-merging)
-            if not os.path.exists(merged_dir):
-                if not merge_peft_model(checkpoint_path, eval_config.source_model_path, merged_dir):
-                    return None
-            else:
-                logger.info(f"Using existing merged model at {merged_dir}")
+            model_args = f"model_name={eval_model_path},use_chat_template=True,trust_remote_code=True"
+            cmd_string = (
+                f"lighteval accelerate "
+                f'"{model_args}" '
+                f'"{eval_config.eval_tasks}" '
+                f"--max-samples {eval_config.eval_max_samples} "
+            )
+            env = os.environ.copy()
+            env["CUDA_VISIBLE_DEVICES"] = str(eval_config.eval_gpu)
+            env["HF_HOME"] = hf_home
+            logger.info(f"Running command: CUDA_VISIBLE_DEVICES={eval_config.eval_gpu} {cmd_string}")
 
-            eval_model_path = merged_dir
-            # Results will still be saved to the merged directory
-            checkpoint_dir = Path(merged_dir)
+            result = subprocess.run(
+                cmd_string,
+                shell=True,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+                preexec_fn=os.setsid,
+                cwd=os.getcwd(),
+            )
 
-        # Standard model args for merged/full model
-        model_args = f"model_name={eval_model_path},use_chat_template=True,trust_remote_code=True"
+            if result.returncode != 0:
+                logger.error(f"Evaluation failed for step {step}")
+                logger.error(f"STDOUT: {result.stdout}")
+                logger.error(f"STDERR: {result.stderr}")
+                return None
 
-        # Construct the full command
-        cmd_string = (
-            f"lighteval accelerate "
-            f'"{model_args}" '
-            f'"{eval_config.eval_tasks}" '
-            f"--max-samples {eval_config.eval_max_samples} "
-        )
+            logger.info(f"CLI evaluation completed for step {step}")
+            json_files = list(checkpoint_dir.glob("results_*.json"))
+            if not json_files:
+                logger.error(f"No results JSON file found in {checkpoint_dir}")
+                return None
+            
+            results_file = max(json_files, key=lambda p: p.stat().st_mtime)
+            logger.info(f"Reading results from {results_file}")
+            with open(results_file, "r") as f:
+                eval_results = json.load(f)
 
-        # Set environment variables
-        env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = str(eval_config.eval_gpu)
-        env["HF_HOME"] = hf_home
-
-        logger.info(f"Running command: CUDA_VISIBLE_DEVICES={eval_config.eval_gpu} {cmd_string}")
-
-        # Run the evaluation
-        result = subprocess.run(
-            cmd_string,
-            shell=True,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-            preexec_fn=os.setsid,
-            cwd=os.getcwd(),
-        )
-
-        if result.returncode != 0:
-            logger.error(f"Evaluation failed for step {step}")
-            logger.error(f"STDOUT: {result.stdout}")
-            logger.error(f"STDERR: {result.stderr}")
-            return None
-
-        logger.info(f"CLI evaluation completed for step {step}")
-
-        # Find the results JSON file
-        json_files = list(checkpoint_dir.glob("results_*.json"))
-        if not json_files:
-            logger.error(f"No results JSON file found in {checkpoint_dir}")
-            return None
-
-        # Read the most recent results file
-        results_file = max(json_files, key=lambda p: p.stat().st_mtime)
-        logger.info(f"Reading results from {results_file}")
-
-        with open(results_file, "r") as f:
-            eval_results = json.load(f)
-
-        return eval_results
+            # The lock is automatically released when the 'with' block exits.
+            logger.info(f"Process for step {step} has RELEASED lock for GPU {eval_config.eval_gpu}.")
+            return eval_results
 
     except Exception as e:
         logger.error(f"Evaluation failed for step {step}: {e}")
