@@ -3,8 +3,8 @@ import sys
 
 import wandb
 from simple_parsing import parse
+from trainer import setup_trainer
 from modalities.post_sft.model_utils import get_model_info, load_model_and_tokenizer
-from modalities.post_sft.trainer import setup_trainer
 from modalities.post_sft.config import Config
 from modalities.post_sft.data import load_datasets
 

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from filelock import FileLock
 import wandb
 
-from config import EvaluationConfig
+from modalities.post_sft.config import EvaluationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ def run_lighteval_cli(
                 cmd_string,
                 shell=True,
                 env=env,
-                capture_output=True,
+                capture_output=False,
                 text=True,
                 check=False,
                 preexec_fn=os.setsid,

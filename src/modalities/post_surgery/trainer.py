@@ -5,11 +5,12 @@ import os
 
 from modalities.post_sft.evaluation import AsyncEvaluator
 from modalities.post_sft.model_utils import save_model_with_custom_code
+from modalities.post_sft.config import EvaluationConfig, TrainingConfig
 from torch.optim.lr_scheduler import LambdaLR
 from transformers import TrainerCallback
 from trl import SFTConfig, SFTTrainer
 
-from modalities.post_sft.config import EvaluationConfig, TrainingConfig
+from monitor import Monitor
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ def create_sft_config(training_config: TrainingConfig, eval_config) -> SFTConfig
         completion_only_loss=training_config.completion_only_loss,
         bf16=True,
         fp16=False,
-        torch_compile=True,
+        torch_compile=False,
     )
 
     config.lr_decay_from_step = training_config.lr_decay_from_step
@@ -158,6 +159,8 @@ def setup_trainer(
     else:
         logger.info("⚠️ Evaluation callback disabled")
 
+    callbacks.append(Monitor(training_config.output_dir, tokenizer, max_steps=2))
+    
     # Create trainer
     trainer = CustomSFTTrainer(
         source_model_path=source_model_path,

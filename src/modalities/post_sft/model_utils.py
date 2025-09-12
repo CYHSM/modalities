@@ -9,7 +9,7 @@ from peft import LoraConfig, TaskType, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import setup_chat_format
 
-from config import LoRAConfig
+from modalities.post_sft.config import LoRAConfig
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ from grpo_trainer import setup_grpo_trainer
 from model_utils import load_model_and_tokenizer
 
 from config import Config, DataConfig, LoRAConfig, ModelConfig, TrainingConfig
-from data import load_gsm8k_dataset
+from data import load_gsm8k_dataset, load_openmathinstruct2_dataset
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -160,8 +160,8 @@ def main():
         model, tokenizer = load_model_and_tokenizer(config.model)
 
         # Load dataset
-        logger.info("Loading GSM8K dataset...")
-        dataset = load_gsm8k_dataset(
+        logger.info("Loading dataset...")
+        dataset = load_openmathinstruct2_dataset(
             train_size=config.data.train_size,
             eval_size=config.data.eval_size,
             seed=config.data.seed,

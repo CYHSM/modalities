@@ -66,7 +66,7 @@ class TrainingConfig:
 
     # GRPO specific
     num_generations: int = 4  # Number of completions per prompt
-    max_completion_length: int = 256
+    max_completion_length: int = 512
     temperature: float = 0.7
     beta: float = 0.0  # KL penalty (0 = no penalty)
 
