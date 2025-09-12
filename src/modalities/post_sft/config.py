@@ -56,7 +56,6 @@ class DataConfig:
     dataset: str = "nvidia/OpenMathInstruct-2:train:1.0"  # format: "dataset:subset:weight,dataset2:subset2:weight2"
     test_size: float = 0.0001
     seed: int = 42
-    max_length: Optional[int] = None
     total_samples: Optional[int] = 21e6
 
 
@@ -76,6 +75,7 @@ class TrainingConfig:
     save_steps: int = 1000
     eval_steps: int = 1000
     save_total_limit: int = 3
+    max_steps: int = -1
     gradient_checkpointing: bool = False
     push_to_hub: bool = False
     report_to: str = "wandb"

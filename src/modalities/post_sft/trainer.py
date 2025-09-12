@@ -103,6 +103,8 @@ def create_sft_config(training_config: TrainingConfig, eval_config) -> SFTConfig
         eval_steps=training_config.eval_steps,
         eval_strategy="steps" if eval_config.eval_enabled else "no",
         save_total_limit=training_config.save_total_limit,
+        save_only_model=training_config.save_total_limit > 10,
+        max_steps=training_config.max_steps,
         load_best_model_at_end=True if eval_config.eval_enabled else False,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
