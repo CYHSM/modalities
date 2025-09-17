@@ -1,7 +1,9 @@
 import os
-from modalities.post_sft.model_utils import load_model_and_tokenizer, save_model_with_custom_code
-from modalities.post_sft.config import LoRAConfig
+
 import torch
+
+from modalities.post_sft.config import LoRAConfig
+from modalities.post_sft.model_utils import load_model_and_tokenizer, save_model_with_custom_code
 
 # Your exact config from command line
 model_path = "/raid/s3/opengptx/mfrey/instruct/hf_model"
