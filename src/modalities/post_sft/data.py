@@ -167,7 +167,7 @@ def load_datasets(
     
     return {
         'train': split_dataset['train'],
-        'test': split_dataset['test']  # Note: 'test' key from train_test_split
+        'test': split_dataset['test']
     }
 
 def display_dataset_samples(dataset, num_samples: int = 3):

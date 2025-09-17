@@ -101,6 +101,8 @@ class EvaluationConfig:
     eval_max_workers: int = 1
     eval_tasks: str = "leaderboard|arc:challenge|3|1,leaderboard|hellaswag|10|1,helm|mmlu|5|1,leaderboard|gsm8k|8|1,leaderboard|truthfulqa:mc|0|1"
 
+    # "leaderboard|arc:challenge|3|1,leaderboard|hellaswag|5|1,leaderboard|gsm8k|8|1,lighteval|wmt20:en-de|3|1,lighteval|wmt20:en-fr|3|1,lighteval|wmt20:fr-de|3|1"
+
 
 @dataclass
 class WandBConfig:
