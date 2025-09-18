@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
+import torch.nn as nn
 from peft import LoraConfig, TaskType, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import setup_chat_format
@@ -170,89 +171,297 @@ def load_teacher_model(
     return teacher_model
 
 
+def create_vocabulary_mapping(student_tokenizer, teacher_tokenizer):
+    student_vocab = student_tokenizer.get_vocab()
+    teacher_vocab = teacher_tokenizer.get_vocab()
+    
+    token_mapping = {}
+    matched_tokens = 0
+    unmatched_tokens = []
+    
+    for token, teacher_id in teacher_vocab.items():
+        if token in student_vocab:
+            student_id = student_vocab[token]
+            token_mapping[teacher_id] = student_id
+            matched_tokens += 1
+        else:
+            unmatched_tokens.append((token, teacher_id))
+    
+    logger.info(f"Matched {matched_tokens}/{len(teacher_vocab)} tokens")
+    logger.info(f"Unmatched tokens: {len(unmatched_tokens)}")
+    
+    return token_mapping, unmatched_tokens
+
+
+def smart_resize_embeddings(
+    student_model,
+    teacher_model, 
+    student_tokenizer,
+    teacher_tokenizer,
+    initialization_method="mean"
+):
+    student_vocab_size = student_model.get_input_embeddings().num_embeddings
+    teacher_vocab_size = teacher_model.get_input_embeddings().num_embeddings
+    embedding_dim = student_model.get_input_embeddings().embedding_dim
+    
+    logger.info(f"Resizing student embeddings: {student_vocab_size} -> {teacher_vocab_size}")
+    
+    old_embeddings = student_model.get_input_embeddings().weight.data.clone()
+    old_lm_head = student_model.get_output_embeddings().weight.data.clone()
+    
+    model_dtype = old_embeddings.dtype
+    model_device = old_embeddings.device
+    
+    new_embed_tokens = nn.Embedding(teacher_vocab_size, embedding_dim, padding_idx=0)
+    new_lm_head = nn.Linear(embedding_dim, teacher_vocab_size, bias=False)
+    
+    new_embed_tokens = new_embed_tokens.to(device=model_device, dtype=model_dtype)
+    new_lm_head = new_lm_head.to(device=model_device, dtype=model_dtype)
+    
+    token_mapping, unmatched_tokens = create_vocabulary_mapping(student_tokenizer, teacher_tokenizer)
+    
+    with torch.no_grad():
+        if initialization_method == "mean":
+            mean_embedding = old_embeddings.mean(dim=0)
+            mean_lm_head = old_lm_head.mean(dim=0)
+            new_embed_tokens.weight.data.fill_(0)
+            new_embed_tokens.weight.data += mean_embedding.unsqueeze(0)
+            new_lm_head.weight.data.fill_(0)  
+            new_lm_head.weight.data += mean_lm_head.unsqueeze(0)
+        elif initialization_method == "random":
+            nn.init.normal_(new_embed_tokens.weight, mean=0.0, std=0.02)
+            nn.init.normal_(new_lm_head.weight, mean=0.0, std=0.02)
+        
+        for teacher_id, student_id in token_mapping.items():
+            if student_id < student_vocab_size and teacher_id < teacher_vocab_size:
+                new_embed_tokens.weight.data[teacher_id] = old_embeddings[student_id]
+                new_lm_head.weight.data[teacher_id] = old_lm_head[student_id]
+        
+        special_tokens = ["<pad>", "<s>", "</s>", "<unk>", "<bos>", "<eos>"]
+        for token in special_tokens:
+            if token in student_tokenizer.get_vocab() and token in teacher_tokenizer.get_vocab():
+                student_id = student_tokenizer.get_vocab()[token]
+                teacher_id = teacher_tokenizer.get_vocab()[token]
+                if student_id < student_vocab_size and teacher_id < teacher_vocab_size:
+                    new_embed_tokens.weight.data[teacher_id] = old_embeddings[student_id]
+                    new_lm_head.weight.data[teacher_id] = old_lm_head[student_id]
+    
+    student_model.model.embed_tokens = new_embed_tokens
+    student_model.lm_head = new_lm_head
+    
+    final_size = student_model.get_input_embeddings().num_embeddings
+    logger.info(f"Embedding layer resized to {final_size}")
+    
+    return student_model
+
+
+def initialize_unmatched_tokens_from_subwords(
+    student_model,
+    teacher_tokenizer,
+    student_tokenizer,
+    unmatched_tokens
+):
+    embed_layer = student_model.get_input_embeddings()
+    lm_head = student_model.get_output_embeddings()
+    
+    student_vocab = student_tokenizer.get_vocab()
+    
+    with torch.no_grad():
+        for token, teacher_id in unmatched_tokens[:1000]:
+            subwords = teacher_tokenizer.tokenize(token)
+            
+            if len(subwords) > 1:
+                embeddings = []
+                lm_heads = []
+                
+                for subword in subwords:
+                    if subword in student_vocab:
+                        student_id = student_vocab[subword]
+                        if student_id < len(student_tokenizer):
+                            embeddings.append(embed_layer.weight.data[teacher_id].clone())
+                            lm_heads.append(lm_head.weight.data[teacher_id].clone())
+                
+                if embeddings:
+                    embed_layer.weight.data[teacher_id] = torch.stack(embeddings).mean(dim=0)
+                    lm_head.weight.data[teacher_id] = torch.stack(lm_heads).mean(dim=0)
+    
+    logger.info("Initialized unmatched tokens using subword averaging")
+
+
 def load_student_and_teacher(
     student_path: str,
     teacher_path: str,
-    device: str = "cuda",
+    student_device: str = "cuda:0",
+    teacher_device: str = "cuda:0",
     torch_dtype: torch.dtype = torch.bfloat16,
     trust_remote_code: bool = True,
-    device_map: str = "auto",
-    trainable_layers=None,
-    lora_config: Optional[LoRAConfig] = None,
-    vocab_alignment_method: str = "teacher_tokenizer",
-) -> Tuple[Any, Any, Any]:
-    """Load both student and teacher models for GKD with vocabulary alignment."""
+    initialization_method: str = "mean",
+    align_vocabularies: bool = True,
+    **kwargs
+) -> Tuple:
+    student_device_map = {"": student_device} if student_device != "auto" else "auto"
+    teacher_device_map = {"": teacher_device} if teacher_device != "auto" else "auto"
     
-    # Load models first to get ACTUAL embedding sizes
-    logger.info("Loading models to check actual embedding sizes...")
-    
-    student_model, student_tokenizer = load_model_and_tokenizer(
-        student_path, device=device, torch_dtype=torch_dtype,
-        trust_remote_code=trust_remote_code, device_map=device_map,
-        trainable_layers=trainable_layers, lora_config=lora_config,
+    student_model = AutoModelForCausalLM.from_pretrained(
+        student_path,
+        trust_remote_code=trust_remote_code,
+        device_map=student_device_map,
+        torch_dtype=torch_dtype
     )
+    student_tokenizer = AutoTokenizer.from_pretrained(student_path)
     
-    teacher_model = load_teacher_model(
-        teacher_path, torch_dtype=torch_dtype,
-        trust_remote_code=trust_remote_code, device_map=device_map,
+    teacher_model = AutoModelForCausalLM.from_pretrained(
+        teacher_path,
+        trust_remote_code=trust_remote_code,
+        device_map=teacher_device_map,
+        torch_dtype=torch_dtype
     )
-    
     teacher_tokenizer = AutoTokenizer.from_pretrained(teacher_path)
     
-    # Get ACTUAL sizes from models, not tokenizers
-    student_tokenizer_size = len(student_tokenizer)
-    teacher_tokenizer_size = len(teacher_tokenizer)
+    teacher_model.eval()
+    for param in teacher_model.parameters():
+        param.requires_grad = False
+    
     student_model_size = student_model.get_input_embeddings().num_embeddings
     teacher_model_size = teacher_model.get_input_embeddings().num_embeddings
     
-    logger.info(f"=== VOCAB SIZE DEBUG ===")
-    logger.info(f"Student tokenizer: {student_tokenizer_size}")
-    logger.info(f"Student model embeddings: {student_model_size}")
-    logger.info(f"Teacher tokenizer: {teacher_tokenizer_size}")  
-    logger.info(f"Teacher model embeddings: {teacher_model_size}")
-    logger.info(f"========================")
+    logger.info(f"Student vocab size: {student_model_size}")
+    logger.info(f"Teacher vocab size: {teacher_model_size}")
     
-    # Check if model embedding sizes match (this is what matters for GKD)
-    if student_model_size != teacher_model_size:
-        logger.warning(f"Model embedding mismatch: Student={student_model_size}, Teacher={teacher_model_size}")
+    if align_vocabularies and student_model_size != teacher_model_size:
+        logger.info("Aligning vocabularies using smart mapping...")
         
-        if vocab_alignment_method == "teacher_tokenizer":
-            logger.info(f"🔧 Resizing student embeddings: {student_model_size} -> {teacher_model_size}")
-            
-            # Manual resize based on ACTUAL teacher model size
-            old_embeddings = student_model.model.embed_tokens.weight.data
-            old_lm_head = student_model.lm_head.weight.data
-            
-            # Create new layers with teacher MODEL size (not tokenizer size)
-            new_embed_tokens = torch.nn.Embedding(teacher_model_size, old_embeddings.size(1), padding_idx=0)
-            new_lm_head = torch.nn.Linear(old_embeddings.size(1), teacher_model_size, bias=False)
-            
-            # Initialize with random values
-            torch.nn.init.normal_(new_embed_tokens.weight, mean=0.0, std=0.02)
-            torch.nn.init.normal_(new_lm_head.weight, mean=0.0, std=0.02)
-            
-            # Copy overlapping embeddings
-            min_vocab = min(student_model_size, teacher_model_size)
-            new_embed_tokens.weight.data[:min_vocab] = old_embeddings[:min_vocab]
-            new_lm_head.weight.data[:min_vocab] = old_lm_head[:min_vocab]
-            
-            # Replace layers
-            student_model.model.embed_tokens = new_embed_tokens.to(student_model.device)
-            student_model.lm_head = new_lm_head.to(student_model.device)
-            
-            # Verify alignment worked
-            final_student_size = student_model.get_input_embeddings().num_embeddings
-            if final_student_size != teacher_model_size:
-                raise RuntimeError(f"Alignment failed: {final_student_size} != {teacher_model_size}")
-            
-            logger.info(f"✅ Models aligned: {final_student_size} embeddings")
-            
-        else:
-            raise ValueError(f"Model embedding mismatch: {student_model_size} != {teacher_model_size}")
+        student_model = smart_resize_embeddings(
+            student_model,
+            teacher_model,
+            student_tokenizer, 
+            teacher_tokenizer,
+            initialization_method=initialization_method
+        )
+        
+        token_mapping, unmatched_tokens = create_vocabulary_mapping(student_tokenizer, teacher_tokenizer)
+        
+        if initialization_method == "subword" and unmatched_tokens:
+            initialize_unmatched_tokens_from_subwords(
+                student_model,
+                teacher_tokenizer,
+                student_tokenizer,
+                unmatched_tokens
+            )
+        
+        tokenizer_to_use = teacher_tokenizer
+        logger.info("Using teacher tokenizer for training")
     else:
-        logger.info(f"✅ Model embeddings already match: {student_model_size}")
+        tokenizer_to_use = student_tokenizer
+        logger.info("Using student tokenizer for training")
     
-    return student_model, teacher_model, teacher_tokenizer
+    return student_model, teacher_model, tokenizer_to_use
+
+
+# def load_student_and_teacher(
+#     student_path: str,
+#     teacher_path: str,
+#     device: str = "cuda",
+#     teacher_device: str = "cuda:0", 
+#     student_device: str = "cuda:0",
+#     torch_dtype: torch.dtype = torch.bfloat16,
+#     trust_remote_code: bool = True,
+#     device_map: str = "auto",
+#     trainable_layers=None,
+#     lora_config: Optional[LoRAConfig] = None,
+#     vocab_alignment_method: str = "teacher_tokenizer",
+# ) -> Tuple[Any, Any, Any]:
+#     """Load both student and teacher models for GKD with vocabulary alignment."""
+    
+#     # Load models first to get ACTUAL embedding sizes
+#     logger.info("Loading models to check actual embedding sizes...")
+    
+#     # CHANGE: Use specific device maps for each model
+#     student_device_map = {"": student_device} if student_device != "auto" else device_map
+#     teacher_device_map = {"": teacher_device} if teacher_device != "auto" else device_map
+    
+#     print(f"Student device map: {student_device_map}")
+#     print(f"Teacher device map: {teacher_device_map}")
+
+#     student_model, student_tokenizer = load_model_and_tokenizer(
+#         student_path, device=student_device, torch_dtype=torch_dtype,
+#         trust_remote_code=trust_remote_code, device_map=student_device_map,
+#         trainable_layers=trainable_layers, lora_config=lora_config,
+#     )
+    
+#     teacher_model = load_teacher_model(
+#         teacher_path, torch_dtype=torch_dtype,
+#         trust_remote_code=trust_remote_code, device_map=teacher_device_map,
+#     )
+    
+#     teacher_tokenizer = AutoTokenizer.from_pretrained(teacher_path)
+    
+#     # Get ACTUAL sizes from models, not tokenizers
+#     student_tokenizer_size = len(student_tokenizer)
+#     teacher_tokenizer_size = len(teacher_tokenizer)
+#     student_model_size = student_model.get_input_embeddings().num_embeddings
+#     teacher_model_size = teacher_model.get_input_embeddings().num_embeddings
+    
+#     logger.info(f"=== VOCAB SIZE DEBUG ===")
+#     logger.info(f"Student tokenizer: {student_tokenizer_size}")
+#     logger.info(f"Student model embeddings: {student_model_size}")
+#     logger.info(f"Teacher tokenizer: {teacher_tokenizer_size}")  
+#     logger.info(f"Teacher model embeddings: {teacher_model_size}")
+#     logger.info(f"========================")
+    
+#     # Check if model embedding sizes match (this is what matters for GKD)
+#     if student_model_size != teacher_model_size:
+#         logger.warning(f"Model embedding mismatch: Student={student_model_size}, Teacher={teacher_model_size}")
+        
+#         if vocab_alignment_method == "teacher_tokenizer":
+#             logger.info(f"Resizing student embeddings: {student_model_size} -> {teacher_model_size}")
+            
+#             # Manual resize based on ACTUAL teacher model size
+#             old_embeddings = student_model.model.embed_tokens.weight.data
+#             old_lm_head = student_model.lm_head.weight.data
+            
+#             # Get the correct dtype and device from the existing model
+#             model_dtype = old_embeddings.dtype
+#             model_device = old_embeddings.device
+            
+#             logger.info(f"Using model dtype: {model_dtype}, device: {model_device}")
+            
+#             # Create new layers with teacher MODEL size, matching dtype and device
+#             new_embed_tokens = torch.nn.Embedding(teacher_model_size, old_embeddings.size(1), padding_idx=0)
+#             new_lm_head = torch.nn.Linear(old_embeddings.size(1), teacher_model_size, bias=False)
+            
+#             # Move to correct device and dtype BEFORE initialization
+#             new_embed_tokens = new_embed_tokens.to(device=model_device, dtype=model_dtype)
+#             new_lm_head = new_lm_head.to(device=model_device, dtype=model_dtype)
+            
+#             # Initialize with random values in the correct dtype
+#             with torch.no_grad():
+#                 torch.nn.init.normal_(new_embed_tokens.weight, mean=0.0, std=0.02)
+#                 torch.nn.init.normal_(new_lm_head.weight, mean=0.0, std=0.02)
+            
+#             # Copy overlapping embeddings
+#             min_vocab = min(student_model_size, teacher_model_size)
+#             with torch.no_grad():
+#                 new_embed_tokens.weight.data[:min_vocab] = old_embeddings[:min_vocab]
+#                 new_lm_head.weight.data[:min_vocab] = old_lm_head[:min_vocab]
+            
+#             # Replace layers
+#             student_model.model.embed_tokens = new_embed_tokens
+#             student_model.lm_head = new_lm_head
+            
+#             # Verify alignment worked
+#             final_student_size = student_model.get_input_embeddings().num_embeddings
+#             if final_student_size != teacher_model_size:
+#                 raise RuntimeError(f"Alignment failed: {final_student_size} != {teacher_model_size}")
+            
+#             logger.info(f"Models aligned: {final_student_size} embeddings with dtype {model_dtype}")
+            
+#         else:
+#             raise ValueError(f"Model embedding mismatch: {student_model_size} != {teacher_model_size}")
+#     else:
+#         logger.info(f"Model embeddings already match: {student_model_size}")
+    
+#     return student_model, teacher_model, teacher_tokenizer
 
 
 def save_model_with_custom_code(model, save_path: str, source_model_path: str):

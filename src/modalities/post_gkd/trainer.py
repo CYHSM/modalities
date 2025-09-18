@@ -65,7 +65,12 @@ def create_gkd_config(
     eval_config: EvaluationConfig
 ) -> GKDConfig:
     """Create GKDConfig from our configuration classes."""
-    
+    print("GKD Config:")
+    print(gkd_config)
+    print("Training Config:")
+    print(training_config)
+    print("Evaluation Config:")
+    print(eval_config)
     config = GKDConfig(
         # Basic training args
         output_dir=training_config.output_dir,
@@ -95,6 +100,10 @@ def create_gkd_config(
         dataloader_num_workers=training_config.dataloader_num_workers,
         use_liger_kernel=training_config.use_liger_kernel,
         max_length=training_config.max_length,
+
+        # Log
+        log_completions=gkd_config.log_completions,
+        num_completions_to_print=gkd_config.num_completions_to_print,
         
         # GKD-specific parameters
         temperature=gkd_config.temperature,
@@ -107,8 +116,7 @@ def create_gkd_config(
         # Optimization settings
         bf16=True,
         fp16=False,
-        torch_compile=False,  # May cause issues with GKD
-        remove_unused_columns=False,  # Important for GKD
+        remove_unused_columns=False,  # Important for GKD        
     )
 
     logger.info(f"GKD Config created:")

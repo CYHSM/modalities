@@ -40,6 +40,8 @@ class ModelConfig:
     model_path: str = "/raid/s3/opengptx/mfrey/instruct/hf_model"
     teacher_model_path: str = ""
     device: str = "cuda"
+    teacher_device: str = "cuda:0"
+    student_device: str = "cuda:0"
     trust_remote_code: bool = True
     device_map: str = "auto"
     trainable_layers: Optional[Union[List[int], str]] = None
@@ -61,7 +63,8 @@ class GKDConfig:
     max_new_tokens: int = 128
     disable_dropout: bool = True
     seq_kd: bool = False  # Sequence-level KD
-
+    log_completions: bool = True 
+    num_completions_to_print: int = 5 
 
 @dataclass
 class DataConfig:
@@ -84,17 +87,17 @@ class TrainingConfig:
     gradient_accumulation_steps: int = 8  # Increased for GKD
     learning_rate: float = 1e-5  # Lower LR for distillation
     weight_decay: float = 0.01
-    warmup_ratio: float = 0.03
-    logging_steps: int = 10
+    warmup_ratio: float = 0.1
+    logging_steps: int = 1
     save_steps: int = 500
     eval_steps: int = 500
     save_total_limit: int = 2
     max_steps: int = -1
-    gradient_checkpointing: bool = True
+    gradient_checkpointing: bool = False
     push_to_hub: bool = False
     report_to: str = "wandb"
     max_grad_norm: float = 1.0
-    optim: str = "adamw_torch_fused"
+    optim: str = "paged_adamw_8bit"
     lr_scheduler_type: str = "cosine"
     dataloader_num_workers: int = 4
     use_liger_kernel: bool = False

@@ -85,12 +85,15 @@ def main():
             student_path=config.model.model_path,
             teacher_path=config.model.teacher_model_path,
             device=config.model.device,
+            teacher_device=config.model.teacher_device,
+            student_device=config.model.student_device,
             torch_dtype=config.model.torch_dtype,
             trust_remote_code=config.model.trust_remote_code,
             device_map=config.model.device_map,
             trainable_layers=config.model.trainable_layers,
             lora_config=config.model.lora,
-            vocab_alignment_method=config.model.vocab_alignment_method,
+            initialization_method="mean",  # or "subword" for better initialization
+            align_vocabularies=True,  # Align vocabularies if different
         )
         print("=== Student Model ===")
         print(student_model)
