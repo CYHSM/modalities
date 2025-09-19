@@ -64,7 +64,7 @@ class GKDConfig:
     disable_dropout: bool = True
     seq_kd: bool = False  # Sequence-level KD
     log_completions: bool = True 
-    num_completions_to_print: int = 5 
+    num_completions_to_print: int = 1
 
 @dataclass
 class DataConfig:

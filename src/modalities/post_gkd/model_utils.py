@@ -288,6 +288,26 @@ def initialize_unmatched_tokens_from_subwords(
     logger.info("Initialized unmatched tokens using subword averaging")
 
 
+def freeze_all_except_embeddings(model):
+    """Freeze all parameters except embedding and lm_head layers."""
+    total_params = 0
+    trainable_params = 0
+    
+    for name, param in model.named_parameters():
+        total_params += param.numel()
+        
+        if "embed_tokens" in name or "lm_head" in name:
+            param.requires_grad = True
+            trainable_params += param.numel()
+            logger.info(f"  Trainable: {name}")
+        else:
+            param.requires_grad = False
+    
+    logger.info(f"Embedding-only training:")
+    logger.info(f"  Total params: {total_params:,}")
+    logger.info(f"  Trainable params: {trainable_params:,} ({trainable_params/total_params*100:.2f}%)")
+
+
 def load_student_and_teacher(
     student_path: str,
     teacher_path: str,
@@ -355,6 +375,9 @@ def load_student_and_teacher(
         tokenizer_to_use = student_tokenizer
         logger.info("Using student tokenizer for training")
     
+    # only embedding training
+    # freeze_all_except_embeddings(student_model)
+
     return student_model, teacher_model, tokenizer_to_use
 
 
