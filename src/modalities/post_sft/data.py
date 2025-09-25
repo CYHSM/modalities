@@ -137,7 +137,14 @@ def load_datasets(dataset_string: str, total_samples: int = None, eval_ratio: fl
         logger.info(f"Loading {config['name']} - {config['subset']}")
 
         # Load with subset
-        ds = load_dataset(config["name"], config["subset"], split=config["split"])
+        if config["subset"] == "train_1M":
+            ds = load_dataset(config["name"], split=config["subset"])
+        else:
+            ds = load_dataset(config["name"], config["subset"], split=config["split"])
+
+        def format_fn(example):
+            return format_dataset(config["name"], example, subset)
+        ds = ds.map(format_fn)
 
         # Sample if needed
         if total_samples:
