@@ -1,7 +1,7 @@
 import numpy as np
 from visualize import load_activations, group_by_layer, combine_layer_activations
 
-def stats(activations):
+def stats(activations, step_texts=None):
     first_step = activations[0]
     layer_groups = group_by_layer(first_step)
     
@@ -10,8 +10,16 @@ def stats(activations):
     all_keys = sorted(int_keys) + sorted(str_keys)
     
     print(f"Steps: {len(activations)}")
-    print(f"Layers: {len(all_keys)}\n")
+    print(f"Layers: {len(all_keys)}")
     
+    if step_texts:
+        print(f"Text progression:")
+        for i, text in enumerate(step_texts[:5]):
+            print(f"  Step {i}: {text[:100]}{'...' if len(text) > 100 else ''}")
+        if len(step_texts) > 5:
+            print(f"  ... and {len(step_texts) - 5} more steps")
+    
+    print(f"\nLayer breakdown:")
     for layer_id in all_keys:
         layer_dict = layer_groups[layer_id]
         total_elements = sum(act.numel() for act in layer_dict.values())
@@ -85,9 +93,25 @@ def activation_dynamics(activations):
     plt.savefig('activation_dynamics.png', dpi=150)
     plt.show()
 
-if __name__ == "__main__":
-    activations = load_activations("data/activations.pkl")
+def text_analysis(step_texts):
+    if not step_texts:
+        print("No text data available")
+        return
     
-    stats(activations)
+    print("Text generation analysis:")
+    print(f"Total steps: {len(step_texts)}")
+    
+    token_counts = [len(text.split()) for text in step_texts]
+    print(f"Token growth: {token_counts[0]} -> {token_counts[-1]} words")
+    
+    for i in range(1, min(len(step_texts), 6)):
+        new_text = step_texts[i][len(step_texts[i-1]):] if step_texts[i].startswith(step_texts[i-1]) else step_texts[i]
+        print(f"Step {i}: +'{new_text.strip()}'")
+
+if __name__ == "__main__":
+    activations, step_texts = load_activations("data/activations.pkl")
+    
+    stats(activations, step_texts)
+    text_analysis(step_texts)
     compare_normalization_effects(activations)
     activation_dynamics(activations)

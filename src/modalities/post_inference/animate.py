@@ -86,12 +86,12 @@ def create_comparison_grid(dirs, output_path, duration=500):
         print(f"Created comparison GIF: {output_path} ({len(all_steps)} frames)")
 
 if __name__ == "__main__":
-    create_gif("viz_gray", "activation_gray.gif", duration=300)
-    create_gif("viz_viridis", "activation_viridis.gif", duration=300)
-    create_gif("viz_inferno", "activation_inferno.gif", duration=300)
-    
-    create_comparison_grid(
-        ["viz_gray", "viz_viridis", "viz_inferno"],
-        "activation_comparison.gif",
-        duration=300
-    )
+    #create_gif("viz_gray", "activation_gray.gif", duration=300)
+    #create_gif("viz_viridis", "activation_viridis.gif", duration=300)
+    # create_gif("viz_inferno", "activation_inferno.gif", duration=50)
+
+    normalization = "nonorm"
+    colormap = "inferno"
+    output_dir = f"/raid/s3/opengptx/mfrey/cp_analysis/inference_viz/viz_{colormap}_{normalization}"
+    gif_path = f"/raid/s3/opengptx/mfrey/cp_analysis/inference_viz/activation_{colormap}_{normalization}_50ms.gif"
+    create_gif(output_dir, gif_path, duration=50)

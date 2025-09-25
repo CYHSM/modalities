@@ -1,12 +1,17 @@
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import pickle
 from pathlib import Path
 import math
+import textwrap
+from animate import create_gif
 
 def load_activations(filepath):
     with open(filepath, 'rb') as f:
-        return pickle.load(f)
+        data = pickle.load(f)
+    if isinstance(data, list):
+        return data, None
+    return data['activations'], data.get('texts', None)
 
 def group_by_layer(step_activations):
     layer_groups = {}
@@ -105,45 +110,182 @@ def create_grid(layer_images, colormap=None):
     
     return grid
 
-def visualize_step(step_activations, normalization='percentile', colormap=None):
+def get_default_font(size):
+    try:
+        return ImageFont.truetype("/System/Library/Fonts/Arial.ttf", size)
+    except:
+        try:
+            return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size)
+        except:
+            return ImageFont.load_default()
+
+def add_text_overlay(image, step_num, current_text, prev_text=None, colormap=None, layer_stats=None):
+    is_color = colormap is not None
+    
+    if is_color:
+        img_array = np.array(image)
+        overlay_height = 300
+        new_height = img_array.shape[0] + overlay_height
+        new_img = np.ones((new_height, img_array.shape[1], 3), dtype=np.uint8) * 40
+        new_img[:img_array.shape[0]] = img_array
+        result = Image.fromarray(new_img)
+    else:
+        img_array = np.array(image)
+        overlay_height = 300
+        new_height = img_array.shape[0] + overlay_height
+        new_img = np.ones((new_height, img_array.shape[1]), dtype=np.uint8) * 40
+        new_img[:img_array.shape[0]] = img_array
+        result = Image.fromarray(new_img, mode='L').convert('RGB')
+    
+    draw = ImageDraw.Draw(result)
+    
+    font_large = get_default_font(24)
+    font_medium = get_default_font(16)
+    font_small = get_default_font(14)
+    
+    step_text = f"STEP {step_num}"
+    bbox = draw.textbbox((0, 0), step_text, font=font_large)
+    step_width = bbox[2] - bbox[0]
+    
+    y_text_start = img_array.shape[0] + 20
+    draw.text((20, y_text_start), step_text, fill=(255, 255, 255), font=font_large)
+    
+    if layer_stats:
+        stats_x = 20
+        stats_y = y_text_start + 40
+        
+        draw.text((stats_x, stats_y), f"Global: min={layer_stats['global_min']:.3f}, max={layer_stats['global_max']:.3f}, layers={layer_stats['num_layers']}", 
+                 fill=(200, 200, 255), font=font_small)
+        stats_y += 18
+        
+        if 'lm_head' in layer_stats:
+            draw.text((stats_x, stats_y), f"LM Head: min={layer_stats['lm_head']['min']:.3f}, max={layer_stats['lm_head']['max']:.3f}, mean={layer_stats['lm_head']['mean']:.3f}", 
+                     fill=(255, 200, 200), font=font_small)
+            stats_y += 18
+            
+        if 'embed_tokens' in layer_stats:
+            draw.text((stats_x, stats_y), f"Embed: min={layer_stats['embed_tokens']['min']:.3f}, max={layer_stats['embed_tokens']['max']:.3f}, mean={layer_stats['embed_tokens']['mean']:.3f}", 
+                     fill=(200, 255, 200), font=font_small)
+            stats_y += 18
+            
+        if 'most_active_layer' in layer_stats:
+            draw.text((stats_x, stats_y), f"Most Active: {layer_stats['most_active_layer']} (max={layer_stats['most_active_max']:.3f})", 
+                     fill=(255, 255, 150), font=font_small)
+            stats_y += 25
+        
+        text_y = stats_y
+    else:
+        text_y = y_text_start + 40
+    
+    if current_text:
+        max_width = result.width - 40
+        
+        if prev_text and current_text.startswith(prev_text):
+            old_part = prev_text
+            new_part = current_text[len(prev_text):]
+            
+            lines_old = textwrap.fill(old_part, width=140).split('\n')
+            lines_new = textwrap.fill(new_part, width=140).split('\n')
+            
+            for line in lines_old:
+                if text_y + 20 < result.height - 10:
+                    draw.text((20, text_y), line, fill=(180, 180, 180), font=font_medium)
+                    text_y += 20
+            
+            for line in lines_new:
+                if text_y + 20 < result.height - 10:
+                    draw.text((20, text_y), line, fill=(100, 255, 100), font=font_medium)
+                    text_y += 20
+        else:
+            wrapped_lines = textwrap.fill(current_text, width=140).split('\n')
+            for line in wrapped_lines:
+                if text_y + 20 < result.height - 10:
+                    draw.text((20, text_y), line, fill=(255, 255, 255), font=font_medium)
+                    text_y += 20
+    
+    border_color = (80, 80, 80)
+    draw.rectangle([(0, img_array.shape[0]), (result.width-1, result.height-1)], 
+                  outline=border_color, width=2)
+    
+    return result
+
+def visualize_step(step_activations, step_num, current_text=None, prev_text=None, 
+                  normalization='percentile', colormap=None):
     layer_groups = group_by_layer(step_activations)
     
     int_keys = [k for k in layer_groups.keys() if isinstance(k, int)]
     str_keys = [k for k in layer_groups.keys() if isinstance(k, str)]
     all_keys = sorted(int_keys) + sorted(str_keys)
     
+    layer_stats = {
+        'num_layers': len(all_keys),
+        'global_min': float('inf'),
+        'global_max': float('-inf'),
+        'most_active_max': float('-inf'),
+        'most_active_layer': None
+    }
+    
     layer_images = []
     for layer_id in all_keys:
-        combined = combine_layer_activations(layer_groups[layer_id])
+        layer_dict = layer_groups[layer_id]
+        combined = combine_layer_activations(layer_dict)
         normalized = normalize(combined, normalization)
-        img_array = to_256x256(normalized)
+        
+        layer_min, layer_max = combined.min(), combined.max()
+        layer_mean = combined.mean()
+        
+        layer_stats['global_min'] = min(layer_stats['global_min'], float(layer_min))
+        layer_stats['global_max'] = max(layer_stats['global_max'], float(layer_max))
+        
+        if layer_max > layer_stats['most_active_max']:
+            layer_stats['most_active_max'] = float(layer_max)
+            layer_stats['most_active_layer'] = f"Layer_{layer_id}" if isinstance(layer_id, int) else str(layer_id)
         
         layer_name = f"Layer_{layer_id}" if isinstance(layer_id, int) else str(layer_id)
+        if 'lm_head' in str(layer_id).lower():
+            layer_stats['lm_head'] = {'min': float(layer_min), 'max': float(layer_max), 'mean': float(layer_mean)}
+        elif 'embed' in str(layer_id).lower():
+            layer_stats['embed_tokens'] = {'min': float(layer_min), 'max': float(layer_max), 'mean': float(layer_mean)}
+        
+        img_array = to_256x256(normalized)
         layer_images.append((layer_name, img_array))
     
     grid = create_grid(layer_images, colormap)
     
     if colormap:
-        return Image.fromarray(grid, mode='RGB')
+        base_image = Image.fromarray(grid, mode='RGB')
     else:
-        return Image.fromarray(grid, mode='L')
+        base_image = Image.fromarray(grid, mode='L')
+    
+    final_image = add_text_overlay(base_image, step_num, current_text, prev_text, colormap, layer_stats)
+    
+    return final_image
 
-def process_all_steps(activations, output_dir="viz", normalization='percentile', colormap=None):
+def process_all_steps(activations, step_texts=None, output_dir="viz", 
+                     normalization='percentile', colormap=None):
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     
     images = []
     for step_idx, step_acts in enumerate(activations):
-        img = visualize_step(step_acts, normalization, colormap)
+        current_text = step_texts[step_idx + 1] if step_texts and step_idx + 1 < len(step_texts) else None
+        prev_text = step_texts[step_idx] if step_texts and step_idx < len(step_texts) else None
+        
+        img = visualize_step(step_acts, step_idx + 1, current_text, prev_text, 
+                           normalization, colormap)
         filepath = f"{output_dir}/step_{step_idx:03d}.png"
         img.save(filepath)
         images.append(img)
-        print(f"Saved step {step_idx} -> {filepath}")
+        print(f"Saved step {step_idx + 1} -> {filepath}")
     
     return images
 
 if __name__ == "__main__":
-    activations = load_activations("data/activations.pkl")
-    
-    process_all_steps(activations, "viz_gray", normalization='percentile')
-    process_all_steps(activations, "viz_viridis", normalization='percentile', colormap='viridis')
-    process_all_steps(activations, "viz_inferno", normalization='zscore', colormap='inferno')
+    activations, step_texts = load_activations("/raid/s3/opengptx/mfrey/cp_analysis/inference_qwen/activations.pkl")
+
+    normalization = "nonorm"
+    colormap = "inferno"
+    output_dir = f"/raid/s3/opengptx/mfrey/cp_analysis/inference_qwen/viz_{colormap}_{normalization}"
+    process_all_steps(activations, step_texts, output_dir, normalization=normalization, colormap=colormap)
+
+    gif_path = f"/raid/s3/opengptx/mfrey/cp_analysis/inference_qwen/activation_{colormap}_{normalization}.gif"
+    create_gif(output_dir, gif_path, duration=800)
