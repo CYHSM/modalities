@@ -1,41 +1,54 @@
-from capture import capture_activations, save_activations
-from visualize import load_activations, process_all_steps
-from animate import create_gif, create_comparison_grid
+import argparse
+from pathlib import Path
 
-def run_pipeline(
-    model_path= "Qwen/Qwen3-8B", #"/raid/s3/opengptx/mfrey/instruct/hf_model",
-    input_text="Janet's ducks laid 16 eggs. She eats 3 for breakfast every morning. How many eggs are left after three days? Think step by step.",
-    max_new_tokens=80,
-    normalizations= ['nonorm'], #['percentile', 'zscore'],
-    colormaps=['inferno'],
-):
+from capture import capture_activations, save_data, load_data
+from visualize import process_all_steps
+from animate import create_gif
+
+def main():
+    parser = argparse.ArgumentParser(description='Visualize LLM activations during inference')
+    parser.add_argument('--model', type=str, default='gpt2',
+                       help='Model name or path (default: gpt2)')
+    parser.add_argument('--prompt', type=str, default='The quick brown fox',
+                       help='Input prompt text')
+    parser.add_argument('--tokens', type=int, default=10,
+                       help='Number of tokens to generate (default: 10)')
+    parser.add_argument('--output', type=str, default='output',
+                       help='Output directory for all files (default: output)')
+    parser.add_argument('--fps', type=int, default=2,
+                       help='Frames per second (default: 2)')
+    parser.add_argument('--load', action='store_true',
+                       help='Load existing activations instead of capturing')
     
-    print("1. Capturing activations and text...")
-    tokens, activations, step_texts = capture_activations(model_path, input_text, max_new_tokens)
-    save_activations(activations, step_texts, "/raid/s3/opengptx/mfrey/cp_analysis/inference_qwen/activations.pkl")
+    args = parser.parse_args()
     
-    print(f"   Generated {len(step_texts)} text steps")
-    print(f"   Final text: {step_texts[-1]}")
+    if args.load:
+        print(f"Loading activations from {args.output}/activations.pkl...")
+        activations, step_texts = load_data(args.output)
+    else:
+        print(f"Model: {args.model}")
+        print(f"Prompt: '{args.prompt}'")
+        print(f"Generating {args.tokens} tokens...\n")
+        
+        activations, step_texts = capture_activations(
+            args.model, 
+            args.prompt, 
+            args.tokens
+        )
+        
+        save_data(activations, step_texts, args.output)
+        print(f"\nSaved to {args.output}/")
     
-    print("\n2. Creating enhanced visualizations...")
-    viz_dirs = []
+    print(f"\nCreating visualizations...")
+    process_all_steps(activations, step_texts, args.output)
     
-    for norm in normalizations:
-        for cmap in colormaps:
-            suffix = f"{norm}_{cmap if cmap else 'gray'}"
-            output_dir = f"/raid/s3/opengptx/mfrey/cp_analysis/inference_qwen/viz_{suffix}"
-            
-            print(f"   Processing: {suffix}")
-            process_all_steps(activations, step_texts, output_dir, norm, cmap)
-            viz_dirs.append(output_dir)
-            
-            gif_path = f"/raid/s3/opengptx/mfrey/cp_analysis/inference_qwen/activation_{suffix}.gif"
-            create_gif(output_dir, gif_path, duration=800)
+    print(f"\nGenerating animation...")
+    gif_path = create_gif(args.output, args.fps)
     
-    print("\n3. Creating comparison grid...")
-    create_comparison_grid(viz_dirs[:3], "/raid/s3/opengptx/mfrey/cp_analysis/inference_qwen/activation_comparison.gif", duration=800)
-    
-    print("\nDone! Enhanced visualizations with step counters and text overlays created.")
+    print(f"\n✓ Complete! Output in: {args.output}/")
+    print(f"  - animation.gif")
+    print(f"  - activations.pkl") 
+    print(f"  - step_*.png frames")
 
 if __name__ == "__main__":
-    run_pipeline()
+    main()
