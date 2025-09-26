@@ -40,7 +40,7 @@ def normalize(values):
 def combine_layer_activations(layer_dict):
     all_values = []
     for name in sorted(layer_dict.keys()):
-        values = layer_dict[name].flatten().numpy()
+        values = layer_dict[name].flatten()
         all_values.extend(values)
     return np.array(all_values)
 

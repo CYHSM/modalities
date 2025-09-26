@@ -47,6 +47,51 @@ class ActivationCapture:
 
         return {"activations": activations, "input_ids": input_ids.cpu().numpy(), "logits": logits, "text": input_text}
 
+    def capture_generation(self, input_text, *, max_new_tokens=10, layers_to_capture=None):
+        input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.to(self.device)
+        
+        generation_activations = []
+        step_texts = []
+        generated_tokens = input_ids.clone()
+        
+        initial_text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
+        step_texts.append(initial_text)
+        
+        for step in range(max_new_tokens):
+            step_activations = OrderedDict()
+            hooks = []
+            
+            def make_hook(name):
+                def hook(module, input, output):
+                    if isinstance(output, torch.Tensor):
+                        step_activations[name] = output[:, -1, ...].detach().cpu()
+                    elif isinstance(output, (tuple, list)) and len(output) > 0:
+                        if isinstance(output[0], torch.Tensor):
+                            step_activations[name] = output[0][:, -1, ...].detach().cpu()
+                return hook
+            
+            for name, module in self.model.named_modules():
+                if layers_to_capture is None or any(pattern in name for pattern in layers_to_capture):
+                    if len(list(module.children())) == 0:
+                        hooks.append(module.register_forward_hook(make_hook(name)))
+            
+            with torch.no_grad():
+                outputs = self.model(generated_tokens)
+            
+            next_token_logits = outputs.logits[0, -1, :]
+            next_token_id = torch.argmax(next_token_logits, keepdim=True).unsqueeze(0)
+            generated_tokens = torch.cat([generated_tokens, next_token_id], dim=1)
+            
+            current_text = self.tokenizer.decode(generated_tokens[0], skip_special_tokens=True)
+            step_texts.append(current_text)
+            
+            generation_activations.append(step_activations)
+            
+            for hook in hooks:
+                hook.remove()
+        
+        return generation_activations, step_texts
+
     def capture_batch(self, texts, max_new_tokens=1, layers_to_capture=None):
         results = []
         for i, text in enumerate(texts):
@@ -54,6 +99,25 @@ class ActivationCapture:
             result = self.capture_single(text, max_new_tokens, layers_to_capture)
             results.append(result)
         return results
+    
+    def capture_prompts(self, prompts, *, max_new_tokens=1, layers_to_capture=None):
+        all_activations = []
+        all_texts = []
+        
+        for i, prompt in enumerate(prompts):
+            print(f"  Processing {i+1}/{len(prompts)}: {prompt[:50]}...")
+            
+            if max_new_tokens == 1:
+                result = self.capture_single(prompt, max_new_tokens, layers_to_capture)
+                activations = [result['activations']]
+                texts = [result['text']]
+            else:
+                activations, texts = self.capture_generation(prompt, max_new_tokens=max_new_tokens, layers_to_capture=layers_to_capture)
+            
+            all_activations.append(activations)
+            all_texts.append(texts)
+        
+        return all_activations, all_texts
 
 
 class DataStore:
@@ -80,6 +144,20 @@ class DataStore:
         filepath = Path(output_dir) / experiment_name / "data.pkl"
         with open(filepath, "rb") as f:
             return pickle.load(f)
+
+    @staticmethod
+    def save_generation_data(*, activations, texts, output_path):
+        filepath = output_path / "generation_data.pkl"
+        with open(filepath, 'wb') as f:
+            pickle.dump({'activations': activations, 'texts': texts}, f)
+        return filepath
+
+    @staticmethod
+    def load_generation_data(output_path):
+        filepath = Path(output_path) / "generation_data.pkl"
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+        return data['activations'], data['texts']
 
 
 def extract_layer_activations(activation_dict, layer_pattern):
