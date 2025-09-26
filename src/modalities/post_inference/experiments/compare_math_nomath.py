@@ -1,10 +1,9 @@
 import numpy as np
 import h5py
-import torch
 from pathlib import Path
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from collections import OrderedDict
 
+from modalities.post_inference.core.capture import ActivationCapture, DataStore
 from modalities.post_inference.plot.visualize import visualize_step
 
 MATH_PROMPTS = [
@@ -33,124 +32,100 @@ NONMATH_PROMPTS = [
     "A common breakfast food is",
 ]
 
+
 class MathComparison:
-    def __init__(self, *, model_path="gpt2", device="cuda" if torch.cuda.is_available() else "cpu"):
-        self.model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True).to(device)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        self.device = device
+    def __init__(self, *, model_path="gpt2", device="cuda"):
+        self.capture = ActivationCapture(model_path, device)
         self.model_path = model_path
-        self.model.eval()
-        
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-    
-    def capture_activations(self, *, prompts):
-        all_activations = []
-        
-        for i, prompt in enumerate(prompts):
-            print(f"  {i+1}/{len(prompts)}: {prompt[:50]}...")
-            
-            input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
-            activations = OrderedDict()
-            hooks = []
-            
-            def make_hook(name):
-                def hook(module, input, output):
-                    if isinstance(output, torch.Tensor):
-                        activations[name] = output.detach().cpu()
-                    elif isinstance(output, (tuple, list)) and len(output) > 0:
-                        if isinstance(output[0], torch.Tensor):
-                            activations[name] = output[0].detach().cpu()
-                return hook
-            
-            for name, module in self.model.named_modules():
-                if len(list(module.children())) == 0:
-                    hooks.append(module.register_forward_hook(make_hook(name)))
-            
-            with torch.no_grad():
-                self.model(input_ids)
-            
-            for hook in hooks:
-                hook.remove()
-            
-            all_activations.append(activations)
-        
-        return all_activations
     
     def compute_average_activations(self, *, activation_list):
         avg_activations = OrderedDict()
         
         all_keys = set()
         for acts in activation_list:
-            all_keys.update(acts.keys())
+            act_dict = acts.get('activations', acts)
+            all_keys.update(act_dict.keys())
         
         for key in sorted(all_keys):
             values = []
             for acts in activation_list:
-                if key in acts:
-                    act = acts[key]
-                    if len(act.shape) == 3:
-                        act = act[:, -1, :]
-                    elif len(act.shape) == 2:
-                        act = act[-1, :]
-                    values.append(act.flatten())
+                act_dict = acts.get('activations', acts)
+                if key in act_dict:
+                    act = act_dict[key]
+                    if hasattr(act, 'shape'):
+                        if len(act.shape) == 3:
+                            act = act[:, -1, :]
+                        elif len(act.shape) == 2:
+                            act = act[-1, :]
+                        values.append(act.flatten())
+                    else:
+                        values.append(np.array(act).flatten())
             
             if values:
                 min_len = min(len(v) for v in values)
                 values = [v[:min_len] for v in values]
-                avg_activations[key] = torch.stack([torch.tensor(v) for v in values]).mean(dim=0)
+                avg_activations[key] = np.stack(values).mean(axis=0)
         
         return avg_activations
     
-    def save_to_h5(self, *, math_activations, nonmath_activations, output_path):
+    def save_to_h5(self, *, math_data, nonmath_data, output_path):
         h5_path = output_path / "activations.h5"
         
         with h5py.File(h5_path, 'w') as f:
             f.attrs['model'] = self.model_path
-            f.attrs['n_math_samples'] = len(math_activations)
-            f.attrs['n_nonmath_samples'] = len(nonmath_activations)
+            f.attrs['n_math_samples'] = len(math_data)
+            f.attrs['n_nonmath_samples'] = len(nonmath_data)
             
-            raw_math = f.create_group('raw_math')
-            for i, sample_acts in enumerate(math_activations):
-                sample_grp = raw_math.create_group(f'sample_{i:03d}')
-                sample_grp.attrs['prompt'] = MATH_PROMPTS[i] if i < len(MATH_PROMPTS) else ""
-                
-                for name, values in sample_acts.items():
-                    clean_name = name.replace('.', '_')
-                    if len(values.shape) == 3:
-                        values = values[:, -1, :]
-                    elif len(values.shape) == 2:
-                        values = values[-1, :]
-                    sample_grp.create_dataset(clean_name, data=values.flatten().numpy(), compression='gzip')
-            
-            raw_nonmath = f.create_group('raw_nonmath')
-            for i, sample_acts in enumerate(nonmath_activations):
-                sample_grp = raw_nonmath.create_group(f'sample_{i:03d}')
-                sample_grp.attrs['prompt'] = NONMATH_PROMPTS[i] if i < len(NONMATH_PROMPTS) else ""
-                
-                for name, values in sample_acts.items():
-                    clean_name = name.replace('.', '_')
-                    if len(values.shape) == 3:
-                        values = values[:, -1, :]
-                    elif len(values.shape) == 2:
-                        values = values[-1, :]
-                    sample_grp.create_dataset(clean_name, data=values.flatten().numpy(), compression='gzip')
+            self._save_group_to_h5(f, math_data, 'raw_math', MATH_PROMPTS)
+            self._save_group_to_h5(f, nonmath_data, 'raw_nonmath', NONMATH_PROMPTS)
         
         return h5_path
     
-    def run(self):
+    def _save_group_to_h5(self, f, data, group_name, prompts):
+        group = f.create_group(group_name)
+        
+        for i, sample in enumerate(data):
+            sample_grp = group.create_group(f'sample_{i:03d}')
+            sample_grp.attrs['prompt'] = prompts[i] if i < len(prompts) else ""
+            
+            activations = sample.get('activations', sample)
+            
+            for name, values in activations.items():
+                clean_name = name.replace('.', '_')
+                if hasattr(values, 'shape'):
+                    if len(values.shape) == 3:
+                        values = values[:, -1, :]
+                    elif len(values.shape) == 2:
+                        values = values[-1, :]
+                    data_array = values.flatten()
+                else:
+                    data_array = np.array(values).flatten()
+                
+                sample_grp.create_dataset(clean_name, data=data_array, compression='gzip')
+    
+    def run(self, *, max_new_tokens=1):
         output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments") / "math_comparison"
         output_path.mkdir(parents=True, exist_ok=True)
         
-        print("Capturing MATH activations...")
-        math_activations = self.capture_activations(prompts=MATH_PROMPTS)
+        print(f"Capturing MATH activations (max_new_tokens={max_new_tokens})...")
+        math_activations, math_texts = self.capture.capture_prompts(MATH_PROMPTS, max_new_tokens=max_new_tokens)
         
-        print("\nCapturing NON-MATH activations...")
-        nonmath_activations = self.capture_activations(prompts=NONMATH_PROMPTS)
+        print(f"\nCapturing NON-MATH activations (max_new_tokens={max_new_tokens})...")
+        nonmath_activations, nonmath_texts = self.capture.capture_prompts(NONMATH_PROMPTS, max_new_tokens=max_new_tokens)
+        
+        if max_new_tokens > 1:
+            DataStore.save_generation_data(
+                activations={'math': math_activations, 'nonmath': nonmath_activations},
+                texts={'math': math_texts, 'nonmath': nonmath_texts},
+                output_path=output_path
+            )
         
         print("\nComputing averages...")
-        math_avg = self.compute_average_activations(activation_list=math_activations)
-        nonmath_avg = self.compute_average_activations(activation_list=nonmath_activations)
+        math_data = [{'activations': acts[-1]} for acts in math_activations]
+        nonmath_data = [{'activations': acts[-1]} for acts in nonmath_activations]
+        
+        math_avg = self.compute_average_activations(activation_list=math_data)
+        nonmath_avg = self.compute_average_activations(activation_list=nonmath_data)
         
         print("\nCreating visualizations...")
         math_img = visualize_step(math_avg, 1, "MATH PROMPTS (averaged)")
@@ -161,8 +136,8 @@ class MathComparison:
         
         print("\nSaving to H5...")
         self.save_to_h5(
-            math_activations=math_activations,
-            nonmath_activations=nonmath_activations,
+            math_data=math_data,
+            nonmath_data=nonmath_data,
             output_path=output_path
         )
         
@@ -177,11 +152,13 @@ class MathComparison:
         print(f"\n✓ Complete! All outputs in: {output_path}")
         return output_path
 
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='gpt2')
+    parser.add_argument('--max_new_tokens', type=int, default=1)
     args = parser.parse_args()
     
     exp = MathComparison(model_path=args.model)
-    exp.run()
+    exp.run(max_new_tokens=args.max_new_tokens)
