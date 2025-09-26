@@ -69,40 +69,56 @@ class MathComparison:
 
         return avg_activations
 
-    def save_to_h5(self, *, math_data, nonmath_data, output_path):
+    def save_to_h5(self, *, math_activations, nonmath_activations, math_texts, nonmath_texts, output_path):
         h5_path = output_path / "activations.h5"
 
         with h5py.File(h5_path, "w") as f:
             f.attrs["model"] = self.model_path
-            f.attrs["n_math_samples"] = len(math_data)
-            f.attrs["n_nonmath_samples"] = len(nonmath_data)
+            f.attrs["n_math_samples"] = len(math_activations)
+            f.attrs["n_nonmath_samples"] = len(nonmath_activations)
+            f.attrs["max_generation_steps"] = max(len(acts) for acts in math_activations + nonmath_activations)
 
-            self._save_group_to_h5(f, math_data, "raw_math", MATH_PROMPTS)
-            self._save_group_to_h5(f, nonmath_data, "raw_nonmath", NONMATH_PROMPTS)
+            self._save_group_to_h5(f, math_activations, math_texts, "math", MATH_PROMPTS)
+            self._save_group_to_h5(f, nonmath_activations, nonmath_texts, "nonmath", NONMATH_PROMPTS)
 
         return h5_path
 
-    def _save_group_to_h5(self, f, data, group_name, prompts):
+    def _save_group_to_h5(self, f, activations_list, texts_list, group_name, prompts):
         group = f.create_group(group_name)
 
-        for i, sample in enumerate(data):
+        for i, (sample_activations, sample_texts) in enumerate(zip(activations_list, texts_list)):
             sample_grp = group.create_group(f"sample_{i:03d}")
-            sample_grp.attrs["prompt"] = prompts[i] if i < len(prompts) else ""
-
-            activations = sample.get("activations", sample)
-
-            for name, values in activations.items():
-                clean_name = name.replace(".", "_")
-                if hasattr(values, "shape"):
-                    if len(values.shape) == 3:
-                        values = values[:, -1, :]
-                    elif len(values.shape) == 2:
-                        values = values[-1, :]
-                    data_array = values.flatten()
+            
+            prompt = prompts[i] if i < len(prompts) else ""
+            sample_grp.attrs["prompt"] = prompt
+            sample_grp.attrs["n_steps"] = len(sample_activations)
+            
+            text_grp = sample_grp.create_group("texts")
+            for step_idx, text in enumerate(sample_texts):
+                text_grp.attrs[f"step_{step_idx}"] = text
+                if step_idx == 0:
+                    text_grp.attrs["initial_prompt"] = text
                 else:
-                    data_array = np.array(values).flatten()
+                    continuation = text[len(sample_texts[0]):] if text.startswith(sample_texts[0]) else text
+                    text_grp.attrs[f"continuation_step_{step_idx}"] = continuation
 
-                sample_grp.create_dataset(clean_name, data=data_array, compression="gzip")
+            for step_idx, step_activations in enumerate(sample_activations):
+                step_grp = sample_grp.create_group(f"step_{step_idx}")
+                step_grp.attrs["step_number"] = step_idx
+                step_grp.attrs["text"] = sample_texts[step_idx] if step_idx < len(sample_texts) else ""
+
+                for name, values in step_activations.items():
+                    clean_name = name.replace(".", "_")
+                    if hasattr(values, "shape"):
+                        if len(values.shape) == 3:
+                            values = values[:, -1, :]
+                        elif len(values.shape) == 2:
+                            values = values[-1, :]
+                        data_array = values.flatten()
+                    else:
+                        data_array = np.array(values).flatten()
+
+                    step_grp.create_dataset(clean_name, data=data_array, compression="gzip")
 
     def run(self, *, max_new_tokens=1):
         output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments") / "math_comparison"
@@ -116,29 +132,28 @@ class MathComparison:
             NONMATH_PROMPTS, max_new_tokens=max_new_tokens
         )
 
-        if max_new_tokens > 1:
-            DataStore.save_generation_data(
-                activations={"math": math_activations, "nonmath": nonmath_activations},
-                texts={"math": math_texts, "nonmath": nonmath_texts},
-                output_path=output_path,
-            )
+        print("\nSaving to H5 with full generation data...")
+        self.save_to_h5(
+            math_activations=math_activations,
+            nonmath_activations=nonmath_activations, 
+            math_texts=math_texts,
+            nonmath_texts=nonmath_texts,
+            output_path=output_path
+        )
 
-        print("\nComputing averages...")
+        print("\nComputing averages for visualization...")
         math_data = [{"activations": acts[-1]} for acts in math_activations]
         nonmath_data = [{"activations": acts[-1]} for acts in nonmath_activations]
 
         math_avg = self.compute_average_activations(activation_list=math_data)
         nonmath_avg = self.compute_average_activations(activation_list=nonmath_data)
 
-        print("\nCreating visualizations...")
+        print("Creating visualizations...")
         math_img = visualize_step(math_avg, 1, "MATH PROMPTS (averaged)")
         nonmath_img = visualize_step(nonmath_avg, 2, "NON-MATH PROMPTS (averaged)")
 
         math_img.save(output_path / "math_activations.png")
         nonmath_img.save(output_path / "nonmath_activations.png")
-
-        print("\nSaving to H5...")
-        self.save_to_h5(math_data=math_data, nonmath_data=nonmath_data, output_path=output_path)
 
         with open(output_path / "prompts.txt", "w") as f:
             f.write("MATH PROMPTS:\n")
@@ -149,6 +164,7 @@ class MathComparison:
                 f.write(f"{i+1}. {p}\n")
 
         print(f"\n✓ Complete! All outputs in: {output_path}")
+        print(f"H5 file: {output_path / 'activations.h5'}")
         return output_path
 
 
