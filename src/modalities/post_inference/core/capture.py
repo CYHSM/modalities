@@ -16,37 +16,6 @@ class ActivationCapture:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-    def capture_single(self, input_text, max_new_tokens=1, layers_to_capture=None):
-        input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.to(self.device)
-
-        activations = OrderedDict()
-        hooks = []
-
-        def make_hook(name):
-            def hook(module, input, output):
-                if isinstance(output, torch.Tensor):
-                    activations[name] = output.detach().cpu().numpy()
-                elif isinstance(output, (tuple, list)) and len(output) > 0:
-                    if isinstance(output[0], torch.Tensor):
-                        activations[name] = output[0].detach().cpu().numpy()
-
-            return hook
-
-        for name, module in self.model.named_modules():
-            if layers_to_capture is None or any(pattern in name for pattern in layers_to_capture):
-                if len(list(module.children())) == 0:
-                    hooks.append(module.register_forward_hook(make_hook(name)))
-
-        with torch.no_grad():
-            outputs = self.model(input_ids)
-
-        for hook in hooks:
-            hook.remove()
-
-        logits = outputs.logits.detach().cpu().numpy()
-
-        return {"activations": activations, "input_ids": input_ids.cpu().numpy(), "logits": logits, "text": input_text}
-
     def capture_generation(self, input_text, *, max_new_tokens=10, layers_to_capture=None):
         input_ids = self.tokenizer(input_text, return_tensors="pt").input_ids.to(self.device)
         
@@ -92,27 +61,13 @@ class ActivationCapture:
         
         return generation_activations, step_texts
 
-    def capture_batch(self, texts, max_new_tokens=1, layers_to_capture=None):
-        results = []
-        for i, text in enumerate(texts):
-            print(f"  Processing {i+1}/{len(texts)}: {text[:50]}...")
-            result = self.capture_single(text, max_new_tokens, layers_to_capture)
-            results.append(result)
-        return results
-    
     def capture_prompts(self, prompts, *, max_new_tokens=1, layers_to_capture=None):
         all_activations = []
         all_texts = []
         
         for i, prompt in enumerate(prompts):
             print(f"  Processing {i+1}/{len(prompts)}: {prompt[:50]}...")
-            
-            if max_new_tokens == 1:
-                result = self.capture_single(prompt, max_new_tokens, layers_to_capture)
-                activations = [result['activations']]
-                texts = [result['text']]
-            else:
-                activations, texts = self.capture_generation(prompt, max_new_tokens=max_new_tokens, layers_to_capture=layers_to_capture)
+            activations, texts = self.capture_generation(prompt, max_new_tokens=max_new_tokens, layers_to_capture=layers_to_capture)
             
             all_activations.append(activations)
             all_texts.append(texts)
