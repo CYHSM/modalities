@@ -65,7 +65,7 @@ class MathComparison:
         
         return layer_activations
 
-    def compute_statistics(self, *, math_activations, nonmath_activations, test="ttest", correction_method="fdr_bh"):
+    def compute_statistics(self, *, math_activations, nonmath_activations, test="welch", correction_method="fdr_bh"):
         math_by_layer = self.flatten_activations_by_layer(activation_list=math_activations)
         nonmath_by_layer = self.flatten_activations_by_layer(activation_list=nonmath_activations)
         
@@ -228,7 +228,7 @@ class MathComparison:
 
                     step_grp.create_dataset(clean_name, data=data_array, compression="gzip")
 
-    def run(self, *, max_new_tokens=1, test="ttest", correction_method="fdr_bh"):
+    def run(self, *, max_new_tokens=1, test="welch", correction_method="fdr_bh"):
         output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments") / "math_comparison"
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -293,39 +293,6 @@ class MathComparison:
             "p_values": stats_results["p_corrected"],
             "cohens_d": stats_results["cohens_d"]
         }
-        
-        for p_thresh in [0.05, 0.01, 0.001]:
-            tstat_img, stats_info = visualize_stats(
-                stats_results=stats_results_corrected,
-                metric="t_stats",
-                p_threshold=p_thresh,
-                title=f"T-Statistics Map (FDR-corrected p < {p_thresh})"
-            )
-            tstat_img.save(output_path / f"tstats_corrected_p{p_thresh}.png")
-            
-            print(f"  FDR-corrected p < {p_thresh}: {stats_info['n_significant']:,}/{stats_info['n_total']:,} " 
-                  f"({stats_info['pct_significant']:.2f}%) significant")
-        
-        tstat_uncorr_img, stats_info_uncorr = visualize_stats(
-            stats_results={
-                "mean_diff": stats_results["mean_diff"],
-                "t_stats": stats_results["t_stats"],
-                "p_values": stats_results["p_values"],
-                "cohens_d": stats_results["cohens_d"]
-            },
-            metric="t_stats",
-            p_threshold=0.05,
-            title="T-Statistics Map (uncorrected p < 0.05)"
-        )
-        tstat_uncorr_img.save(output_path / "tstats_uncorrected_p0.05.png")
-        
-        cohens_img, _ = visualize_stats(
-            stats_results=stats_results_corrected,
-            metric="cohens_d",
-            p_threshold=0.05,
-            title="Cohen's d Effect Size Map (FDR-corrected p < 0.05)"
-        )
-        cohens_img.save(output_path / "cohens_d_corrected_p0.05.png")
 
         print("\nCreating interactive viewer with corrected p-values...")
         html_path = create_interactive_viewer(stats_results=stats_results_corrected, output_path=output_path)
@@ -387,7 +354,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt2")
     parser.add_argument("--max_new_tokens", type=int, default=1)
-    parser.add_argument("--test", type=str, default="ttest", choices=["ttest", "welch", "mannwhitney"])
+    parser.add_argument("--test", type=str, default="welch", choices=["ttest", "welch", "mannwhitney"])
     parser.add_argument("--correction", type=str, default="fdr_bh", 
                        choices=["fdr_bh", "bonferroni", "fdr_by"])
     args = parser.parse_args()
