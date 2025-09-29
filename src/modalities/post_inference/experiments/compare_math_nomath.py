@@ -39,6 +39,80 @@ class MathComparison:
         self.capture = ActivationCapture(model_path, device)
         self.model_path = model_path
 
+    def compute_average_activations_all_steps(self, *, activation_list):
+        avg_activations = OrderedDict()
+        
+        all_keys = set()
+        for sample_acts in activation_list:
+            for step_acts in sample_acts:
+                all_keys.update(step_acts.keys())
+        
+        for key in sorted(all_keys):
+            all_values = []
+            for sample_acts in activation_list:
+                for step_acts in sample_acts:
+                    if key in step_acts:
+                        act = step_acts[key]
+                        if hasattr(act, "shape"):
+                            if len(act.shape) == 3:
+                                act = act[:, -1, :]
+                            elif len(act.shape) == 2:
+                                act = act[-1, :]
+                            all_values.append(act.flatten())
+                        else:
+                            all_values.append(np.array(act).flatten())
+            
+            if all_values:
+                min_len = min(len(v) for v in all_values)
+                all_values = [v[:min_len] for v in all_values]
+                avg_activations[key] = np.stack(all_values).mean(axis=0)
+        
+        return avg_activations
+
+    def compute_std_activations_all_steps(self, *, activation_list):
+        std_activations = OrderedDict()
+        
+        all_keys = set()
+        for sample_acts in activation_list:
+            for step_acts in sample_acts:
+                all_keys.update(step_acts.keys())
+        
+        for key in sorted(all_keys):
+            all_values = []
+            for sample_acts in activation_list:
+                for step_acts in sample_acts:
+                    if key in step_acts:
+                        act = step_acts[key]
+                        if hasattr(act, "shape"):
+                            if len(act.shape) == 3:
+                                act = act[:, -1, :]
+                            elif len(act.shape) == 2:
+                                act = act[-1, :]
+                            all_values.append(act.flatten())
+                        else:
+                            all_values.append(np.array(act).flatten())
+            
+            if all_values:
+                min_len = min(len(v) for v in all_values)
+                all_values = [v[:min_len] for v in all_values]
+                std_activations[key] = np.stack(all_values).std(axis=0)
+        
+        return std_activations
+
+    def compute_difference_activations(self, *, math_avg, nonmath_avg):
+        diff_activations = OrderedDict()
+        
+        common_keys = set(math_avg.keys()) & set(nonmath_avg.keys())
+        
+        for key in sorted(common_keys):
+            math_vals = math_avg[key]
+            nonmath_vals = nonmath_avg[key]
+            
+            min_len = min(len(math_vals), len(nonmath_vals))
+            diff_activations[key] = math_vals[:min_len] - nonmath_vals[:min_len]
+        
+        return diff_activations
+
     def compute_average_activations(self, *, activation_list):
         avg_activations = OrderedDict()
 
@@ -141,19 +215,46 @@ class MathComparison:
             output_path=output_path
         )
 
-        print("\nComputing averages for visualization...")
+        print("\nComputing averages across all steps...")
+        math_avg_all_steps = self.compute_average_activations_all_steps(activation_list=math_activations)
+        nonmath_avg_all_steps = self.compute_average_activations_all_steps(activation_list=nonmath_activations)
+        
+        print("Computing standard deviations across all steps...")
+        math_std_all_steps = self.compute_std_activations_all_steps(activation_list=math_activations)
+        nonmath_std_all_steps = self.compute_std_activations_all_steps(activation_list=nonmath_activations)
+        
+        print("Computing differences (math - nonmath)...")
+        diff_activations = self.compute_difference_activations(
+            math_avg=math_avg_all_steps, 
+            nonmath_avg=nonmath_avg_all_steps
+        )
+
+        print("Creating visualizations...")
+        
+        math_img = visualize_step(math_avg_all_steps, 1, "MATH PROMPTS (averaged across all steps)")
+        nonmath_img = visualize_step(nonmath_avg_all_steps, 2, "NON-MATH PROMPTS (averaged across all steps)")
+        diff_img = visualize_step(diff_activations, 3, "DIFFERENCE (Math - Non-Math)")
+        math_std_img = visualize_step(math_std_all_steps, 4, "MATH PROMPTS (standard deviation)")
+        nonmath_std_img = visualize_step(nonmath_std_all_steps, 5, "NON-MATH PROMPTS (standard deviation)")
+
+        math_img.save(output_path / "math_activations_avg_all_steps.png")
+        nonmath_img.save(output_path / "nonmath_activations_avg_all_steps.png")
+        diff_img.save(output_path / "difference_math_minus_nonmath.png")
+        math_std_img.save(output_path / "math_activations_std.png")
+        nonmath_std_img.save(output_path / "nonmath_activations_std.png")
+
+        print("Computing last-step averages for comparison...")
         math_data = [{"activations": acts[-1]} for acts in math_activations]
         nonmath_data = [{"activations": acts[-1]} for acts in nonmath_activations]
 
-        math_avg = self.compute_average_activations(activation_list=math_data)
-        nonmath_avg = self.compute_average_activations(activation_list=nonmath_data)
+        math_avg_last = self.compute_average_activations(activation_list=math_data)
+        nonmath_avg_last = self.compute_average_activations(activation_list=nonmath_data)
 
-        print("Creating visualizations...")
-        math_img = visualize_step(math_avg, 1, "MATH PROMPTS (averaged)")
-        nonmath_img = visualize_step(nonmath_avg, 2, "NON-MATH PROMPTS (averaged)")
+        math_last_img = visualize_step(math_avg_last, 6, "MATH PROMPTS (last step only)")
+        nonmath_last_img = visualize_step(nonmath_avg_last, 7, "NON-MATH PROMPTS (last step only)")
 
-        math_img.save(output_path / "math_activations.png")
-        nonmath_img.save(output_path / "nonmath_activations.png")
+        math_last_img.save(output_path / "math_activations_last_step.png")
+        nonmath_last_img.save(output_path / "nonmath_activations_last_step.png")
 
         with open(output_path / "prompts.txt", "w") as f:
             f.write("MATH PROMPTS:\n")
@@ -163,8 +264,25 @@ class MathComparison:
             for i, p in enumerate(NONMATH_PROMPTS):
                 f.write(f"{i+1}. {p}\n")
 
+        with open(output_path / "analysis_summary.txt", "w") as f:
+            f.write("ANALYSIS SUMMARY\n")
+            f.write("================\n\n")
+            f.write(f"Model: {self.model_path}\n")
+            f.write(f"Max new tokens: {max_new_tokens}\n")
+            f.write(f"Math samples: {len(math_activations)}\n")
+            f.write(f"Non-math samples: {len(nonmath_activations)}\n\n")
+            f.write("Generated visualizations:\n")
+            f.write("- math_activations_avg_all_steps.png: Math prompts averaged across all generation steps\n")
+            f.write("- nonmath_activations_avg_all_steps.png: Non-math prompts averaged across all generation steps\n")
+            f.write("- difference_math_minus_nonmath.png: Difference between math and non-math averages\n")
+            f.write("- math_activations_std.png: Standard deviation of math activations\n")
+            f.write("- nonmath_activations_std.png: Standard deviation of non-math activations\n")
+            f.write("- math_activations_last_step.png: Math prompts (last step only, for comparison)\n")
+            f.write("- nonmath_activations_last_step.png: Non-math prompts (last step only, for comparison)\n")
+
         print(f"\n✓ Complete! All outputs in: {output_path}")
         print(f"H5 file: {output_path / 'activations.h5'}")
+        print(f"Analysis summary: {output_path / 'analysis_summary.txt'}")
         return output_path
 
 
