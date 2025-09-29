@@ -5,9 +5,7 @@ import h5py
 import numpy as np
 
 from modalities.post_inference.core.capture import ActivationCapture, DataStore
-from modalities.post_inference.core.stats import ActivationStats
 from modalities.post_inference.plot.visualize import visualize_step
-from modalities.post_inference.plot.plot_stats import visualize_stats, create_interactive_viewer
 
 MATH_PROMPTS = [
     "Calculate the integral of x^2 from 0 to 1:",
@@ -40,68 +38,6 @@ class MathComparison:
     def __init__(self, *, model_path="gpt2", device="cuda"):
         self.capture = ActivationCapture(model_path, device)
         self.model_path = model_path
-
-    def flatten_activations_by_layer(self, *, activation_list):
-        layer_activations = OrderedDict()
-        
-        for sample_acts in activation_list:
-            for step_acts in sample_acts:
-                for name, act in step_acts.items():
-                    if name not in layer_activations:
-                        layer_activations[name] = []
-                    
-                    if hasattr(act, "shape"):
-                        if len(act.shape) == 3:
-                            act = act[:, -1, :]
-                        elif len(act.shape) == 2:
-                            act = act[-1, :]
-                        layer_activations[name].append(act.flatten())
-                    else:
-                        layer_activations[name].append(np.array(act).flatten())
-        
-        for name in layer_activations:
-            min_len = min(len(a) for a in layer_activations[name])
-            layer_activations[name] = [a[:min_len] for a in layer_activations[name]]
-        
-        return layer_activations
-
-    def compute_statistics(self, *, math_activations, nonmath_activations, test="ttest", correction_method="fdr_bh"):
-        math_by_layer = self.flatten_activations_by_layer(activation_list=math_activations)
-        nonmath_by_layer = self.flatten_activations_by_layer(activation_list=nonmath_activations)
-        
-        common_layers = set(math_by_layer.keys()) & set(nonmath_by_layer.keys())
-        
-        stats_results = OrderedDict()
-        for metric in ["mean_diff", "t_stats", "p_values", "p_corrected", "significant", "cohens_d"]:
-            stats_results[metric] = OrderedDict()
-        
-        print(f"Computing statistics for {len(common_layers)} layers (test={test}, correction={correction_method})...")
-        
-        for layer in sorted(common_layers):
-            contrast = ActivationStats.compute_contrast(
-                math_by_layer[layer],
-                nonmath_by_layer[layer],
-                test=test
-            )
-            
-            correction = ActivationStats.multiple_comparison_correction(
-                contrast["p_values"],
-                method=correction_method,
-                alpha=0.05
-            )
-            
-            stats_results["mean_diff"][layer] = contrast["mean_diff"]
-            stats_results["t_stats"][layer] = contrast["t_stats"]
-            stats_results["p_values"][layer] = contrast["p_values"]
-            stats_results["p_corrected"][layer] = correction["p_corrected"]
-            stats_results["significant"][layer] = correction["significant"]
-            stats_results["cohens_d"][layer] = contrast["cohens_d"]
-            
-            n_sig = correction["n_significant"]
-            n_total = correction["n_total"]
-            print(f"  {layer}: {n_sig}/{n_total} significant after correction ({100*n_sig/n_total:.2f}%)")
-        
-        return stats_results
 
     def compute_average_activations_all_steps(self, *, activation_list):
         avg_activations = OrderedDict()
@@ -177,6 +113,36 @@ class MathComparison:
         
         return diff_activations
 
+    def compute_average_activations(self, *, activation_list):
+        avg_activations = OrderedDict()
+
+        all_keys = set()
+        for acts in activation_list:
+            act_dict = acts.get("activations", acts)
+            all_keys.update(act_dict.keys())
+
+        for key in sorted(all_keys):
+            values = []
+            for acts in activation_list:
+                act_dict = acts.get("activations", acts)
+                if key in act_dict:
+                    act = act_dict[key]
+                    if hasattr(act, "shape"):
+                        if len(act.shape) == 3:
+                            act = act[:, -1, :]
+                        elif len(act.shape) == 2:
+                            act = act[-1, :]
+                        values.append(act.flatten())
+                    else:
+                        values.append(np.array(act).flatten())
+
+            if values:
+                min_len = min(len(v) for v in values)
+                values = [v[:min_len] for v in values]
+                avg_activations[key] = np.stack(values).mean(axis=0)
+
+        return avg_activations
+
     def save_to_h5(self, *, math_activations, nonmath_activations, math_texts, nonmath_texts, output_path):
         h5_path = output_path / "activations.h5"
 
@@ -228,7 +194,7 @@ class MathComparison:
 
                     step_grp.create_dataset(clean_name, data=data_array, compression="gzip")
 
-    def run(self, *, max_new_tokens=1, test="ttest", correction_method="fdr_bh"):
+    def run(self, *, max_new_tokens=1):
         output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments") / "math_comparison"
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -247,14 +213,6 @@ class MathComparison:
             math_texts=math_texts,
             nonmath_texts=nonmath_texts,
             output_path=output_path
-        )
-
-        print("\nComputing statistics with multiple comparison correction...")
-        stats_results = self.compute_statistics(
-            math_activations=math_activations,
-            nonmath_activations=nonmath_activations,
-            test=test,
-            correction_method=correction_method
         )
 
         print("\nComputing averages across all steps...")
@@ -285,51 +243,18 @@ class MathComparison:
         math_std_img.save(output_path / "math_activations_std.png")
         nonmath_std_img.save(output_path / "nonmath_activations_std.png")
 
-        print("Creating statistical significance maps with corrected p-values...")
-        
-        stats_results_corrected = {
-            "mean_diff": stats_results["mean_diff"],
-            "t_stats": stats_results["t_stats"],
-            "p_values": stats_results["p_corrected"],
-            "cohens_d": stats_results["cohens_d"]
-        }
-        
-        for p_thresh in [0.05, 0.01, 0.001]:
-            tstat_img, stats_info = visualize_stats(
-                stats_results=stats_results_corrected,
-                metric="t_stats",
-                p_threshold=p_thresh,
-                title=f"T-Statistics Map (FDR-corrected p < {p_thresh})"
-            )
-            tstat_img.save(output_path / f"tstats_corrected_p{p_thresh}.png")
-            
-            print(f"  FDR-corrected p < {p_thresh}: {stats_info['n_significant']:,}/{stats_info['n_total']:,} " 
-                  f"({stats_info['pct_significant']:.2f}%) significant")
-        
-        tstat_uncorr_img, stats_info_uncorr = visualize_stats(
-            stats_results={
-                "mean_diff": stats_results["mean_diff"],
-                "t_stats": stats_results["t_stats"],
-                "p_values": stats_results["p_values"],
-                "cohens_d": stats_results["cohens_d"]
-            },
-            metric="t_stats",
-            p_threshold=0.05,
-            title="T-Statistics Map (uncorrected p < 0.05)"
-        )
-        tstat_uncorr_img.save(output_path / "tstats_uncorrected_p0.05.png")
-        
-        cohens_img, _ = visualize_stats(
-            stats_results=stats_results_corrected,
-            metric="cohens_d",
-            p_threshold=0.05,
-            title="Cohen's d Effect Size Map (FDR-corrected p < 0.05)"
-        )
-        cohens_img.save(output_path / "cohens_d_corrected_p0.05.png")
+        print("Computing last-step averages for comparison...")
+        math_data = [{"activations": acts[-1]} for acts in math_activations]
+        nonmath_data = [{"activations": acts[-1]} for acts in nonmath_activations]
 
-        print("\nCreating interactive viewer with corrected p-values...")
-        html_path = create_interactive_viewer(stats_results=stats_results_corrected, output_path=output_path)
-        print(f"  Interactive HTML: {html_path}")
+        math_avg_last = self.compute_average_activations(activation_list=math_data)
+        nonmath_avg_last = self.compute_average_activations(activation_list=nonmath_data)
+
+        math_last_img = visualize_step(math_avg_last, 6, "MATH PROMPTS (last step only)")
+        nonmath_last_img = visualize_step(nonmath_avg_last, 7, "NON-MATH PROMPTS (last step only)")
+
+        math_last_img.save(output_path / "math_activations_last_step.png")
+        nonmath_last_img.save(output_path / "nonmath_activations_last_step.png")
 
         with open(output_path / "prompts.txt", "w") as f:
             f.write("MATH PROMPTS:\n")
@@ -339,45 +264,25 @@ class MathComparison:
             for i, p in enumerate(NONMATH_PROMPTS):
                 f.write(f"{i+1}. {p}\n")
 
-        n_significant_uncorr = sum(np.sum(stats_results["significant"][layer]) 
-                                    for layer in stats_results["significant"])
-        n_significant_corr_05 = sum(np.sum(p < 0.05) 
-                                     for p in stats_results["p_corrected"].values())
-        n_significant_corr_01 = sum(np.sum(p < 0.01) 
-                                     for p in stats_results["p_corrected"].values())
-        total_dims = sum(len(p) for p in stats_results["p_values"].values())
-
         with open(output_path / "analysis_summary.txt", "w") as f:
             f.write("ANALYSIS SUMMARY\n")
             f.write("================\n\n")
             f.write(f"Model: {self.model_path}\n")
             f.write(f"Max new tokens: {max_new_tokens}\n")
-            f.write(f"Statistical test: {test}\n")
-            f.write(f"Multiple comparison correction: {correction_method}\n")
             f.write(f"Math samples: {len(math_activations)}\n")
             f.write(f"Non-math samples: {len(nonmath_activations)}\n\n")
-            f.write("STATISTICAL RESULTS:\n")
-            f.write(f"Total dimensions tested: {total_dims}\n")
-            f.write(f"Significant (uncorrected p < 0.05): {n_significant_uncorr} ({100*n_significant_uncorr/total_dims:.2f}%)\n")
-            f.write(f"Significant (FDR-corrected p < 0.05): {n_significant_corr_05} ({100*n_significant_corr_05/total_dims:.2f}%)\n")
-            f.write(f"Significant (FDR-corrected p < 0.01): {n_significant_corr_01} ({100*n_significant_corr_01/total_dims:.2f}%)\n\n")
-            f.write("NOTE: FDR (False Discovery Rate) correction controls the expected proportion of false positives\n")
-            f.write("among all significant results. This is applied per-layer to account for testing thousands of dimensions.\n\n")
             f.write("Generated visualizations:\n")
             f.write("- math_activations_avg_all_steps.png: Math prompts averaged across all generation steps\n")
             f.write("- nonmath_activations_avg_all_steps.png: Non-math prompts averaged across all generation steps\n")
-            f.write("- difference_math_minus_nonmath.png: Raw difference between math and non-math averages\n")
-            f.write("- tstats_corrected_p*.png: T-statistic maps with FDR correction at different thresholds\n")
-            f.write("- tstats_uncorrected_p0.05.png: T-statistic map without correction (for comparison)\n")
-            f.write("- cohens_d_corrected_p0.05.png: Effect size map (Cohen's d) with FDR-corrected significance\n")
-            f.write("- interactive_stats.html: Interactive viewer with adjustable thresholds (uses corrected p-values)\n")
+            f.write("- difference_math_minus_nonmath.png: Difference between math and non-math averages\n")
+            f.write("- math_activations_std.png: Standard deviation of math activations\n")
+            f.write("- nonmath_activations_std.png: Standard deviation of non-math activations\n")
+            f.write("- math_activations_last_step.png: Math prompts (last step only, for comparison)\n")
+            f.write("- nonmath_activations_last_step.png: Non-math prompts (last step only, for comparison)\n")
 
         print(f"\n✓ Complete! All outputs in: {output_path}")
         print(f"H5 file: {output_path / 'activations.h5'}")
-        print(f"Interactive HTML: {output_path / 'interactive_stats.html'}")
         print(f"Analysis summary: {output_path / 'analysis_summary.txt'}")
-        print(f"\nUncorrected significant: {n_significant_uncorr}/{total_dims} ({100*n_significant_uncorr/total_dims:.2f}%)")
-        print(f"FDR-corrected significant (p<0.05): {n_significant_corr_05}/{total_dims} ({100*n_significant_corr_05/total_dims:.2f}%)")
         return output_path
 
 
@@ -387,10 +292,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt2")
     parser.add_argument("--max_new_tokens", type=int, default=1)
-    parser.add_argument("--test", type=str, default="ttest", choices=["ttest", "welch", "mannwhitney"])
-    parser.add_argument("--correction", type=str, default="fdr_bh", 
-                       choices=["fdr_bh", "bonferroni", "fdr_by"])
     args = parser.parse_args()
 
     exp = MathComparison(model_path=args.model)
-    exp.run(max_new_tokens=args.max_new_tokens, test=args.test, correction_method=args.correction)
+    exp.run(max_new_tokens=args.max_new_tokens)
