@@ -41,10 +41,13 @@ def normalize(values, vmin=None, vmax=None):
 
 def combine_layer_activations(layer_dict):
     all_values = []
+    index_map = []
     for name in sorted(layer_dict.keys()):
         values = layer_dict[name].flatten()
         all_values.extend(values)
-    return np.array(all_values)
+        for i in range(len(values)):
+            index_map.append((name, i))
+    return np.array(all_values), index_map
 
 
 def to_256x256(values):
@@ -141,8 +144,8 @@ def visualize_stats(*, stats_results, metric="t_stats", p_threshold=0.05, title=
         stat_dict = layer_groups_stat[layer_id]
         pval_dict = layer_groups_pval[layer_id]
         
-        combined_stat = combine_layer_activations(stat_dict)
-        combined_pval = combine_layer_activations(pval_dict)
+        combined_stat, _ = combine_layer_activations(stat_dict)
+        combined_pval, _ = combine_layer_activations(pval_dict)
         
         significant_mask = combined_pval < p_threshold
         n_significant_total += np.sum(significant_mask)
@@ -185,17 +188,22 @@ def create_interactive_viewer(*, stats_results, output_path):
         stat_dict = layer_groups_stat[layer_id]
         pval_dict = layer_groups_pval[layer_id]
         
-        combined_stat = combine_layer_activations(stat_dict)
-        combined_pval = combine_layer_activations(pval_dict)
+        combined_stat, index_map = combine_layer_activations(stat_dict)
+        combined_pval, _ = combine_layer_activations(pval_dict)
         
         img_array = to_256x256(combined_stat)
         pval_array = to_256x256(combined_pval)
+        
+        index_map_256 = [None] * (256 * 256)
+        for i, (name, idx) in enumerate(index_map[:256*256]):
+            index_map_256[i] = {"name": name, "idx": idx}
         
         layer_name = f"Layer {layer_id}" if isinstance(layer_id, int) else str(layer_id)
         layers_data.append({
             "name": layer_name,
             "stats": img_array.tolist(),
-            "pvals": pval_array.tolist()
+            "pvals": pval_array.tolist(),
+            "index_map": index_map_256
         })
     
     html_path = Path(output_path) / "interactive_stats.html"
@@ -242,6 +250,26 @@ def create_interactive_viewer(*, stats_results, output_path):
             border-radius: 8px;
             margin-bottom: 20px;
         }}
+        .click-info {{
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            min-height: 80px;
+        }}
+        .click-info.active {{
+            background: #3a4a3a;
+            border: 2px solid #5a7a5a;
+        }}
+        .info-row {{
+            margin: 8px 0;
+            font-family: monospace;
+        }}
+        .info-label {{
+            display: inline-block;
+            width: 120px;
+            color: #aaa;
+        }}
         .grid {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(256px, 1fr));
@@ -262,6 +290,7 @@ def create_interactive_viewer(*, stats_results, output_path):
             width: 100%;
             height: auto;
             image-rendering: pixelated;
+            cursor: crosshair;
         }}
     </style>
 </head>
@@ -288,6 +317,10 @@ def create_interactive_viewer(*, stats_results, output_path):
     
     <div class="stats">
         <strong>Significant dimensions:</strong> <span id="sigCount">-</span> / <span id="totalCount">-</span> (<span id="sigPercent">-</span>%)
+    </div>
+    
+    <div class="click-info" id="clickInfo">
+        <div style="color: #888; text-align: center;">Click on any pixel to see activation details</div>
     </div>
     
     <div class="grid" id="layerGrid"></div>
@@ -375,6 +408,42 @@ def create_interactive_viewer(*, stats_results, output_path):
                 totalDims += 256 * 256;
                 
                 ctx.putImageData(imageData, 0, 0);
+                
+                canvas.addEventListener('click', (e) => {{
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    const x = Math.floor((e.clientX - rect.left) * scaleX);
+                    const y = Math.floor((e.clientY - rect.top) * scaleY);
+                    
+                    const pixelIdx = y * 256 + x;
+                    const stat = layer.stats[y][x];
+                    const pval = layer.pvals[y][x];
+                    const mapping = layer.index_map[pixelIdx];
+                    
+                    const clickInfo = document.getElementById('clickInfo');
+                    clickInfo.className = 'click-info active';
+                    
+                    if (mapping && mapping.name) {{
+                        clickInfo.innerHTML = `
+                            <div class="info-row"><span class="info-label">Layer:</span> ${{layer.name}}</div>
+                            <div class="info-row"><span class="info-label">Activation:</span> ${{mapping.name}}</div>
+                            <div class="info-row"><span class="info-label">Index:</span> ${{mapping.idx}}</div>
+                            <div class="info-row"><span class="info-label">T-statistic:</span> ${{stat.toFixed(4)}}</div>
+                            <div class="info-row"><span class="info-label">P-value:</span> ${{pval.toExponential(4)}}</div>
+                            <div class="info-row"><span class="info-label">Significant:</span> ${{pval < pThreshold && Math.abs(stat) > tThreshold ? 'Yes' : 'No'}}</div>
+                        `;
+                    }} else {{
+                        clickInfo.innerHTML = `
+                            <div class="info-row"><span class="info-label">Layer:</span> ${{layer.name}}</div>
+                            <div class="info-row"><span class="info-label">Pixel:</span> (${{x}}, ${{y}})</div>
+                            <div class="info-row"><span class="info-label">T-statistic:</span> ${{stat.toFixed(4)}}</div>
+                            <div class="info-row"><span class="info-label">P-value:</span> ${{pval.toExponential(4)}}</div>
+                            <div class="info-row" style="color: #888;">(Padding region - no activation mapped)</div>
+                        `;
+                    }}
+                }});
+                
                 grid.appendChild(div);
             }});
             
