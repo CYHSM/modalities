@@ -1,24 +1,28 @@
 import json
 from pathlib import Path
 
-import re
 import numpy as np
 import torch
 from datasets import load_dataset
 from scipy import stats
-from torch.nn import functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm import tqdm
+from lm_eval import evaluator
+from lm_eval.models.huggingface import HFLM
 
 from modalities.post_inference.utils.h5_utils import H5Store
+
+
+class PatchedHFLM(HFLM):
+    def __init__(self, *, pretrained, patcher, device="cuda", **kwargs):
+        super().__init__(pretrained=pretrained, device=device, **kwargs)
+        self.patcher = patcher
 
 
 class ActivationPatcher:
     def __init__(self, *, model_path, device="cuda"):
         self.model = AutoModelForCausalLM.from_pretrained(model_path, trust_remote_code=True).to(device)
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        if "Qwen" in model_path:
-            self.tokenizer.padding_side = "left"
         self.device = device
         self.model.eval()
         
@@ -141,124 +145,31 @@ class ActivationPatcher:
         self.hooks = []
         self.patch_specs = {}
 
-    def evaluate_gsm8k(self, *, n_samples=100, batch_size=64):
-        def extract_answer(text):
-            text = text.strip()
-            
-            if "\\boxed{" in text:
-                match = re.search(r'\\boxed\{([^}]+)\}', text)
-                if match:
-                    return clean_number(match.group(1))
-            
-            if "####" in text:
-                parts = text.split("####")
-                if len(parts) > 1:
-                    return clean_number(parts[-1])
-            
-            numbers = re.findall(r'(-?[$0-9.,]{2,})|(-?[0-9]+)', text)
-            if numbers:
-                last_num = numbers[-1]
-                return clean_number(last_num[0] if last_num[0] else last_num[1])
-            
-            return None
-
-
-        def clean_number(text):
-            text = text.strip()
-            for char in [',', '$', '%', 'g', '.']:
-                text = text.replace(char, '')
-            try:
-                return str(int(text))
-            except:
-                return text
-
-        dataset = load_dataset("gsm8k", "main", split="test")
-        dataset = dataset.shuffle(seed=42).select(range(min(n_samples, len(dataset))))
+    def evaluate_with_harness(self, *, tasks, num_fewshot=None, limit=None):
+        lm = PatchedHFLM(
+            pretrained=self.model,
+            patcher=self,
+            tokenizer=self.tokenizer,
+            device=self.device
+        )
         
-        correct = 0
-        total = 0
+        task_config = {}
+        for task in tasks:
+            config = {}
+            if limit is not None:
+                config["limit"] = limit
+            if num_fewshot is not None and task in num_fewshot:
+                config["num_fewshot"] = num_fewshot[task]
+            if config:
+                task_config[task] = config
         
-        questions = [ex["question"] for ex in dataset]
-        answers = [ex["answer"].split("####")[-1].strip() for ex in dataset]
-        prompts = [f"Question: {q}\nLet's solve this step by step and put your answer in \\boxed{{}}.\nAnswer:" for q in questions]
+        results = evaluator.simple_evaluate(
+            model=lm,
+            tasks=tasks,
+            **task_config
+        )
         
-        for i in tqdm(range(0, len(prompts), batch_size), desc="GSM8K"):
-            batch_prompts = prompts[i:i+batch_size]
-            batch_answers = answers[i:i+batch_size]
-            
-            inputs = self.tokenizer(
-                batch_prompts,
-                return_tensors="pt",
-                padding=True,
-            ).to(self.device)
-            
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=256,
-                    do_sample=True,
-                    temperature=0.7,
-                    pad_token_id=self.tokenizer.pad_token_id
-                )
-            
-            for j, output in enumerate(outputs):
-                response = self.tokenizer.decode(
-                    output[inputs["input_ids"][j].shape[0]:],
-                    skip_special_tokens=True
-                )
-                
-                predicted = extract_answer(response)
-                expected = clean_number(batch_answers[j])
-                
-                if predicted == expected:
-                    correct += 1
-
-                # print(f"Q: {questions[i+j]}")
-                # print(f"A: {response.strip()}")
-                # print(f"Expected: {expected}, Predicted: {predicted}")
-                # print(f"{'✓' if predicted == expected else '✗'}\n")
-                
-                total += 1
-        
-        return correct / total if total > 0 else 0
-
-    def evaluate_hellaswag(self, *, n_samples=100):
-        dataset = load_dataset("hellaswag", split="validation")
-        dataset = dataset.shuffle(seed=42).select(range(min(n_samples, len(dataset))))
-        
-        correct = 0
-        total = 0
-        
-        for example in tqdm(dataset, desc="HellaSwag"):
-            context = example["ctx"]
-            endings = example["endings"]
-            label = example["label"]
-            
-            scores = []
-            for ending in endings:
-                prompt = context + ending
-                inputs = self.tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True).to(self.device)
-                
-                with torch.no_grad():
-                    outputs = self.model(**inputs)
-                    logits = outputs.logits
-                    
-                    shift_logits = logits[:, :-1, :].contiguous()
-                    shift_labels = inputs["input_ids"][:, 1:].contiguous()
-                    
-                    loss = F.cross_entropy(
-                        shift_logits.view(-1, shift_logits.size(-1)),
-                        shift_labels.view(-1),
-                        reduction="mean"
-                    )
-                    scores.append(-loss.item())
-            
-            predicted = np.argmax(scores)
-            if predicted == int(label):
-                correct += 1
-            total += 1
-        
-        return correct / total if total > 0 else 0
+        return results["results"]
 
 
 class PatchingExperiment:
@@ -269,22 +180,27 @@ class PatchingExperiment:
 
     def run(self, *, scale_factors=[0.0, 0.5, 1.0, 1.5, 2.0],
             t_thresholds=[0, 5, 10, 15, 20], p_threshold=0.01,
-            n_eval_samples=100):
+            tasks=["gsm8k", "hellaswag"], num_fewshot={"gsm8k": 3},
+            limit=100):
         
         output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments") / "patching_results"
         output_path.mkdir(parents=True, exist_ok=True)
         
         print("\nBaseline evaluation (no patching)")
-        baseline_gsm8k = self.patcher.evaluate_gsm8k(n_samples=n_eval_samples)
-        baseline_hellaswag = self.patcher.evaluate_hellaswag(n_samples=n_eval_samples)
-        print(f"  GSM8K: {baseline_gsm8k:.3f}")
-        print(f"  HellaSwag: {baseline_hellaswag:.3f}")
+        baseline_results = self.patcher.evaluate_with_harness(
+            tasks=tasks,
+            num_fewshot=num_fewshot,
+            limit=limit
+        )
+        
+        baseline_scores = {}
+        for task in tasks:
+            score = baseline_results[task].get("acc,none", baseline_results[task].get("acc_norm,none", 0))
+            baseline_scores[task] = score
+            print(f"  {task}: {score:.3f}")
         
         all_results = {
-            "baseline": {
-                "gsm8k": baseline_gsm8k,
-                "hellaswag": baseline_hellaswag
-            },
+            "baseline": baseline_scores,
             "experiments": []
         }
         
@@ -321,19 +237,22 @@ class PatchingExperiment:
                 print(f"\n  Patching with scale={scale}")
                 self.patcher.setup_patches(patch_targets=patch_targets, scale_factor=scale)
                 
-                gsm8k_score = self.patcher.evaluate_gsm8k(n_samples=n_eval_samples)
-                hellaswag_score = self.patcher.evaluate_hellaswag(n_samples=n_eval_samples)
+                eval_results = self.patcher.evaluate_with_harness(
+                    tasks=tasks,
+                    num_fewshot=num_fewshot,
+                    limit=limit
+                )
                 
-                print(f"    GSM8K: {gsm8k_score:.3f} (Δ={gsm8k_score - baseline_gsm8k:+.3f})")
-                print(f"    HellaSwag: {hellaswag_score:.3f} (Δ={hellaswag_score - baseline_hellaswag:+.3f})")
+                scale_result = {"scale_factor": scale}
                 
-                threshold_results["scale_results"].append({
-                    "scale_factor": scale,
-                    "gsm8k": gsm8k_score,
-                    "hellaswag": hellaswag_score,
-                    "gsm8k_delta": gsm8k_score - baseline_gsm8k,
-                    "hellaswag_delta": hellaswag_score - baseline_hellaswag
-                })
+                for task in tasks:
+                    score = eval_results[task].get("acc,none", eval_results[task].get("acc_norm,none", 0))
+                    delta = score - baseline_scores[task]
+                    scale_result[task] = score
+                    scale_result[f"{task}_delta"] = delta
+                    print(f"    {task}: {score:.3f} (Δ={delta:+.3f})")
+                
+                threshold_results["scale_results"].append(scale_result)
                 
                 self.patcher.clear_patches()
             
@@ -351,11 +270,13 @@ class PatchingExperiment:
                 "p_threshold": p_threshold,
                 "t_thresholds": t_thresholds,
                 "scale_factors": scale_factors,
-                "n_eval_samples": n_eval_samples,
+                "tasks": tasks,
+                "num_fewshot": num_fewshot,
+                "limit": limit,
                 "results": all_results
             }, f, indent=2)
         
-        summary = self._create_summary_table(all_results)
+        summary = self._create_summary_table(all_results, tasks)
         with open(output_path / "summary.txt", "w") as f:
             f.write(summary)
         print(f"\n{summary}")
@@ -363,34 +284,39 @@ class PatchingExperiment:
         print(f"\n✓ Results saved to {output_path}")
         return all_results
 
-    def _create_summary_table(self, all_results):
+    def _create_summary_table(self, all_results, tasks):
         lines = []
         lines.append("ACTIVATION PATCHING SUMMARY")
         lines.append("=" * 80)
-        lines.append(f"Baseline GSM8K: {all_results['baseline']['gsm8k']:.3f}")
-        lines.append(f"Baseline HellaSwag: {all_results['baseline']['hellaswag']:.3f}")
+        
+        for task in tasks:
+            lines.append(f"Baseline {task}: {all_results['baseline'][task]:.3f}")
         lines.append("")
         
         for exp in all_results["experiments"]:
             lines.append(f"\nT-threshold={exp['t_threshold']} ({exp['n_neurons']} neurons, {exp['n_layers']} layers):")
             lines.append("-" * 80)
-            lines.append(f"{'Scale':>6} | {'GSM8K':>8} | {'Δ GSM8K':>10} | {'HellaSwag':>10} | {'Δ HellaSwag':>12}")
+            
+            header = f"{'Scale':>6}"
+            for task in tasks:
+                header += f" | {task[:8]:>8} | {f'Δ {task[:6]}':>10}"
+            lines.append(header)
             
             for result in exp["scale_results"]:
-                scale = f"{result['scale_factor']:.1f}"
-                gsm8k = f"{result['gsm8k']:.3f}"
-                hellaswag = f"{result['hellaswag']:.3f}"
-                delta_gsm = f"{result['gsm8k_delta']:+.3f}"
-                delta_hella = f"{result['hellaswag_delta']:+.3f}"
-                
-                lines.append(f"{scale:>6} | {gsm8k:>8} | {delta_gsm:>10} | {hellaswag:>10} | {delta_hella:>12}")
+                row = f"{result['scale_factor']:.1f:>6}"
+                for task in tasks:
+                    score = f"{result[task]:.3f}"
+                    delta = f"{result[f'{task}_delta']:+.3f}"
+                    row += f" | {score:>8} | {delta:>10}"
+                lines.append(row)
         
         return "\n".join(lines)
-    
+
+
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Run activation patching experiment")
+    parser = argparse.ArgumentParser(description="Run activation patching experiment with lm_harness")
     parser.add_argument("--model", type=str, 
                        default="/raid/s3/opengptx/mfrey/instruct/hf_model",
                        help="Path to model")
@@ -405,20 +331,24 @@ if __name__ == "__main__":
                        help="T-statistic thresholds for neuron selection")
     parser.add_argument("--p_threshold", type=float, default=0.01,
                        help="P-value threshold for statistical significance")
-    parser.add_argument("--n_eval_samples", type=int, default=100,
+    parser.add_argument("--tasks", type=str, nargs="+",
+                       default=["gsm8k", "hellaswag"],
+                       help="LM harness tasks to evaluate")
+    parser.add_argument("--limit", type=int, default=100,
                        help="Number of evaluation samples per benchmark")
     
     args = parser.parse_args()
     
     print("=" * 60)
-    print("ACTIVATION PATCHING EXPERIMENT")
+    print("ACTIVATION PATCHING EXPERIMENT (LM HARNESS)")
     print("=" * 60)
     print(f"Model: {args.model}")
     print(f"H5 file: {args.h5_path}")
     print(f"Scale factors: {args.scales}")
     print(f"T-stat thresholds: {args.t_thresholds}")
     print(f"P-value threshold: {args.p_threshold}")
-    print(f"Eval samples: {args.n_eval_samples} per benchmark")
+    print(f"Tasks: {args.tasks}")
+    print(f"Eval limit: {args.limit} per task")
     print("=" * 60)
     
     exp = PatchingExperiment(model_path=args.model, h5_path=args.h5_path)
@@ -426,5 +356,7 @@ if __name__ == "__main__":
         scale_factors=args.scales,
         t_thresholds=args.t_thresholds,
         p_threshold=args.p_threshold,
-        n_eval_samples=args.n_eval_samples
+        tasks=args.tasks,
+        num_fewshot={"gsm8k": 3},
+        limit=args.limit
     )

@@ -305,12 +305,12 @@ def create_interactive_viewer(*, stats_results, output_path):
         </div>
         <div class="control-group">
             <label>T-stat threshold:</label>
-            <input type="range" id="tThreshold" min="0" max="10" step="0.1" value="0">
+            <input type="range" id="tThreshold" min="0" max="100" step="0.1" value="0">
             <span class="value-display" id="tValue">0.0</span>
         </div>
         <div class="control-group">
             <label>Colormap range:</label>
-            <input type="range" id="colorRange" min="1" max="10" step="0.5" value="5">
+            <input type="range" id="colorRange" min="1" max="100" step="0.5" value="5">
             <span class="value-display" id="rangeValue">±5.0</span>
         </div>
     </div>

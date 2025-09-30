@@ -2,6 +2,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
+from datasets import load_dataset
 
 from modalities.post_inference.core.capture import ActivationCapture
 from modalities.post_inference.core.stats import ActivationStats
@@ -9,37 +10,40 @@ from modalities.post_inference.plot.visualize import visualize_step
 from modalities.post_inference.plot.plot_stats import create_interactive_viewer
 from modalities.post_inference.utils.h5_utils import H5Store
 
-MATH_PROMPTS = [
-    "Calculate the integral of x^2 from 0 to 1:",
-    "Solve for x: 2x + 5 = 13. The answer is",
-    "The derivative of sin(x) is",
-    "If a triangle has sides 3, 4, and 5, its area is",
-    "The quadratic formula is x equals",
-    "The limit of (x^2 - 1)/(x - 1) as x approaches 1 is",
-    "The eigenvalues of a 2x2 identity matrix are",
-    "The probability of rolling a 6 on a fair die is",
-    "The sum of angles in a triangle equals",
-    "The factorial of 5 equals",
-]
-
-NONMATH_PROMPTS = [
-    "The capital of France is",
-    "Shakespeare wrote his plays during the",
-    "The color of the sky on a clear day is",
-    "A typical greeting in English is",
-    "The largest ocean on Earth is the",
-    "Dogs are known for being loyal and",
-    "The season after summer is",
-    "Water freezes at a temperature of",
-    "The opposite of hot is",
-    "A common breakfast food is",
-]
-
 
 class MathComparison:
     def __init__(self, *, model_path="gpt2", device="cuda"):
         self.capture = ActivationCapture(model_path, device)
         self.model_path = model_path
+
+    def load_math_prompts(self, *, n_samples=100):
+        dataset = load_dataset("gsm8k", "main", split="test")
+        dataset = dataset.shuffle(seed=42).select(range(min(n_samples, len(dataset))))
+        
+        prompts = [f"Question: {ex['question']}\nAnswer:" for ex in dataset]
+        return prompts
+
+    def load_nonmath_prompts(self, *, n_samples=100):
+        dataset = load_dataset("cais/mmlu", "all", split="test")
+        
+        nonmath_subjects = [
+            "high_school_geography", "high_school_government_and_politics", 
+            "high_school_european_history", "high_school_us_history",
+            "high_school_world_history", "prehistory", "world_religions",
+            "professional_psychology", "human_sexuality", "moral_scenarios",
+            "sociology", "philosophy", "professional_law"
+        ]
+        
+        filtered = dataset.filter(lambda x: x["subject"] in nonmath_subjects)
+        filtered = filtered.shuffle(seed=42).select(range(min(n_samples, len(filtered))))
+        
+        prompts = []
+        for ex in filtered:
+            choices = "\n".join([f"{chr(65+i)}. {choice}" for i, choice in enumerate(ex["choices"])])
+            prompt = f"{ex['question']}\n{choices}\nAnswer:"
+            prompts.append(prompt)
+        
+        return prompts
 
     def flatten_activations_by_layer(self, *, activation_list):
         layer_activations = OrderedDict()
@@ -147,23 +151,29 @@ class MathComparison:
         
         return diff_activations
 
-    def run(self, *, max_new_tokens=1, test="welch", correction_method="fdr_bh"):
-        output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments") / "math_comparison"
+    def run(self, *, n_samples=100, max_new_tokens=1, test="welch", correction_method="fdr_bh"):
+        output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments") / f"{self.model_path.replace('/', '_')}_math_vs_nonmath"
         output_path.mkdir(parents=True, exist_ok=True)
 
-        print(f"Capturing MATH activations (max_new_tokens={max_new_tokens})...")
-        math_activations, math_texts = self.capture.capture_prompts(MATH_PROMPTS, max_new_tokens=max_new_tokens)
+        print(f"Loading {n_samples} math prompts from GSM8K...")
+        math_prompts = self.load_math_prompts(n_samples=n_samples)
+        
+        print(f"Loading {n_samples} non-math prompts from MMLU (humanities/social sciences)...")
+        nonmath_prompts = self.load_nonmath_prompts(n_samples=n_samples)
+
+        print(f"\nCapturing MATH activations (max_new_tokens={max_new_tokens})...")
+        math_activations, math_texts = self.capture.capture_prompts(math_prompts, max_new_tokens=max_new_tokens)
 
         print(f"\nCapturing NON-MATH activations (max_new_tokens={max_new_tokens})...")
         nonmath_activations, nonmath_texts = self.capture.capture_prompts(
-            NONMATH_PROMPTS, max_new_tokens=max_new_tokens
+            nonmath_prompts, max_new_tokens=max_new_tokens
         )
 
         print("\nSaving to H5...")
         h5_path = H5Store.save_activations(
             activations_dict={"math": math_activations, "nonmath": nonmath_activations},
             texts_dict={"math": math_texts, "nonmath": nonmath_texts},
-            prompts_dict={"math": MATH_PROMPTS, "nonmath": NONMATH_PROMPTS},
+            prompts_dict={"math": math_prompts, "nonmath": nonmath_prompts},
             output_path=output_path,
             model_name=self.model_path
         )
@@ -223,6 +233,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, default="gpt2")
+    parser.add_argument("--n_samples", type=int, default=100)
     parser.add_argument("--max_new_tokens", type=int, default=1)
     parser.add_argument("--test", type=str, default="welch", choices=["ttest", "welch", "mannwhitney"])
     parser.add_argument("--correction", type=str, default="fdr_bh", 
@@ -230,4 +241,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     exp = MathComparison(model_path=args.model)
-    exp.run(max_new_tokens=args.max_new_tokens, test=args.test, correction_method=args.correction)
+    exp.run(
+        n_samples=args.n_samples,
+        max_new_tokens=args.max_new_tokens, 
+        test=args.test, 
+        correction_method=args.correction
+    )
