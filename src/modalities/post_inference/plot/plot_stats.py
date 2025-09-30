@@ -300,7 +300,7 @@ def create_interactive_viewer(*, stats_results, output_path):
     <div class="controls">
         <div class="control-group">
             <label>P-value threshold:</label>
-            <input type="range" id="pThreshold" min="0.001" max="0.1" step="0.001" value="0.05">
+            <input type="range" id="pThreshold" min="0" max="100" step="0.1" value="30">
             <span class="value-display" id="pValue">0.050</span>
         </div>
         <div class="control-group">
@@ -328,6 +328,21 @@ def create_interactive_viewer(*, stats_results, output_path):
     <script>
         const layersData = {json.dumps(layers_data)};
         
+        const logMin = -10;
+        const logMax = -0.3;
+        
+        function sliderToP(sliderValue) {{
+            const t = sliderValue / 100;
+            const logP = logMin + (logMax - logMin) * t;
+            return Math.pow(10, logP);
+        }}
+        
+        function pToSlider(pValue) {{
+            const logP = Math.log10(pValue);
+            const t = (logP - logMin) / (logMax - logMin);
+            return t * 100;
+        }}
+        
         function applyColormap(value, vmin, vmax) {{
             const normalized = Math.max(0, Math.min(1, (value - vmin) / (vmax - vmin)));
             
@@ -347,11 +362,11 @@ def create_interactive_viewer(*, stats_results, output_path):
         }}
         
         function renderLayers() {{
-            const pThreshold = parseFloat(document.getElementById('pThreshold').value);
+            const pThreshold = sliderToP(parseFloat(document.getElementById('pThreshold').value));
             const tThreshold = parseFloat(document.getElementById('tThreshold').value);
             const colorRange = parseFloat(document.getElementById('colorRange').value);
             
-            document.getElementById('pValue').textContent = pThreshold.toFixed(3);
+            document.getElementById('pValue').textContent = pThreshold.toExponential(2);
             document.getElementById('tValue').textContent = tThreshold.toFixed(1);
             document.getElementById('rangeValue').textContent = `±${{colorRange.toFixed(1)}}`;
             
@@ -452,6 +467,7 @@ def create_interactive_viewer(*, stats_results, output_path):
             document.getElementById('sigPercent').textContent = ((100 * totalSig / totalDims).toFixed(2));
         }}
         
+        document.getElementById('pThreshold').value = pToSlider(0.05);
         document.getElementById('pThreshold').addEventListener('input', renderLayers);
         document.getElementById('tThreshold').addEventListener('input', renderLayers);
         document.getElementById('colorRange').addEventListener('input', renderLayers);

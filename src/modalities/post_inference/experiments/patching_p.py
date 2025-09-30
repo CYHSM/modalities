@@ -27,10 +27,9 @@ class ActivationPatcher:
         
         self.hooks = []
         self.patch_specs = {}
+        self.layer_stats = None
 
-    def identify_significant_neurons(self, *, h5_path, p_threshold=0.01, t_threshold=0.0):
-        activations_dict, _, _ = H5Store.load_activations(h5_path)
-        
+    def compute_layer_statistics(self, *, activations_dict):
         math_activations = activations_dict["math"]
         nonmath_activations = activations_dict["nonmath"]
         
@@ -79,18 +78,18 @@ class ActivationPatcher:
                     "p_values": p_values,
                     "mean_diff": mean_diff
                 }
+        
+        self.layer_stats = layer_stats
+        return layer_stats
 
-                # print(f"Welch t-test stats:")
-                # print(f"n1: {n1}, n2: {n2}")
-                # print(f"t_stats range: {t_stats.min():.2f} to {t_stats.max():.2f}")
-                # print(f"df range: {df.min():.2f} to {df.max():.2f}")
-                # print(f"Cases with df<5: {(df < 5).sum()}")
-
+    def identify_significant_neurons(self, *, p_threshold=0.01, t_threshold=0.0):
+        if self.layer_stats is None:
+            raise ValueError("Must call compute_layer_statistics first")
         
         patch_targets = {}
         significant_info = []
         
-        for layer_name, stats_dict in layer_stats.items():
+        for layer_name, stats_dict in self.layer_stats.items():
             t_stats = stats_dict["t_stats"]
             p_values = stats_dict["p_values"]
             mean_diff = stats_dict["mean_diff"]
@@ -218,11 +217,6 @@ class ActivationPatcher:
                 
                 if predicted == expected:
                     correct += 1
-
-                # print(f"Q: {questions[i+j]}")
-                # print(f"A: {response.strip()}")
-                # print(f"Expected: {expected}, Predicted: {predicted}")
-                # print(f"{'✓' if predicted == expected else '✗'}\n")
                 
                 total += 1
         
@@ -274,7 +268,7 @@ class PatchingExperiment:
         self.model_path = model_path
 
     def run(self, *, scale_factors=[0.0, 0.5, 1.0, 1.5, 2.0],
-            t_thresholds=[0, 5, 10, 15, 20], p_threshold=0.01,
+            t_threshold=0.0, p_thresholds=[0.01],
             n_eval_samples=100):
         
         output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments") / "patching_results"
@@ -294,13 +288,18 @@ class PatchingExperiment:
             "experiments": []
         }
         
-        for t_threshold in t_thresholds:
+        print("\nLoading activations from H5 file...")
+        activations_dict, _, _ = H5Store.load_activations(self.h5_path)
+        
+        print("Computing layer statistics...")
+        self.patcher.compute_layer_statistics(activations_dict=activations_dict)
+        
+        for p_threshold in p_thresholds:
             print(f"\n{'='*60}")
-            print(f"T-STATISTIC THRESHOLD: {t_threshold}")
+            print(f"P-VALUE THRESHOLD: {p_threshold}")
             print(f"{'='*60}")
             
             patch_targets, significant_neurons = self.patcher.identify_significant_neurons(
-                h5_path=self.h5_path,
                 p_threshold=p_threshold,
                 t_threshold=t_threshold
             )
@@ -345,7 +344,7 @@ class PatchingExperiment:
             
             all_results["experiments"].append(threshold_results)
             
-            with open(output_path / f"neurons_t{t_threshold}.json", "w") as f:
+            with open(output_path / f"neurons_p{p_threshold:.0e}.json", "w") as f:
                 json.dump({
                     "patch_targets": {k: v for k, v in patch_targets.items()},
                     "top_neurons": significant_neurons[:100]
@@ -354,8 +353,8 @@ class PatchingExperiment:
         with open(output_path / "all_results.json", "w") as f:
             json.dump({
                 "model": self.model_path,
-                "p_threshold": p_threshold,
-                "t_thresholds": t_thresholds,
+                "p_thresholds": p_thresholds,
+                "t_threshold": t_threshold,
                 "scale_factors": scale_factors,
                 "n_eval_samples": n_eval_samples,
                 "results": all_results
@@ -378,7 +377,7 @@ class PatchingExperiment:
         lines.append("")
         
         for exp in all_results["experiments"]:
-            lines.append(f"\nT-threshold={exp['t_threshold']} ({exp['n_neurons']} neurons, {exp['n_layers']} layers):")
+            lines.append(f"\nP-threshold={exp['p_threshold']:.0e} ({exp['n_neurons']} neurons, {exp['n_layers']} layers):")
             lines.append("-" * 80)
             lines.append(f"{'Scale':>6} | {'GSM8K':>8} | {'Δ GSM8K':>10} | {'HellaSwag':>10} | {'Δ HellaSwag':>12}")
             
@@ -406,11 +405,11 @@ if __name__ == "__main__":
     parser.add_argument("--scales", type=float, nargs="+", 
                        default=[0.0, 0.5, 1.0, 1.5, 2.0],
                        help="Scale factors to test (0=prune, 1=baseline, >1=amplify)")
-    parser.add_argument("--t_thresholds", type=float, nargs="+",
-                       default=[0, 5, 10, 15, 20],
-                       help="T-statistic thresholds for neuron selection")
-    parser.add_argument("--p_threshold", type=float, default=0.01,
-                       help="P-value threshold for statistical significance")
+    parser.add_argument("--t_threshold", type=float, default=0.0,
+                       help="T-statistic threshold for neuron selection")
+    parser.add_argument("--p_thresholds", type=float, nargs="+", 
+                       default=[0.01],
+                       help="P-value thresholds for statistical significance (supports scientific notation: 1e-5)")
     parser.add_argument("--n_eval_samples", type=int, default=100,
                        help="Number of evaluation samples per benchmark")
     
@@ -422,15 +421,15 @@ if __name__ == "__main__":
     print(f"Model: {args.model}")
     print(f"H5 file: {args.h5_path}")
     print(f"Scale factors: {args.scales}")
-    print(f"T-stat thresholds: {args.t_thresholds}")
-    print(f"P-value threshold: {args.p_threshold}")
+    print(f"T-stat threshold: {args.t_threshold}")
+    print(f"P-value thresholds: {args.p_thresholds}")
     print(f"Eval samples: {args.n_eval_samples} per benchmark")
     print("=" * 60)
     
     exp = PatchingExperiment(model_path=args.model, h5_path=args.h5_path)
     results = exp.run(
         scale_factors=args.scales,
-        t_thresholds=args.t_thresholds,
-        p_threshold=args.p_threshold,
+        t_threshold=args.t_threshold,
+        p_thresholds=args.p_thresholds,
         n_eval_samples=args.n_eval_samples
     )

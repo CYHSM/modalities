@@ -17,7 +17,7 @@ class MathComparison:
         self.model_path = model_path
 
     def load_math_prompts(self, *, n_samples=100):
-        dataset = load_dataset("gsm8k", "main", split="test")
+        dataset = load_dataset("gsm8k", "main", split="train")
         dataset = dataset.shuffle(seed=42).select(range(min(n_samples, len(dataset))))
         
         prompts = [f"Question: {ex['question']}\nAnswer:" for ex in dataset]
