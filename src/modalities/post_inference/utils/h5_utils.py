@@ -7,7 +7,7 @@ import numpy as np
 
 class H5Store:
     @staticmethod
-    def save_activations(*, activations_dict, texts_dict, prompts_dict, output_path, model_name="model"):
+    def save_activations(*, activations_dict, texts_dict, prompts_dict, output_path, model_name="model", statistics=None):
         h5_path = Path(output_path) / "activations.h5"
         
         with h5py.File(h5_path, "w") as f:
@@ -39,7 +39,31 @@ class H5Store:
                             data = H5Store._prepare_tensor(values)
                             step_grp.create_dataset(clean_name, data=data, compression="gzip")
         
-        return h5_path
+        stats_path = None
+        if statistics is not None:
+            stats_path = H5Store.save_statistics(statistics=statistics, output_path=output_path, model_name=model_name)
+        
+        return h5_path, stats_path
+    
+    @staticmethod
+    def save_statistics(*, statistics, output_path, model_name="model"):
+        stats_path = Path(output_path) / "statistics.h5"
+        
+        with h5py.File(stats_path, "w") as f:
+            f.attrs["model"] = model_name
+            f.attrs["n_layers"] = len(statistics)
+            
+            for layer_name, layer_stats in statistics.items():
+                clean_name = layer_name.replace(".", "_")
+                layer_grp = f.create_group(clean_name)
+                
+                for stat_name, values in layer_stats.items():
+                    if np.isscalar(values):
+                        layer_grp.create_dataset(stat_name, data=values)
+                    else:
+                        layer_grp.create_dataset(stat_name, data=values, compression="gzip")
+        
+        return stats_path
     
     @staticmethod
     def load_activations(h5_path):
@@ -82,6 +106,33 @@ class H5Store:
         
         return activations_dict, texts_dict, prompts_dict
     
+    @staticmethod
+    def load_statistics(stats_path):
+        stats_path = Path(stats_path)
+        
+        if not stats_path.exists():
+            if stats_path.name == "activations.h5":
+                stats_path = stats_path.parent / "statistics.h5"
+            
+            if not stats_path.exists():
+                return None
+        
+        statistics = {}
+        
+        with h5py.File(stats_path, "r") as f:
+            for layer_name in f.keys():
+                original_name = layer_name.replace("_", ".")
+                statistics[original_name] = {}
+                
+                layer_grp = f[layer_name]
+                for stat_name in layer_grp.keys():
+                    dataset = layer_grp[stat_name]
+                    if dataset.shape == ():
+                        statistics[original_name][stat_name] = dataset[()]
+                    else:
+                        statistics[original_name][stat_name] = dataset[:]
+        
+        return statistics
 
     @staticmethod
     def _prepare_tensor(values):

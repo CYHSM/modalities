@@ -5,7 +5,6 @@ import re
 import numpy as np
 import torch
 from datasets import load_dataset
-from scipy import stats
 from torch.nn import functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm import tqdm
@@ -27,70 +26,24 @@ class ActivationPatcher:
         
         self.hooks = []
         self.patch_specs = {}
+        self.layer_stats = None
 
-    def identify_significant_neurons(self, *, h5_path, p_threshold=0.01, t_threshold=0.0):
-        activations_dict, _, _ = H5Store.load_activations(h5_path)
-        
-        math_activations = activations_dict["math"]
-        nonmath_activations = activations_dict["nonmath"]
-        
-        layer_stats = {}
-        all_keys = set()
-        for sample_acts in math_activations + nonmath_activations:
-            for step_acts in sample_acts:
-                all_keys.update(step_acts.keys())
-        
-        for layer_name in sorted(all_keys):
-            math_values = []
-            nonmath_values = []
-            
-            for sample_acts in math_activations:
-                for step_acts in sample_acts:
-                    if layer_name in step_acts:
-                        act = step_acts[layer_name]
-                        math_values.append(act.flatten())
-            
-            for sample_acts in nonmath_activations:
-                for step_acts in sample_acts:
-                    if layer_name in step_acts:
-                        act = step_acts[layer_name]
-                        nonmath_values.append(act.flatten())
-            
-            if math_values and nonmath_values:
-                min_len = min(min(len(v) for v in math_values), min(len(v) for v in nonmath_values))
-                math_values = np.array([v[:min_len] for v in math_values])
-                nonmath_values = np.array([v[:min_len] for v in nonmath_values])
-                
-                n1, n2 = len(math_values), len(nonmath_values)
-                mean1 = np.mean(math_values, axis=0)
-                mean2 = np.mean(nonmath_values, axis=0)
-                var1 = np.var(math_values, axis=0, ddof=1)
-                var2 = np.var(nonmath_values, axis=0, ddof=1)
-                
-                mean_diff = mean1 - mean2
-                se = np.sqrt(var1/n1 + var2/n2 + 1e-8)
-                t_stats = mean_diff / se
-                
-                df = (var1/n1 + var2/n2)**2 / ((var1/n1)**2/(n1-1) + (var2/n2)**2/(n2-1) + 1e-8)
-                p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), df))
-                
-                layer_stats[layer_name] = {
-                    "t_stats": t_stats,
-                    "p_values": p_values,
-                    "mean_diff": mean_diff
-                }
+    def load_statistics(self, *, h5_path):
+        stats_path = Path(h5_path).parent / "statistics.h5"
+        self.layer_stats = H5Store.load_statistics(stats_path)
+        if self.layer_stats is None:
+            raise ValueError(f"No statistics found at {stats_path}. Run compare_math_nomath first.")
+        print(f"Loaded statistics for {len(self.layer_stats)} layers from {stats_path}")
+        return self.layer_stats
 
-                # print(f"Welch t-test stats:")
-                # print(f"n1: {n1}, n2: {n2}")
-                # print(f"t_stats range: {t_stats.min():.2f} to {t_stats.max():.2f}")
-                # print(f"df range: {df.min():.2f} to {df.max():.2f}")
-                # print(f"Cases with df<5: {(df < 5).sum()}")
-
+    def identify_significant_neurons(self, *, p_threshold=0.01, t_threshold=0.0):
+        if self.layer_stats is None:
+            raise ValueError("Must call load_statistics first")
         
         patch_targets = {}
         significant_info = []
         
-        for layer_name, stats_dict in layer_stats.items():
+        for layer_name, stats_dict in self.layer_stats.items():
             t_stats = stats_dict["t_stats"]
             p_values = stats_dict["p_values"]
             mean_diff = stats_dict["mean_diff"]
@@ -169,7 +122,6 @@ class ActivationPatcher:
             
             return None
 
-
         def clean_number(text):
             text = text.strip()
             for char in [',', '$', '%', 'g', '.']:
@@ -218,11 +170,6 @@ class ActivationPatcher:
                 
                 if predicted == expected:
                     correct += 1
-
-                # print(f"Q: {questions[i+j]}")
-                # print(f"A: {response.strip()}")
-                # print(f"Expected: {expected}, Predicted: {predicted}")
-                # print(f"{'✓' if predicted == expected else '✗'}\n")
                 
                 total += 1
         
@@ -277,8 +224,11 @@ class PatchingExperiment:
             t_thresholds=[0, 5, 10, 15, 20], p_threshold=0.01,
             n_eval_samples=100):
         
-        output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments") / "patching_results"
+        output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments") / f"patching_results{p_threshold}"
         output_path.mkdir(parents=True, exist_ok=True)
+        
+        print("\nLoading precomputed statistics from H5 file...")
+        self.patcher.load_statistics(h5_path=self.h5_path)
         
         print("\nBaseline evaluation (no patching)")
         baseline_gsm8k = self.patcher.evaluate_gsm8k(n_samples=n_eval_samples)
@@ -300,7 +250,6 @@ class PatchingExperiment:
             print(f"{'='*60}")
             
             patch_targets, significant_neurons = self.patcher.identify_significant_neurons(
-                h5_path=self.h5_path,
                 p_threshold=p_threshold,
                 t_threshold=t_threshold
             )

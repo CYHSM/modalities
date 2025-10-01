@@ -3,6 +3,8 @@ from pathlib import Path
 
 import numpy as np
 from datasets import load_dataset
+from scipy import stats as scipy_stats
+from tqdm import tqdm
 
 from modalities.post_inference.core.capture import ActivationCapture
 from modalities.post_inference.core.stats import ActivationStats
@@ -69,7 +71,7 @@ class MathComparison:
         
         return layer_activations
 
-    def compute_statistics(self, *, math_activations, nonmath_activations, test="welch", correction_method="fdr_bh"):
+    def compute_statistics_with_summary(self, *, math_activations, nonmath_activations, test="welch", correction_method="fdr_bh"):
         math_by_layer = self.flatten_activations_by_layer(activation_list=math_activations)
         nonmath_by_layer = self.flatten_activations_by_layer(activation_list=nonmath_activations)
         
@@ -79,19 +81,17 @@ class MathComparison:
         for metric in ["mean_diff", "t_stats", "p_values", "p_corrected", "significant", "cohens_d"]:
             stats_results[metric] = OrderedDict()
         
+        layer_statistics = {}
+        
         print(f"Computing statistics for {len(common_layers)} layers (test={test}, correction={correction_method})...")
         
-        for layer in sorted(common_layers):
-            contrast = ActivationStats.compute_contrast(
-                math_by_layer[layer],
-                nonmath_by_layer[layer],
-                test=test
-            )
+        for layer in tqdm(sorted(common_layers), desc="Computing stats"):
+            math_vals = math_by_layer[layer]
+            nonmath_vals = nonmath_by_layer[layer]
             
+            contrast = ActivationStats.compute_contrast(math_vals, nonmath_vals, test=test)
             correction = ActivationStats.multiple_comparison_correction(
-                contrast["p_values"],
-                method=correction_method,
-                alpha=0.05
+                contrast["p_values"], method=correction_method, alpha=0.05
             )
             
             stats_results["mean_diff"][layer] = contrast["mean_diff"]
@@ -101,11 +101,33 @@ class MathComparison:
             stats_results["significant"][layer] = correction["significant"]
             stats_results["cohens_d"][layer] = contrast["cohens_d"]
             
+            math_array = np.array(math_vals)
+            nonmath_array = np.array(nonmath_vals)
+            
+            layer_statistics[layer] = {
+                "t_stats": contrast["t_stats"],
+                "p_values": contrast["p_values"],
+                "mean_diff": contrast["mean_diff"],
+                "cohens_d": contrast["cohens_d"],
+                "math_mean": np.mean(math_array, axis=0),
+                "math_std": np.std(math_array, axis=0, ddof=1),
+                "math_median": np.median(math_array, axis=0),
+                "math_min": np.min(math_array, axis=0),
+                "math_max": np.max(math_array, axis=0),
+                "nonmath_mean": np.mean(nonmath_array, axis=0),
+                "nonmath_std": np.std(nonmath_array, axis=0, ddof=1),
+                "nonmath_median": np.median(nonmath_array, axis=0),
+                "nonmath_min": np.min(nonmath_array, axis=0),
+                "nonmath_max": np.max(nonmath_array, axis=0),
+                "n_math": len(math_vals),
+                "n_nonmath": len(nonmath_vals)
+            }
+            
             n_sig = correction["n_significant"]
             n_total = correction["n_total"]
             print(f"  {layer}: {n_sig}/{n_total} significant after correction ({100*n_sig/n_total:.2f}%)")
         
-        return stats_results
+        return stats_results, layer_statistics
 
     def compute_average_activations_all_steps(self, *, activation_list):
         avg_activations = OrderedDict()
@@ -169,21 +191,22 @@ class MathComparison:
             nonmath_prompts, max_new_tokens=max_new_tokens
         )
 
-        print("\nSaving to H5...")
-        h5_path = H5Store.save_activations(
-            activations_dict={"math": math_activations, "nonmath": nonmath_activations},
-            texts_dict={"math": math_texts, "nonmath": nonmath_texts},
-            prompts_dict={"math": math_prompts, "nonmath": nonmath_prompts},
-            output_path=output_path,
-            model_name=self.model_path
-        )
-
         print("\nComputing statistics with multiple comparison correction...")
-        stats_results = self.compute_statistics(
+        stats_results, layer_statistics = self.compute_statistics_with_summary(
             math_activations=math_activations,
             nonmath_activations=nonmath_activations,
             test=test,
             correction_method=correction_method
+        )
+
+        print("\nSaving to H5 (including statistics)...")
+        h5_path, stats_path = H5Store.save_activations(
+            activations_dict={"math": math_activations, "nonmath": nonmath_activations},
+            texts_dict={"math": math_texts, "nonmath": nonmath_texts},
+            prompts_dict={"math": math_prompts, "nonmath": nonmath_prompts},
+            output_path=output_path,
+            model_name=self.model_path,
+            statistics=layer_statistics
         )
 
         print("\nComputing averages across all steps...")
@@ -221,7 +244,8 @@ class MathComparison:
         total_dims = sum(len(p.flatten()) for p in stats_results["p_values"].values())
 
         print(f"\n✓ Complete! All outputs in: {output_path}")
-        print(f"H5 file: {h5_path}")
+        print(f"Activations: {h5_path}")
+        print(f"Statistics: {stats_path}")
         print(f"Interactive HTML: {html_path}")
         print(f"FDR-corrected significant (p<0.05): {n_significant_corr}/{total_dims} ({100*n_significant_corr/total_dims:.2f}%)")
         

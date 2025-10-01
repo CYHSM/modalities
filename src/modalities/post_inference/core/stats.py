@@ -58,11 +58,11 @@ class ActivationStats:
             )
             p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), df))
 
-            print(f"Welch t-test stats:")
-            print(f"n1: {n1}, n2: {n2}")
-            print(f"t_stats range: {t_stats.min():.2f} to {t_stats.max():.2f}")
-            print(f"df range: {df.min():.2f} to {df.max():.2f}")
-            print(f"Cases with df<5: {(df < 5).sum()}")
+            # print(f"Welch t-test stats:")
+            # print(f"n1: {n1}, n2: {n2}")
+            # print(f"t_stats range: {t_stats.min():.2f} to {t_stats.max():.2f}")
+            # print(f"df range: {df.min():.2f} to {df.max():.2f}")
+            # print(f"Cases with df<5: {(df < 5).sum()}")
 
 
         elif test == "mannwhitney":
