@@ -231,7 +231,7 @@ class PatchingExperiment:
             d_thresholds=[0, 5, 10, 15, 20], p_threshold=0.01,
             n_eval_samples=100):
         
-        output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments_cohensd") / f"patching_results{p_threshold}exp"
+        output_path = Path("/raid/s3/opengptx/mfrey/cp_analysis/inference_vis/tests/experiments_cohensd_teukenbase") / f"patching_results{p_threshold}"
         output_path.mkdir(parents=True, exist_ok=True)
         
         print("\nLoading precomputed statistics from H5 file...")

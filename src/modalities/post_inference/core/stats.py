@@ -35,7 +35,7 @@ class ActivationStats:
         mean_diff = mean1 - mean2
 
         pooled_std = np.sqrt(((n1 - 1) * std1**2 + (n2 - 1) * std2**2) / (n1 + n2 - 2))
-        cohens_d = mean_diff / (pooled_std + 1e-8)
+        cohens_d = mean_diff / (pooled_std)
 
         if test == "ttest":
             t_stats = np.zeros_like(mean_diff)
@@ -51,19 +51,24 @@ class ActivationStats:
                     p_values[idx] = p
 
         elif test == "welch":
-            t_stats = mean_diff / np.sqrt(std1**2 / n1 + std2**2 / n2 + 1e-8)
+            t_stats = mean_diff / np.sqrt(std1**2 / n1 + std2**2 / n2)
 
             df = (std1**2 / n1 + std2**2 / n2) ** 2 / (
-                (std1**2 / n1) ** 2 / (n1 - 1) + (std2**2 / n2) ** 2 / (n2 - 1) + 1e-8
+                (std1**2 / n1) ** 2 / (n1 - 1) + (std2**2 / n2) ** 2 / (n2 - 1)
             )
             p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), df))
 
-            # print(f"Welch t-test stats:")
-            # print(f"n1: {n1}, n2: {n2}")
-            # print(f"t_stats range: {t_stats.min():.2f} to {t_stats.max():.2f}")
-            # print(f"df range: {df.min():.2f} to {df.max():.2f}")
-            # print(f"Cases with df<5: {(df < 5).sum()}")
-
+            if not np.all(np.isfinite(t_stats)) or not np.all(np.isfinite(p_values)):
+                print("Warning: Non-finite t-statistics or p-values encountered.")
+                print(f"t_stats: {t_stats}")
+                print(f"mean1: {mean1}, mean2: {mean2}")
+                print(f"std1: {std1}, std2: {std2}")
+                print(f"n1: {n1}, n2: {n2}")
+                print(f"df: {df}")
+                
+                invalid = ~np.isfinite(t_stats) | ~np.isfinite(p_values)
+                t_stats[invalid] = 0.0
+                p_values[invalid] = 1.0
 
         elif test == "mannwhitney":
             u_stats = np.zeros_like(mean_diff)

@@ -178,6 +178,7 @@ def create_interactive_viewer(*, stats_results, output_path):
     
     layer_groups_stat = group_by_layer(stats_results["t_stats"])
     layer_groups_pval = group_by_layer(stats_results["p_values"])
+    layer_groups_cohens = group_by_layer(stats_results["cohens_d"])
     
     int_keys = [k for k in layer_groups_stat.keys() if isinstance(k, int)]
     str_keys = [k for k in layer_groups_stat.keys() if isinstance(k, str)]
@@ -187,12 +188,15 @@ def create_interactive_viewer(*, stats_results, output_path):
     for layer_id in all_keys:
         stat_dict = layer_groups_stat[layer_id]
         pval_dict = layer_groups_pval[layer_id]
+        cohens_dict = layer_groups_cohens[layer_id]
         
         combined_stat, index_map = combine_layer_activations(stat_dict)
         combined_pval, _ = combine_layer_activations(pval_dict)
+        combined_cohens, _ = combine_layer_activations(cohens_dict)
         
         img_array = to_256x256(combined_stat)
         pval_array = to_256x256(combined_pval)
+        cohens_array = to_256x256(combined_cohens)
         
         index_map_256 = [None] * (256 * 256)
         for i, (name, idx) in enumerate(index_map[:256*256]):
@@ -203,6 +207,7 @@ def create_interactive_viewer(*, stats_results, output_path):
             "name": layer_name,
             "stats": img_array.tolist(),
             "pvals": pval_array.tolist(),
+            "cohens": cohens_array.tolist(),
             "index_map": index_map_256
         })
     
@@ -300,7 +305,7 @@ def create_interactive_viewer(*, stats_results, output_path):
     <div class="controls">
         <div class="control-group">
             <label>P-value threshold:</label>
-            <input type="range" id="pThreshold" min="0" max="100" step="0.1" value="30">
+            <input type="range" id="pThreshold" min="0.01" max="1" step="0.01" value="0.05">
             <span class="value-display" id="pValue">0.050</span>
         </div>
         <div class="control-group">
@@ -309,8 +314,13 @@ def create_interactive_viewer(*, stats_results, output_path):
             <span class="value-display" id="tValue">0.0</span>
         </div>
         <div class="control-group">
+            <label>Cohen's d threshold:</label>
+            <input type="range" id="cohensThreshold" min="0" max="10" step="0.1" value="0">
+            <span class="value-display" id="cohensValue">0.00</span>
+        </div>
+        <div class="control-group">
             <label>Colormap range:</label>
-            <input type="range" id="colorRange" min="1" max="100" step="0.5" value="5">
+            <input type="range" id="colorRange" min="1" max="100" step="1" value="5">
             <span class="value-display" id="rangeValue">±5.0</span>
         </div>
     </div>
@@ -327,21 +337,6 @@ def create_interactive_viewer(*, stats_results, output_path):
     
     <script>
         const layersData = {json.dumps(layers_data)};
-        
-        const logMin = -10;
-        const logMax = -0.3;
-        
-        function sliderToP(sliderValue) {{
-            const t = sliderValue / 100;
-            const logP = logMin + (logMax - logMin) * t;
-            return Math.pow(10, logP);
-        }}
-        
-        function pToSlider(pValue) {{
-            const logP = Math.log10(pValue);
-            const t = (logP - logMin) / (logMax - logMin);
-            return t * 100;
-        }}
         
         function applyColormap(value, vmin, vmax) {{
             const normalized = Math.max(0, Math.min(1, (value - vmin) / (vmax - vmin)));
@@ -362,12 +357,14 @@ def create_interactive_viewer(*, stats_results, output_path):
         }}
         
         function renderLayers() {{
-            const pThreshold = sliderToP(parseFloat(document.getElementById('pThreshold').value));
+            const pThreshold = parseFloat(document.getElementById('pThreshold').value);
             const tThreshold = parseFloat(document.getElementById('tThreshold').value);
+            const cohensThreshold = parseFloat(document.getElementById('cohensThreshold').value);
             const colorRange = parseFloat(document.getElementById('colorRange').value);
             
-            document.getElementById('pValue').textContent = pThreshold.toExponential(2);
+            document.getElementById('pValue').textContent = pThreshold.toFixed(3);
             document.getElementById('tValue').textContent = tThreshold.toFixed(1);
+            document.getElementById('cohensValue').textContent = cohensThreshold.toFixed(2);
             document.getElementById('rangeValue').textContent = `±${{colorRange.toFixed(1)}}`;
             
             let totalSig = 0;
@@ -399,8 +396,9 @@ def create_interactive_viewer(*, stats_results, output_path):
                         const idx = i * 256 + j;
                         const stat = layer.stats[i][j];
                         const pval = layer.pvals[i][j];
+                        const cohens = layer.cohens[i][j];
                         
-                        const significant = pval < pThreshold && Math.abs(stat) > tThreshold;
+                        const significant = pval < pThreshold && Math.abs(stat) > tThreshold && Math.abs(cohens) > cohensThreshold;
                         if (significant) {{
                             layerSig++;
                             const [r, g, b] = applyColormap(stat, -colorRange, colorRange);
@@ -434,10 +432,13 @@ def create_interactive_viewer(*, stats_results, output_path):
                     const pixelIdx = y * 256 + x;
                     const stat = layer.stats[y][x];
                     const pval = layer.pvals[y][x];
+                    const cohens = layer.cohens[y][x];
                     const mapping = layer.index_map[pixelIdx];
                     
                     const clickInfo = document.getElementById('clickInfo');
                     clickInfo.className = 'click-info active';
+                    
+                    const isSig = pval < pThreshold && Math.abs(stat) > tThreshold && Math.abs(cohens) > cohensThreshold;
                     
                     if (mapping && mapping.name) {{
                         clickInfo.innerHTML = `
@@ -446,7 +447,8 @@ def create_interactive_viewer(*, stats_results, output_path):
                             <div class="info-row"><span class="info-label">Index:</span> ${{mapping.idx}}</div>
                             <div class="info-row"><span class="info-label">T-statistic:</span> ${{stat.toFixed(4)}}</div>
                             <div class="info-row"><span class="info-label">P-value:</span> ${{pval.toExponential(4)}}</div>
-                            <div class="info-row"><span class="info-label">Significant:</span> ${{pval < pThreshold && Math.abs(stat) > tThreshold ? 'Yes' : 'No'}}</div>
+                            <div class="info-row"><span class="info-label">Cohen's d:</span> ${{cohens.toFixed(4)}}</div>
+                            <div class="info-row"><span class="info-label">Significant:</span> ${{isSig ? 'Yes' : 'No'}}</div>
                         `;
                     }} else {{
                         clickInfo.innerHTML = `
@@ -454,6 +456,7 @@ def create_interactive_viewer(*, stats_results, output_path):
                             <div class="info-row"><span class="info-label">Pixel:</span> (${{x}}, ${{y}})</div>
                             <div class="info-row"><span class="info-label">T-statistic:</span> ${{stat.toFixed(4)}}</div>
                             <div class="info-row"><span class="info-label">P-value:</span> ${{pval.toExponential(4)}}</div>
+                            <div class="info-row"><span class="info-label">Cohen's d:</span> ${{cohens.toFixed(4)}}</div>
                             <div class="info-row" style="color: #888;">(Padding region - no activation mapped)</div>
                         `;
                     }}
@@ -467,9 +470,9 @@ def create_interactive_viewer(*, stats_results, output_path):
             document.getElementById('sigPercent').textContent = ((100 * totalSig / totalDims).toFixed(2));
         }}
         
-        document.getElementById('pThreshold').value = pToSlider(0.05);
         document.getElementById('pThreshold').addEventListener('input', renderLayers);
         document.getElementById('tThreshold').addEventListener('input', renderLayers);
+        document.getElementById('cohensThreshold').addEventListener('input', renderLayers);
         document.getElementById('colorRange').addEventListener('input', renderLayers);
         
         renderLayers();
