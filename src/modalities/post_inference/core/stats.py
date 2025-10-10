@@ -35,7 +35,7 @@ class ActivationStats:
         mean_diff = mean1 - mean2
 
         pooled_std = np.sqrt(((n1 - 1) * std1**2 + (n2 - 1) * std2**2) / (n1 + n2 - 2))
-        cohens_d = mean_diff / (pooled_std)
+        cohens_d = mean_diff / (pooled_std + 1e-10)
 
         if test == "ttest":
             t_stats = np.zeros_like(mean_diff)
@@ -51,10 +51,10 @@ class ActivationStats:
                     p_values[idx] = p
 
         elif test == "welch":
-            t_stats = mean_diff / np.sqrt(std1**2 / n1 + std2**2 / n2)
+            t_stats = mean_diff / np.sqrt(std1**2 / n1 + std2**2 / n2 + 1e-10)
 
             df = (std1**2 / n1 + std2**2 / n2) ** 2 / (
-                (std1**2 / n1) ** 2 / (n1 - 1) + (std2**2 / n2) ** 2 / (n2 - 1)
+                (std1**2 / n1) ** 2 / (n1 - 1) + (std2**2 / n2) ** 2 / (n2 - 1) + 1e-10
             )
             p_values = 2 * (1 - stats.t.cdf(np.abs(t_stats), df))
 
@@ -93,6 +93,7 @@ class ActivationStats:
             "t_stats": t_stats,
             "p_values": p_values,
             "cohens_d": cohens_d,
+            "pooled_std": pooled_std,
             "mean1": mean1,
             "mean2": mean2,
             "std1": std1,

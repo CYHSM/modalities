@@ -51,12 +51,9 @@ class ActivationPatcher:
             mean_diff = stats_dict["mean_diff"]
 
             pooled_std = np.sqrt(((n1 - 1) * std1**2 + (n2 - 1) * std2**2) / (n1 + n2 - 2))
-            cohens_d = mean_diff / (pooled_std + p_threshold)
+            cohens_d = mean_diff / (pooled_std + 1e-10)
 
-            invalid = ~np.isfinite(cohens_d)
-            cohens_d[invalid] = 0
-
-            significant_mask = np.abs(cohens_d) > d_threshold
+            significant_mask = (np.abs(cohens_d) > d_threshold) & (pooled_std > 1e-6)
             significant_indices = np.where(significant_mask)[0]
             
             if len(significant_indices) > 0:

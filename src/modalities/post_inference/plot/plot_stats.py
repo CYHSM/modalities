@@ -23,7 +23,7 @@ def group_by_layer(step_activations):
                     except ValueError:
                         continue
         else:
-            key = name.split(".")[0] if "." in name else name
+            key = name
             if key not in layer_groups:
                 layer_groups[key] = {}
             layer_groups[key][name] = activation
@@ -50,15 +50,87 @@ def combine_layer_activations(layer_dict):
     return np.array(all_values), index_map
 
 
-def to_256x256(values):
-    target_size = 256 * 256
+def create_activation_map(index_map, target_resolution):
+    if len(index_map) == 0:
+        return [[None] * target_resolution for _ in range(target_resolution)]
+    
+    total_elements = len(index_map)
+    current_size = int(np.sqrt(total_elements))
+    
+    if current_size * current_size != total_elements:
+        source_resolution = 256
+        padded_map = index_map + [(None, -1)] * (256 * 256 - total_elements)
+    else:
+        source_resolution = current_size
+        padded_map = index_map
+    
+    map_2d = []
+    for i in range(source_resolution):
+        row = []
+        for j in range(source_resolution):
+            idx = i * source_resolution + j
+            row.append(padded_map[idx][0] if idx < len(padded_map) and padded_map[idx][0] is not None else None)
+        map_2d.append(row)
+    
+    if source_resolution == target_resolution:
+        return map_2d
+    
+    downsampled_map = []
+    scale = source_resolution / target_resolution
+    
+    for i in range(target_resolution):
+        row = []
+        for j in range(target_resolution):
+            src_i_start = int(i * scale)
+            src_i_end = int((i + 1) * scale)
+            src_j_start = int(j * scale)
+            src_j_end = int((j + 1) * scale)
+            
+            names_in_region = []
+            for si in range(src_i_start, min(src_i_end, source_resolution)):
+                for sj in range(src_j_start, min(src_j_end, source_resolution)):
+                    name = map_2d[si][sj]
+                    if name is not None:
+                        names_in_region.append(name)
+            
+            if names_in_region:
+                most_common = max(set(names_in_region), key=names_in_region.count)
+                row.append(most_common)
+            else:
+                row.append(None)
+        downsampled_map.append(row)
+    
+    return downsampled_map
+
+
+def to_resolution(values, resolution):
+    target_size = resolution * resolution
     if len(values) < target_size:
         padded = np.zeros(target_size)
         padded[:len(values)] = values
         values = padded
     else:
         values = values[:target_size]
-    return values.reshape(256, 256)
+    return values.reshape(resolution, resolution)
+
+
+def downsample_array(arr, target_resolution):
+    if len(arr) == 0:
+        return np.zeros((target_resolution, target_resolution))
+    
+    current_size = int(np.sqrt(len(arr)))
+    if current_size * current_size != len(arr):
+        arr_2d = to_resolution(arr, 256)
+        current_size = 256
+    else:
+        arr_2d = arr.reshape(current_size, current_size)
+    
+    if current_size == target_resolution:
+        return arr_2d
+    
+    from scipy.ndimage import zoom
+    scale = target_resolution / current_size
+    return zoom(arr_2d, scale, order=1)
 
 
 def apply_colormap(image, cmap_name="inferno"):
@@ -133,7 +205,28 @@ def visualize_stats(*, stats_results, metric="t_stats", p_threshold=0.05, title=
     
     int_keys = [k for k in layer_groups_mean.keys() if isinstance(k, int)]
     str_keys = [k for k in layer_groups_mean.keys() if isinstance(k, str)]
-    all_keys = sorted(int_keys) + sorted(str_keys)
+    
+    input_layers = []
+    output_layers = []
+    other_layers = []
+    
+    for k in str_keys:
+        k_lower = k.lower().replace("_", "").replace(".", "")
+        k_orig = k
+        if 'embed' in k_lower or 'rotary' in k_lower:
+            input_layers.append(k_orig)
+        elif 'lm' in k_lower and 'head' in k_lower:
+            output_layers.append(k_orig)
+        elif 'norm' in k_lower:
+            output_layers.append(k_orig)
+        else:
+            other_layers.append(k_orig)
+    
+    input_layers.sort()
+    output_layers.sort()
+    other_layers.sort()
+    
+    all_keys = input_layers + sorted(int_keys) + other_layers + output_layers
     
     layer_images = []
     n_significant_total = 0
@@ -154,10 +247,9 @@ def visualize_stats(*, stats_results, metric="t_stats", p_threshold=0.05, title=
         masked_stat = np.where(significant_mask, combined_stat, 0)
         
         normalized = normalize(masked_stat, vmin=-5, vmax=5)
-        img_array = to_256x256(normalized)
+        img_array = to_resolution(normalized, 256)
         
-        layer_name = f"Layer_{layer_id}" if isinstance(layer_id, int) else str(layer_id)
-        layer_images.append((layer_name, img_array, "RdBu_r"))
+        layer_images.append((str(layer_id), img_array, "RdBu_r"))
     
     grid = create_grid(layer_images)
     base_image = Image.fromarray(grid, mode="RGB")
@@ -173,43 +265,74 @@ def visualize_stats(*, stats_results, metric="t_stats", p_threshold=0.05, title=
     return final_image, {"n_significant": n_significant_total, "n_total": n_total, "pct_significant": pct_sig}
 
 
-def create_interactive_viewer(*, stats_results, output_path):
+def create_interactive_viewer(*, stats_results, output_path, downsample_resolution=64):
     import json
+    from scipy.ndimage import zoom
     
     layer_groups_stat = group_by_layer(stats_results["t_stats"])
     layer_groups_pval = group_by_layer(stats_results["p_values"])
     layer_groups_cohens = group_by_layer(stats_results["cohens_d"])
+    layer_groups_mean = group_by_layer(stats_results["mean_diff"])
+    layer_groups_pooled = group_by_layer(stats_results["pooled_std"])
     
     int_keys = [k for k in layer_groups_stat.keys() if isinstance(k, int)]
     str_keys = [k for k in layer_groups_stat.keys() if isinstance(k, str)]
-    all_keys = sorted(int_keys) + sorted(str_keys)
+    
+    input_layers = []
+    output_layers = []
+    other_layers = []
+    
+    for k in str_keys:
+        k_lower = k.lower().replace("_", "").replace(".", "")
+        k_orig = k
+        if 'embed' in k_lower or 'rotary' in k_lower:
+            input_layers.append(k_orig)
+        elif 'lm' in k_lower and 'head' in k_lower:
+            output_layers.append(k_orig)
+        elif 'norm' in k_lower:
+            output_layers.append(k_orig)
+        else:
+            other_layers.append(k_orig)
+    
+    input_layers.sort()
+    output_layers.sort()
+    other_layers.sort()
+    
+    all_keys = input_layers + sorted(int_keys) + other_layers + output_layers
     
     layers_data = []
     for layer_id in all_keys:
         stat_dict = layer_groups_stat[layer_id]
         pval_dict = layer_groups_pval[layer_id]
         cohens_dict = layer_groups_cohens[layer_id]
+        mean_dict = layer_groups_mean[layer_id]
+        pooled_dict = layer_groups_pooled[layer_id]
         
         combined_stat, index_map = combine_layer_activations(stat_dict)
         combined_pval, _ = combine_layer_activations(pval_dict)
         combined_cohens, _ = combine_layer_activations(cohens_dict)
+        combined_mean, _ = combine_layer_activations(mean_dict)
+        combined_pooled, _ = combine_layer_activations(pooled_dict)
         
-        img_array = to_256x256(combined_stat)
-        pval_array = to_256x256(combined_pval)
-        cohens_array = to_256x256(combined_cohens)
+        stat_2d = downsample_array(combined_stat, downsample_resolution)
+        pval_2d = downsample_array(combined_pval, downsample_resolution)
+        cohens_2d = downsample_array(combined_cohens, downsample_resolution)
+        mean_2d = downsample_array(combined_mean, downsample_resolution)
+        pooled_2d = downsample_array(combined_pooled, downsample_resolution)
         
-        index_map_256 = [None] * (256 * 256)
-        for i, (name, idx) in enumerate(index_map[:256*256]):
-            index_map_256[i] = {"name": name, "idx": idx}
+        activation_map = create_activation_map(index_map, downsample_resolution)
         
-        layer_name = f"Layer {layer_id}" if isinstance(layer_id, int) else str(layer_id)
         layers_data.append({
-            "name": layer_name,
-            "stats": img_array.tolist(),
-            "pvals": pval_array.tolist(),
-            "cohens": cohens_array.tolist(),
-            "index_map": index_map_256
+            "name": str(layer_id),
+            "stats": stat_2d.tolist(),
+            "pvals": pval_2d.tolist(),
+            "cohens": cohens_2d.tolist(),
+            "mean_diff": mean_2d.tolist(),
+            "pooled_std": pooled_2d.tolist(),
+            "activation_map": activation_map
         })
+    
+    print(f"Creating interactive HTML with {len(layers_data)} layers...")
     
     html_path = Path(output_path) / "interactive_stats.html"
     
@@ -236,7 +359,7 @@ def create_interactive_viewer(*, stats_results, output_path):
         }}
         label {{
             display: inline-block;
-            width: 150px;
+            width: 180px;
             font-weight: bold;
         }}
         input[type="range"] {{
@@ -272,7 +395,7 @@ def create_interactive_viewer(*, stats_results, output_path):
         }}
         .info-label {{
             display: inline-block;
-            width: 120px;
+            width: 140px;
             color: #aaa;
         }}
         .grid {{
@@ -300,23 +423,33 @@ def create_interactive_viewer(*, stats_results, output_path):
     </style>
 </head>
 <body>
-    <h1>Interactive Statistical Significance Map</h1>
+    <h1>Interactive Statistical Significance Map (Resolution: {downsample_resolution}x{downsample_resolution})</h1>
     
     <div class="controls">
         <div class="control-group">
             <label>P-value threshold:</label>
-            <input type="range" id="pThreshold" min="0.01" max="1" step="0.01" value="0.05">
+            <input type="range" id="pThreshold" min="0.001" max="1.001" step="0.001" value="1.001">
             <span class="value-display" id="pValue">0.050</span>
         </div>
         <div class="control-group">
-            <label>T-stat threshold:</label>
+            <label>|T-stat| threshold:</label>
             <input type="range" id="tThreshold" min="0" max="100" step="0.1" value="0">
             <span class="value-display" id="tValue">0.0</span>
         </div>
         <div class="control-group">
-            <label>Cohen's d threshold:</label>
-            <input type="range" id="cohensThreshold" min="0" max="10" step="0.1" value="0">
+            <label>|Cohen's d| threshold:</label>
+            <input type="range" id="cohensThreshold" min="0" max="10" step="0.01" value="0">
             <span class="value-display" id="cohensValue">0.00</span>
+        </div>
+        <div class="control-group">
+            <label>|Mean diff| threshold:</label>
+            <input type="range" id="meanThreshold" min="0" max="10" step="0.01" value="0">
+            <span class="value-display" id="meanValue">0.00</span>
+        </div>
+        <div class="control-group">
+            <label>Pooled std threshold:</label>
+            <input type="range" id="pooledThreshold" min="0" max="10" step="0.01" value="0">
+            <span class="value-display" id="pooledValue">0.00</span>
         </div>
         <div class="control-group">
             <label>Colormap range:</label>
@@ -326,7 +459,7 @@ def create_interactive_viewer(*, stats_results, output_path):
     </div>
     
     <div class="stats">
-        <strong>Significant dimensions:</strong> <span id="sigCount">-</span> / <span id="totalCount">-</span> (<span id="sigPercent">-</span>%)
+        <strong>Surviving dimensions:</strong> <span id="sigCount">-</span> / <span id="totalCount">-</span> (<span id="sigPercent">-</span>%)
     </div>
     
     <div class="click-info" id="clickInfo">
@@ -337,6 +470,7 @@ def create_interactive_viewer(*, stats_results, output_path):
     
     <script>
         const layersData = {json.dumps(layers_data)};
+        const resolution = {downsample_resolution};
         
         function applyColormap(value, vmin, vmax) {{
             const normalized = Math.max(0, Math.min(1, (value - vmin) / (vmax - vmin)));
@@ -360,11 +494,15 @@ def create_interactive_viewer(*, stats_results, output_path):
             const pThreshold = parseFloat(document.getElementById('pThreshold').value);
             const tThreshold = parseFloat(document.getElementById('tThreshold').value);
             const cohensThreshold = parseFloat(document.getElementById('cohensThreshold').value);
+            const meanThreshold = parseFloat(document.getElementById('meanThreshold').value);
+            const pooledThreshold = parseFloat(document.getElementById('pooledThreshold').value);
             const colorRange = parseFloat(document.getElementById('colorRange').value);
             
             document.getElementById('pValue').textContent = pThreshold.toFixed(3);
             document.getElementById('tValue').textContent = tThreshold.toFixed(1);
             document.getElementById('cohensValue').textContent = cohensThreshold.toFixed(2);
+            document.getElementById('meanValue').textContent = meanThreshold.toFixed(2);
+            document.getElementById('pooledValue').textContent = pooledThreshold.toFixed(2);
             document.getElementById('rangeValue').textContent = `±${{colorRange.toFixed(1)}}`;
             
             let totalSig = 0;
@@ -383,22 +521,29 @@ def create_interactive_viewer(*, stats_results, output_path):
                 div.appendChild(title);
                 
                 const canvas = document.createElement('canvas');
-                canvas.width = 256;
-                canvas.height = 256;
+                canvas.width = resolution;
+                canvas.height = resolution;
                 div.appendChild(canvas);
                 
                 const ctx = canvas.getContext('2d');
-                const imageData = ctx.createImageData(256, 256);
+                const imageData = ctx.createImageData(resolution, resolution);
                 
                 let layerSig = 0;
-                for (let i = 0; i < 256; i++) {{
-                    for (let j = 0; j < 256; j++) {{
-                        const idx = i * 256 + j;
+                for (let i = 0; i < resolution; i++) {{
+                    for (let j = 0; j < resolution; j++) {{
+                        const idx = i * resolution + j;
                         const stat = layer.stats[i][j];
                         const pval = layer.pvals[i][j];
                         const cohens = layer.cohens[i][j];
+                        const mean_diff = layer.mean_diff[i][j];
+                        const pooled_std = layer.pooled_std[i][j];
                         
-                        const significant = pval < pThreshold && Math.abs(stat) > tThreshold && Math.abs(cohens) > cohensThreshold;
+                        const significant = pval < pThreshold && 
+                                          Math.abs(stat) > tThreshold && 
+                                          Math.abs(cohens) > cohensThreshold &&
+                                          Math.abs(mean_diff) > meanThreshold &&
+                                          pooled_std > pooledThreshold;
+                        
                         if (significant) {{
                             layerSig++;
                             const [r, g, b] = applyColormap(stat, -colorRange, colorRange);
@@ -418,7 +563,7 @@ def create_interactive_viewer(*, stats_results, output_path):
                 }}
                 
                 totalSig += layerSig;
-                totalDims += 256 * 256;
+                totalDims += resolution * resolution;
                 
                 ctx.putImageData(imageData, 0, 0);
                 
@@ -429,37 +574,40 @@ def create_interactive_viewer(*, stats_results, output_path):
                     const x = Math.floor((e.clientX - rect.left) * scaleX);
                     const y = Math.floor((e.clientY - rect.top) * scaleY);
                     
-                    const pixelIdx = y * 256 + x;
                     const stat = layer.stats[y][x];
                     const pval = layer.pvals[y][x];
                     const cohens = layer.cohens[y][x];
-                    const mapping = layer.index_map[pixelIdx];
+                    const mean_diff = layer.mean_diff[y][x];
+                    const pooled_std = layer.pooled_std[y][x];
+                    const activation_name = layer.activation_map[y][x];
                     
                     const clickInfo = document.getElementById('clickInfo');
                     clickInfo.className = 'click-info active';
                     
-                    const isSig = pval < pThreshold && Math.abs(stat) > tThreshold && Math.abs(cohens) > cohensThreshold;
+                    const isSig = pval < pThreshold && 
+                                Math.abs(stat) > tThreshold && 
+                                Math.abs(cohens) > cohensThreshold &&
+                                Math.abs(mean_diff) > meanThreshold &&
+                                pooled_std > pooledThreshold;
                     
-                    if (mapping && mapping.name) {{
-                        clickInfo.innerHTML = `
-                            <div class="info-row"><span class="info-label">Layer:</span> ${{layer.name}}</div>
-                            <div class="info-row"><span class="info-label">Activation:</span> ${{mapping.name}}</div>
-                            <div class="info-row"><span class="info-label">Index:</span> ${{mapping.idx}}</div>
-                            <div class="info-row"><span class="info-label">T-statistic:</span> ${{stat.toFixed(4)}}</div>
-                            <div class="info-row"><span class="info-label">P-value:</span> ${{pval.toExponential(4)}}</div>
-                            <div class="info-row"><span class="info-label">Cohen's d:</span> ${{cohens.toFixed(4)}}</div>
-                            <div class="info-row"><span class="info-label">Significant:</span> ${{isSig ? 'Yes' : 'No'}}</div>
-                        `;
+                    let activationInfo = '';
+                    if (activation_name) {{
+                        activationInfo = `<div class="info-row"><span class="info-label">Activation:</span> ${{activation_name}}</div>`;
                     }} else {{
-                        clickInfo.innerHTML = `
-                            <div class="info-row"><span class="info-label">Layer:</span> ${{layer.name}}</div>
-                            <div class="info-row"><span class="info-label">Pixel:</span> (${{x}}, ${{y}})</div>
-                            <div class="info-row"><span class="info-label">T-statistic:</span> ${{stat.toFixed(4)}}</div>
-                            <div class="info-row"><span class="info-label">P-value:</span> ${{pval.toExponential(4)}}</div>
-                            <div class="info-row"><span class="info-label">Cohen's d:</span> ${{cohens.toFixed(4)}}</div>
-                            <div class="info-row" style="color: #888;">(Padding region - no activation mapped)</div>
-                        `;
+                        activationInfo = `<div class="info-row"><span class="info-label">Activation:</span> (padding region)</div>`;
                     }}
+                    
+                    clickInfo.innerHTML = `
+                        <div class="info-row"><span class="info-label">Layer group:</span> ${{layer.name}}</div>
+                        ${{activationInfo}}
+                        <div class="info-row"><span class="info-label">Pixel position:</span> (${{x}}, ${{y}}) [downsampled {downsample_resolution}x{downsample_resolution}]</div>
+                        <div class="info-row"><span class="info-label">T-statistic:</span> ${{stat.toFixed(4)}}</div>
+                        <div class="info-row"><span class="info-label">P-value:</span> ${{pval.toExponential(4)}}</div>
+                        <div class="info-row"><span class="info-label">Cohen's d:</span> ${{cohens.toFixed(4)}}</div>
+                        <div class="info-row"><span class="info-label">Mean diff:</span> ${{mean_diff.toFixed(4)}}</div>
+                        <div class="info-row"><span class="info-label">Pooled std:</span> ${{pooled_std.toFixed(4)}}</div>
+                        <div class="info-row"><span class="info-label">Survives filters:</span> ${{isSig ? 'Yes' : 'No'}}</div>
+                    `;
                 }});
                 
                 grid.appendChild(div);
@@ -473,6 +621,8 @@ def create_interactive_viewer(*, stats_results, output_path):
         document.getElementById('pThreshold').addEventListener('input', renderLayers);
         document.getElementById('tThreshold').addEventListener('input', renderLayers);
         document.getElementById('cohensThreshold').addEventListener('input', renderLayers);
+        document.getElementById('meanThreshold').addEventListener('input', renderLayers);
+        document.getElementById('pooledThreshold').addEventListener('input', renderLayers);
         document.getElementById('colorRange').addEventListener('input', renderLayers);
         
         renderLayers();

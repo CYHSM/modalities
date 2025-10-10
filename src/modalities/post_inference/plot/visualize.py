@@ -23,7 +23,7 @@ def group_by_layer(step_activations):
                     except ValueError:
                         continue
         else:
-            key = name.split(".")[0] if "." in name else name
+            key = name
             if key not in layer_groups:
                 layer_groups[key] = {}
             layer_groups[key][name] = activation
@@ -144,7 +144,28 @@ def visualize_step(step_activations, step_num, current_text=None, prev_text=None
 
     int_keys = [k for k in layer_groups.keys() if isinstance(k, int)]
     str_keys = [k for k in layer_groups.keys() if isinstance(k, str)]
-    all_keys = sorted(int_keys) + sorted(str_keys)
+    
+    input_layers = []
+    output_layers = []
+    other_layers = []
+    
+    for k in str_keys:
+        k_lower = k.lower().replace("_", "").replace(".", "")
+        k_orig = k
+        if 'embed' in k_lower or 'rotary' in k_lower:
+            input_layers.append(k_orig)
+        elif 'lm' in k_lower and 'head' in k_lower:
+            output_layers.append(k_orig)
+        elif 'norm' in k_lower:
+            output_layers.append(k_orig)
+        else:
+            other_layers.append(k_orig)
+    
+    input_layers.sort()
+    output_layers.sort()
+    other_layers.sort()
+    
+    all_keys = input_layers + sorted(int_keys) + other_layers + output_layers
 
     layer_images = []
     for layer_id in all_keys:
@@ -152,9 +173,8 @@ def visualize_step(step_activations, step_num, current_text=None, prev_text=None
         combined = combine_layer_activations(layer_dict)
         normalized = normalize(combined)
 
-        layer_name = f"Layer_{layer_id}" if isinstance(layer_id, int) else str(layer_id)
         img_array = to_256x256(normalized)
-        layer_images.append((layer_name, img_array))
+        layer_images.append((str(layer_id), img_array))
 
     grid = create_grid(layer_images)
     base_image = Image.fromarray(grid, mode="RGB")
