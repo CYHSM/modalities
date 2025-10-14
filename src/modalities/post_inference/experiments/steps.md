@@ -1,0 +1,3 @@
+CUDA_VISIBLE_DEVICES=5 python capture_math_nomath.py --model "google/gemma-2-9b-it" --max_new_tokens 1 --test welch --n_samples 2000 && CUDA_VISIBLE_DEVICES=5 python capture_math_nomath.py --model "google/gemma-2-9b" --max_new_tokens 1 --test welch --n_samples 2000
+
+CUDA_VISIBLE_DEVICES=5 python visualize_math_nomath.py --experiment_path /raid/s3/opengptx/mfrey/activation/experiments/google_gemma-2-9b_math_vs_nonmath/ --downsample 256 --stats_only
