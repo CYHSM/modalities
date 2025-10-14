@@ -101,7 +101,7 @@ class ActivationPatcher:
         self.hooks = []
         self.patch_specs = {}
 
-    def evaluate_gsm8k(self, *, n_samples=100, batch_size=64):
+    def evaluate_gsm8k(self, *, n_samples=100, batch_size=32):
         def extract_answer(text):
             text = text.strip()
             
