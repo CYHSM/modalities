@@ -78,20 +78,35 @@ class ActivationPatcher:
                 elif isinstance(output, tuple):
                     out = output[0]
                 else:
+                    print(f"WARNING: {layer_name} has unexpected output type {type(output)}, not scaling")
                     return output
                 
-                for idx in neuron_indices:
-                    if len(out.shape) == 3:
-                        out[:, :, idx] *= scale
-                    elif len(out.shape) == 2:
-                        out[:, idx] *= scale
-                
+                if len(out.shape) == 4:
+                    batch, seq, num_heads, head_dim = out.shape
+                    out_flat = out.view(batch, seq, num_heads * head_dim)
+                    out_flat[:, :, neuron_indices] *= scale
+                    out = out_flat.view(batch, seq, num_heads, head_dim)
+                elif len(out.shape) == 3:
+                    out[:, :, neuron_indices] *= scale
+                elif len(out.shape) == 2:
+                    out[:, neuron_indices] *= scale
+                else:
+                    raise ValueError(f"Unexpected shape {out.shape} for layer {layer_name}")
+
                 return out if isinstance(output, torch.Tensor) else (out,) + output[1:]
             return hook
         
         for name, module in self.model.named_modules():
+            matched_key = None
             if name in self.patch_specs:
-                neurons, scale = self.patch_specs[name]
+                matched_key = name
+            else:
+                name_with_dots = name.replace('_', '.')
+                if name_with_dots in self.patch_specs:
+                    matched_key = name_with_dots
+            
+            if matched_key:
+                neurons, scale = self.patch_specs[matched_key]
                 hook = module.register_forward_hook(make_hook(name, neurons, scale))
                 self.hooks.append(hook)
 
