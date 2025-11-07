@@ -101,6 +101,8 @@ def create_gold_config(config: Config) -> GOLDConfig:
         
         bf16=True,
         fp16=False,
+
+        torch_compile=True,
     )
 
 

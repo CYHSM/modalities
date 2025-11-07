@@ -18,7 +18,7 @@ class ModelConfig:
 class DataConfig:
     dataset: str = "HuggingFaceTB/OpenR1-Math-220k-default-verified"
     subset: str = "all"
-    split: str = "train[:1024]"
+    split: str = "train[:10000]"
     eval_ratio: float = 0.001
     seed: int = 42
 
@@ -34,9 +34,9 @@ class GOLDTrainingConfig:
     warmup_ratio: float = 0.01
     max_grad_norm: float = 1.0
     
-    logging_steps: int = 10
-    save_steps: int = 500
-    eval_steps: int = 500
+    logging_steps: int = 1
+    save_steps: int = 50
+    eval_steps: int = 50
     save_total_limit: int = 3
     max_steps: int = -1
     
@@ -66,7 +66,7 @@ class EvaluationConfig:
     eval_gpu: int = 6
     eval_max_samples: int = 50
     eval_max_workers: int = 1
-    eval_tasks: str = "leaderboard|arc:challenge|3|1,leaderboard|hellaswag|10|1,helm|mmlu|5|1,leaderboard|gsm8k|8|1"
+    eval_tasks: str = "leaderboard|hellaswag|10|1,leaderboard|gsm8k|8|1"
 
 
 @dataclass
