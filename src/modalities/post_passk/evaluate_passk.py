@@ -32,10 +32,38 @@ def load_model_and_tokenizer(model_name: str):
     return model, tokenizer
 
 
-def create_prompt(question: str) -> str:
+def get_fewshot_examples() -> List[Dict[str, str]]:
+    return [
+        {
+            "question": "Janet's ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?",
+            "answer": "Janet sells 16 - 3 - 4 = 9 duck eggs every day. She makes 9 * $2 = $18 every day at the farmers' market. \\boxed{18}"
+        },
+        {
+            "question": "A robe takes 2 bolts of blue fiber and half that much white fiber. How many bolts in total does it take?",
+            "answer": "The robe takes 2 / 2 = 1 bolt of white fiber. So the total amount of fabric is 2 + 1 = 3 bolts. \\boxed{3}"
+        },
+        {
+            "question": "Josh decides to try flipping a house. He buys a house for $80,000 and then puts in $50,000 in repairs. This increased the value of the house by 150%. How much profit did he make?",
+            "answer": "The cost of the house and repairs is 80,000 + 50,000 = $130,000. He increased the value of the house by 80,000 * 1.5 = $120,000. So the new value is 80,000 + 120,000 = $200,000. So he made a profit of 200,000 - 130,000 = $70,000. \\boxed{70000}"
+        },
+        {
+            "question": "James decides to run 3 sprints 3 times a week. He runs 60 meters each sprint. How many total meters does he run a week?",
+            "answer": "He runs 3 * 3 = 9 sprints a week. So he runs 9 * 60 = 540 meters. \\boxed{540}"
+        }
+    ]
+
+
+def create_prompt(question: str, n_fewshots: int = 0) -> str:
     prompt = "A conversation between User and Assistant. The user asks a question, and the Assistant solves it.\n\n"
+    
+    if n_fewshots > 0:
+        examples = get_fewshot_examples()[:n_fewshots]
+        for example in examples:
+            prompt += f"User: {example['question']}\n"
+            prompt += f"Assistant: {example['answer']}\n\n"
+    
     prompt += f"User: {question}\n"
-    prompt += "Please reason step by step, and put your final answer within \\boxed{{}}.\n\n"
+    prompt += "Please reason step by step, and put your final answer within \\boxed{{}}. \n\n"
     prompt += "Assistant:"
     return prompt
 
@@ -47,9 +75,18 @@ def generate_samples(
     n_samples: int,
     temperature: float,
     top_p: float,
-    max_tokens: int
+    max_tokens: int,
+    n_fewshots: int,
+    verbose: bool
 ) -> List[str]:
-    prompt = create_prompt(question)
+    prompt = create_prompt(question, n_fewshots)
+    
+    if verbose:
+        print(f"\n{'='*80}")
+        print("PROMPT:")
+        print(f"{'='*80}")
+        print(prompt)
+        print(f"{'='*80}\n")
     
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     
@@ -85,21 +122,42 @@ def evaluate_problem(
     n_samples: int,
     temperature: float,
     top_p: float,
-    max_tokens: int
+    max_tokens: int,
+    n_fewshots: int,
+    verbose: bool
 ) -> Dict:
     question = problem['question']
     ground_truth = problem['answer']
     
+    if verbose:
+        print(f"\n{'#'*80}")
+        print(f"Problem {problem['idx']}: {question}")
+        print(f"Ground Truth: {ground_truth}")
+        print(f"{'#'*80}")
+    
     responses = generate_samples(
         model, tokenizer, question, n_samples, 
-        temperature, top_p, max_tokens
+        temperature, top_p, max_tokens, n_fewshots, verbose
     )
     
     correct_count = 0
-    for response in responses:
+    for idx, response in enumerate(responses):
         pred_answer = extract_answer(response)
-        if pred_answer and check_answer(pred_answer, ground_truth):
+        is_correct = pred_answer and check_answer(pred_answer, ground_truth)
+        
+        if is_correct:
             correct_count += 1
+        
+        if verbose and idx < 3:
+            print(f"\nSample {idx + 1}:")
+            print(f"{'-'*80}")
+            print(response)
+            print(f"{'-'*80}")
+            print(f"Extracted Answer: {pred_answer}")
+            print(f"Correct: {is_correct}")
+    
+    if verbose:
+        print(f"\nCorrect: {correct_count}/{n_samples}")
     
     return {
         'idx': problem['idx'],
@@ -107,7 +165,8 @@ def evaluate_problem(
         'answer': ground_truth,
         'correct_count': correct_count,
         'total_samples': n_samples,
-        'temperature': temperature
+        'temperature': temperature,
+        'n_fewshots': n_fewshots
     }
 
 
@@ -126,6 +185,10 @@ def main():
                         help='Nucleus sampling threshold (default: 0.95)')
     parser.add_argument('--max_tokens', type=int, default=2048,
                         help='Maximum generation length (default: 2048)')
+    parser.add_argument('--n_fewshots', type=int, default=0,
+                        help='Number of few-shot examples to include (default: 0, max: 4)')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Print generated outputs and detailed evaluation')
     parser.add_argument('--output_dir', type=str, default='./results',
                         help='Output directory for results')
     
@@ -138,22 +201,23 @@ def main():
     
     for temperature in args.temperatures:
         print(f"\n{'='*60}")
-        print(f"Evaluating with temperature={temperature}")
+        print(f"Evaluating with temperature={temperature}, n_fewshots={args.n_fewshots}")
         print(f"{'='*60}\n")
         
         results = []
         
-        for problem in tqdm(problems, desc=f"T={temperature}"):
+        for problem in tqdm(problems, desc=f"T={temperature}", disable=args.verbose):
             result = evaluate_problem(
                 model, tokenizer, problem,
                 args.n_samples, temperature,
-                args.top_p, args.max_tokens
+                args.top_p, args.max_tokens,
+                args.n_fewshots, args.verbose
             )
             results.append(result)
         
         output_file = os.path.join(
             args.output_dir,
-            f"results_temp{temperature}_n{args.n_samples}.json"
+            f"results_temp{temperature}_n{args.n_samples}_fewshot{args.n_fewshots}.json"
         )
         
         with open(output_file, 'w') as f:
