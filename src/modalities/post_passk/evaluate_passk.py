@@ -1,0 +1,168 @@
+import argparse
+import json
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from tqdm import tqdm
+from dataset_loader import load_gsm8k
+from utils import extract_answer, check_answer
+from typing import List, Dict
+import os
+
+
+def load_model_and_tokenizer(model_name: str):
+    print(f"Loading model: {model_name}")
+    
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name,
+        trust_remote_code=True
+    )
+    
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        trust_remote_code=True,
+        torch_dtype=torch.bfloat16,
+        device_map="auto"
+    )
+    
+    model.eval()
+    
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    
+    return model, tokenizer
+
+
+def create_prompt(question: str) -> str:
+    prompt = "A conversation between User and Assistant. The user asks a question, and the Assistant solves it.\n\n"
+    prompt += f"User: {question}\n"
+    prompt += "Please reason step by step, and put your final answer within \\boxed{{}}.\n\n"
+    prompt += "Assistant:"
+    return prompt
+
+
+def generate_samples(
+    model,
+    tokenizer,
+    question: str,
+    n_samples: int,
+    temperature: float,
+    top_p: float,
+    max_tokens: int
+) -> List[str]:
+    prompt = create_prompt(question)
+    
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    
+    outputs_list = []
+    batch_size = min(n_samples, 8)
+    
+    for i in range(0, n_samples, batch_size):
+        current_batch = min(batch_size, n_samples - i)
+        
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=True,
+                num_return_sequences=current_batch,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id
+            )
+        
+        for output in outputs:
+            text = tokenizer.decode(output[inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+            outputs_list.append(text)
+    
+    return outputs_list
+
+
+def evaluate_problem(
+    model,
+    tokenizer,
+    problem: Dict,
+    n_samples: int,
+    temperature: float,
+    top_p: float,
+    max_tokens: int
+) -> Dict:
+    question = problem['question']
+    ground_truth = problem['answer']
+    
+    responses = generate_samples(
+        model, tokenizer, question, n_samples, 
+        temperature, top_p, max_tokens
+    )
+    
+    correct_count = 0
+    for response in responses:
+        pred_answer = extract_answer(response)
+        if pred_answer and check_answer(pred_answer, ground_truth):
+            correct_count += 1
+    
+    return {
+        'idx': problem['idx'],
+        'question': question,
+        'answer': ground_truth,
+        'correct_count': correct_count,
+        'total_samples': n_samples,
+        'temperature': temperature
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Evaluate pass@k on GSM8K')
+    
+    parser.add_argument('--model_name', type=str, required=True,
+                        help='HuggingFace model name or path')
+    parser.add_argument('--n_samples', type=int, default=512,
+                        help='Number of samples per problem (default: 512)')
+    parser.add_argument('--subset_size', type=int, default=None,
+                        help='Number of problems to evaluate (default: all)')
+    parser.add_argument('--temperatures', type=float, nargs='+', default=[0.6],
+                        help='List of temperatures to evaluate (default: [0.6])')
+    parser.add_argument('--top_p', type=float, default=0.95,
+                        help='Nucleus sampling threshold (default: 0.95)')
+    parser.add_argument('--max_tokens', type=int, default=2048,
+                        help='Maximum generation length (default: 2048)')
+    parser.add_argument('--output_dir', type=str, default='./results',
+                        help='Output directory for results')
+    
+    args = parser.parse_args()
+    
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    model, tokenizer = load_model_and_tokenizer(args.model_name)
+    problems = load_gsm8k(args.subset_size)
+    
+    for temperature in args.temperatures:
+        print(f"\n{'='*60}")
+        print(f"Evaluating with temperature={temperature}")
+        print(f"{'='*60}\n")
+        
+        results = []
+        
+        for problem in tqdm(problems, desc=f"T={temperature}"):
+            result = evaluate_problem(
+                model, tokenizer, problem,
+                args.n_samples, temperature,
+                args.top_p, args.max_tokens
+            )
+            results.append(result)
+        
+        output_file = os.path.join(
+            args.output_dir,
+            f"results_temp{temperature}_n{args.n_samples}.json"
+        )
+        
+        with open(output_file, 'w') as f:
+            json.dump(results, f, indent=2)
+        
+        print(f"\nSaved results to: {output_file}")
+    
+    print(f"\nEvaluation complete! Results saved to {args.output_dir}/")
+
+
+if __name__ == "__main__":
+    main()
