@@ -3,16 +3,14 @@ from typing import Optional
 
 
 def extract_boxed_answer(text: str) -> Optional[str]:
-    """Extract answer from \\boxed{} format."""
     pattern = r'\\boxed\{([^}]*)\}'
     matches = re.findall(pattern, text)
     if matches:
-        return matches[-1].strip()
+        return matches[0].strip()
     return None
 
 
 def extract_last_number(text: str) -> Optional[str]:
-    """Extract the last number from text as fallback."""
     numbers = re.findall(r'-?\d+\.?\d*', text)
     if numbers:
         return numbers[-1]
@@ -20,7 +18,6 @@ def extract_last_number(text: str) -> Optional[str]:
 
 
 def normalize_answer(answer: str) -> Optional[str]:
-    """Normalize answer for comparison."""
     if answer is None:
         return None
     
@@ -49,7 +46,6 @@ def normalize_answer(answer: str) -> Optional[str]:
 
 
 def extract_answer(text: str) -> Optional[str]:
-    """Extract answer from model output."""
     boxed = extract_boxed_answer(text)
     if boxed:
         return normalize_answer(boxed)
@@ -59,7 +55,6 @@ def extract_answer(text: str) -> Optional[str]:
 
 
 def check_answer(prediction: str, ground_truth: str) -> bool:
-    """Check if prediction matches ground truth."""
     pred_norm = normalize_answer(prediction)
     gt_norm = normalize_answer(ground_truth)
     

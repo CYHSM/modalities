@@ -3,17 +3,6 @@ from scipy.special import comb
 
 
 def pass_at_k(n: int, c: int, k: int) -> float:
-    """
-    Unbiased estimator for pass@k metric.
-    
-    Args:
-        n: Total number of samples
-        c: Number of correct samples
-        k: Number of samples to consider
-    
-    Returns:
-        pass@k value for this problem
-    """
     if n < k:
         return 0.0
     if c == 0:
@@ -25,16 +14,6 @@ def pass_at_k(n: int, c: int, k: int) -> float:
 
 
 def compute_pass_at_k(results: list, k_values: list) -> dict:
-    """
-    Compute pass@k for multiple k values.
-    
-    Args:
-        results: List of dicts with 'correct_count' and 'total_samples'
-        k_values: List of k values to compute
-    
-    Returns:
-        Dict mapping k to pass@k value
-    """
     pass_k_results = {}
     
     for k in k_values:
