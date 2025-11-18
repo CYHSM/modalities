@@ -3,7 +3,7 @@ import json
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm import tqdm
-from dataset_loader import load_gsm8k, load_gsm8k_fewshot
+from dataset_loader import load_gsm8k, load_gsm8k_fewshot, load_aime25
 from utils import extract_answer, check_answer
 from typing import List, Dict
 import os
@@ -120,12 +120,26 @@ def evaluate_problem(
     )
     
     correct_count = 0
+    correct_examples = []
+    incorrect_examples = []
+    
     for idx, response in enumerate(responses):
         pred_answer = extract_answer(response)
         is_correct = pred_answer and check_answer(pred_answer, ground_truth)
         
         if is_correct:
             correct_count += 1
+            if len(correct_examples) < 5:
+                correct_examples.append({
+                    'response': response,
+                    'extracted_answer': pred_answer
+                })
+        else:
+            if len(incorrect_examples) < 5:
+                incorrect_examples.append({
+                    'response': response,
+                    'extracted_answer': pred_answer
+                })
         
         if verbose and idx < 3:
             print(f"\nSample {idx + 1}:")
@@ -145,15 +159,19 @@ def evaluate_problem(
         'correct_count': correct_count,
         'total_samples': n_samples,
         'temperature': temperature,
-        'n_fewshots': n_fewshots
+        'n_fewshots': n_fewshots,
+        'correct_examples': correct_examples,
+        'incorrect_examples': incorrect_examples
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Evaluate pass@k on GSM8K')
+    parser = argparse.ArgumentParser(description='Evaluate pass@k on GSM8K or AIME25')
     
     parser.add_argument('--model_name', type=str, required=True,
                         help='HuggingFace model name or path')
+    parser.add_argument('--dataset', type=str, default='gsm8k', choices=['gsm8k', 'aime25'],
+                        help='Dataset to evaluate on (default: gsm8k)')
     parser.add_argument('--n_samples', type=int, default=512,
                         help='Number of samples per problem (default: 512)')
     parser.add_argument('--subset_size', type=int, default=None,
@@ -163,7 +181,7 @@ def main():
     parser.add_argument('--top_p', type=float, default=0.95,
                         help='Nucleus sampling threshold (default: 0.95)')
     parser.add_argument('--max_tokens', type=int, default=256,
-                        help='Maximum generation length (default: 2048)')
+                        help='Maximum generation length (default: 256)')
     parser.add_argument('--n_fewshots', type=int, default=0,
                         help='Number of few-shot examples to include (default: 0, max: 8)')
     parser.add_argument('--verbose', action='store_true',
@@ -176,11 +194,15 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     
     model, tokenizer = load_model_and_tokenizer(args.model_name)
-    problems = load_gsm8k(args.subset_size)
+    
+    if args.dataset == 'gsm8k':
+        problems = load_gsm8k(args.subset_size)
+    elif args.dataset == 'aime25':
+        problems = load_aime25(args.subset_size)
     
     for temperature in args.temperatures:
         print(f"\n{'='*60}")
-        print(f"Evaluating with temperature={temperature}, n_fewshots={args.n_fewshots}")
+        print(f"Evaluating on {args.dataset.upper()} with temperature={temperature}, n_fewshots={args.n_fewshots}")
         print(f"{'='*60}\n")
         
         results = []
@@ -196,9 +218,8 @@ def main():
         
         output_file = os.path.join(
             args.output_dir,
-            f"results_temp{temperature}_n{args.n_samples}_fewshot{args.n_fewshots}.json"
+            f"results_{args.dataset}_temp{temperature}_n{args.n_samples}_fewshot{args.n_fewshots}.json"
         )
-        
         with open(output_file, 'w') as f:
             json.dump(results, f, indent=2)
         

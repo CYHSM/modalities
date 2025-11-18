@@ -39,3 +39,22 @@ def load_gsm8k_fewshot(n_examples: int = 8) -> List[Dict]:
         })
     
     return examples
+
+
+def load_aime25(subset_size: int = None) -> List[Dict]:
+    print("Loading AIME25 dataset...")
+    dataset = load_dataset("math-ai/aime25", split="test")
+    
+    problems = []
+    for idx, item in enumerate(dataset):
+        if subset_size and idx >= subset_size:
+            break
+        
+        problems.append({
+            'idx': idx,
+            'question': item['problem'],
+            'answer': item['answer']
+        })
+    
+    print(f"Loaded {len(problems)} problems from AIME25")
+    return problems
