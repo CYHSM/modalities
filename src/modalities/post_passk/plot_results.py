@@ -31,6 +31,7 @@ def plot_pass_at_k(results_dict, k_values, output_file='pass_at_k.png', power_la
     plt.ylabel('pass@k', fontsize=12)
     plt.title('pass@k Performance on GSM8K', fontsize=14)
     plt.xscale('log', base=2)
+    plt.ylim([0, 1])
     
     ax = plt.gca()
     ax.set_xticks(k_values)
