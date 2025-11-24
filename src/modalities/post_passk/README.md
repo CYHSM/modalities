@@ -12,4 +12,4 @@ python plot_results.py --results_dir /change/this/results/Qwen2.5_7B_8Shot_passk
 
 ## Notes:
 - This implements the Low-Variance pass@k Estimation from the Yue et al. paper (https://arxiv.org/abs/2504.13837) so might be interesting to compare to actual pass@k
-- I changed the way the answer is extracted for gsm8k to use the first boxed answer as Teuken was often continuing generation with a new problem and a new answer. This seems to also improve the baseline from Qwen2.5. 
+- I changed the way the answer is extracted for gsm8k to use the first boxed answer (instead of the last) as Teuken was often continuing generation with a new problem and a new answer. This seems to also improve the baseline from Qwen2.5. 
