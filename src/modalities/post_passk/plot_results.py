@@ -25,7 +25,7 @@ def plot_pass_at_k(results_dict, k_values, output_file='pass_at_k.png', power_la
         k_list = sorted(pass_k_values.keys())
         pass_list = [pass_k_values[k] for k in k_list]
         plt.plot(k_list, pass_list, marker='o', label=f'T={temp}', 
-                color=color, linewidth=2, markersize=6)
+                 color=color, linewidth=2, markersize=6)
     
     plt.xlabel('Number of Samples (k)', fontsize=12)
     plt.ylabel('pass@k', fontsize=12)
@@ -42,10 +42,8 @@ def plot_pass_at_k(results_dict, k_values, output_file='pass_at_k.png', power_la
     
     plt.grid(True, alpha=0.3)
     plt.legend(fontsize=10)
-    
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    
     plt.tight_layout()
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     print(f"Plot saved to: {output_file}")
@@ -67,14 +65,12 @@ def print_results_table(results_dict, k_values):
 def main():
     parser = argparse.ArgumentParser(description='Plot pass@k results')
     parser.add_argument('--results_dir', type=str, default='./results')
-    parser.add_argument('--output_file', type=str, default='pass_at_k.png')
     parser.add_argument('--k_values', type=int, nargs='+', 
                         default=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512])
     parser.add_argument('--power_labels', action='store_true')
     args = parser.parse_args()
     
     result_files = glob.glob(os.path.join(args.results_dir, 'results_*.json'))
-    
     if not result_files:
         print(f"No result files found in {args.results_dir}")
         return
@@ -82,7 +78,9 @@ def main():
     print(f"Found {len(result_files)} result files")
     results_dict = load_results(result_files)
     print_results_table(results_dict, args.k_values)
-    plot_pass_at_k(results_dict, args.k_values, args.output_file, args.power_labels)
+    
+    output_file = os.path.join(args.results_dir, 'pass_at_k.png')
+    plot_pass_at_k(results_dict, args.k_values, output_file, args.power_labels)
 
 if __name__ == "__main__":
     main()

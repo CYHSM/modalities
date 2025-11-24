@@ -215,7 +215,7 @@ def main():
                 args.n_fewshots, args.verbose
             )
             results.append(result)
-        
+
         output_file = os.path.join(
             args.output_dir,
             f"results_{args.dataset}_temp{temperature}_n{args.n_samples}_fewshot{args.n_fewshots}.json"
