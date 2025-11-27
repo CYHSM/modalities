@@ -64,8 +64,24 @@ def format_infinity_instruct(example: Dict[str, Any]) -> Dict[str, Any]:
 
 def format_nemotron_sft(example: Dict[str, Any]) -> Dict[str, Any]:
     """Format Nemotron SFT dataset to chat format."""
-    # Nemotron datasets typically already have the correct format
-    # but we can add any specific formatting here if needed
+    return example
+
+
+def format_dolci_think(example: Dict[str, Any], keep_thinking: bool = True) -> Dict[str, Any]:
+    """Format Dolci-Think-SFT dataset.
+    
+    Args:
+        example: Dataset example with 'messages' field
+        keep_thinking: If True, keep <think> tags in responses. If False, remove them.
+    """
+    if not keep_thinking:
+        messages = []
+        for msg in example["messages"]:
+            content = msg["content"]
+            if msg["role"] == "assistant" and "<think>" in content:
+                content = content.split("</think>")[-1].strip()
+            messages.append({"role": msg["role"], "content": content})
+        return {"messages": messages}
     return example
 
 
@@ -78,11 +94,11 @@ def format_dataset(dataset_name: str, example: Dict[str, Any], subset: str = Non
         "allenai/tulu-3-sft-mixture": format_tulu3_sft,
         "BAAI/Infinity-Instruct": format_infinity_instruct,
         "nvidia/Nemotron-Pretraining-SFT-v1": format_nemotron_sft,
+        "allenai/Dolci-Think-SFT-7B": format_dolci_think,
     }
 
     formatter = formatters.get(dataset_name)
     if formatter is None:
-        # Default formatting for unknown datasets
         logger.warning(f"No specific formatter for {dataset_name}, using default")
         return example
     return formatter(example)
@@ -94,18 +110,15 @@ def load_single_dataset(
     """Load a single dataset with optional subset and sampling."""
     logger.info(f"Loading dataset: {dataset_name}" + (f", subset: {subset}" if subset else ""))
 
-    # Load dataset with subset if specified
     if subset:
         ds = load_dataset(dataset_name, subset, split=split)
     else:
         ds = load_dataset(dataset_name, split=split)
 
-    # Sample if max_samples is specified
     if max_samples and len(ds) > max_samples:
         ds = ds.shuffle(seed=seed).select(range(max_samples))
         logger.info(f"Sampled {max_samples} examples from {dataset_name}")
 
-    # Format dataset
     def format_fn(example):
         return format_dataset(dataset_name, example, subset)
 
@@ -115,7 +128,6 @@ def load_single_dataset(
 
 
 def load_datasets(dataset_string: str, total_samples: int = None, eval_ratio: float = 0.001, seed: int = 42):
-    # Parse dataset configs
     dataset_configs = []
     for dataset_spec in dataset_string.split(","):
         dataset_spec = dataset_spec.strip()
@@ -129,24 +141,22 @@ def load_datasets(dataset_string: str, total_samples: int = None, eval_ratio: fl
 
         dataset_configs.append({"name": full_name, "subset": subset, "split": "train", "weight": weight})
 
-    # Load datasets
     datasets = []
     total_weight = sum(config["weight"] for config in dataset_configs)
 
     for config in dataset_configs:
         logger.info(f"Loading {config['name']} - {config['subset']}")
 
-        # Load with subset
         if config["subset"] == "train_1M":
             ds = load_dataset(config["name"], split=config["subset"])
         else:
             ds = load_dataset(config["name"], config["subset"], split=config["split"])
 
         def format_fn(example):
-            return format_dataset(config["name"], example, subset)
+            return format_dataset(config["name"], example, config["subset"])
+        
         ds = ds.map(format_fn)
 
-        # Sample if needed
         if total_samples:
             max_samples = int(total_samples * (config["weight"] / total_weight))
             if len(ds) > max_samples:
@@ -154,7 +164,6 @@ def load_datasets(dataset_string: str, total_samples: int = None, eval_ratio: fl
 
         datasets.append(ds)
 
-    # Combine and shuffle
     combined_dataset = concatenate_datasets(datasets)
     shuffled_dataset = combined_dataset.shuffle(seed=seed)
 
@@ -180,7 +189,7 @@ def display_dataset_samples(dataset, num_samples: int = 3):
         if "messages" in sample:
             messages = sample["messages"]
             print(f"Conversation with {len(messages)} messages:")
-            for j, msg in enumerate(messages[:2]):  # Show first 2 messages
+            for j, msg in enumerate(messages[:2]):
                 role = msg.get("role", "unknown")
                 content = (
                     msg.get("content", "")[:200] + "..."
@@ -191,7 +200,6 @@ def display_dataset_samples(dataset, num_samples: int = 3):
             if len(messages) > 2:
                 print(f"  ... and {len(messages) - 2} more messages")
         else:
-            # Show first few keys and truncated values
             for key, value in list(sample.items())[:3]:
                 if isinstance(value, str):
                     value_str = value[:100] + "..." if len(value) > 100 else value

@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 def setup_wandb_metrics():
     """Setup WandB metrics to allow out-of-order logging for evaluation metrics."""
     if wandb.run is not None:
-        # Define evaluation metrics with step_metric to allow out-of-order logging
         wandb.define_metric("eval/*", step_metric="eval_step")
         wandb.define_metric("eval_step")
         logger.info("✅ WandB metrics configured for out-of-order evaluation logging")
@@ -31,26 +30,20 @@ def merge_peft_model(peft_path: str, base_model_path: str, output_dir: str) -> b
         from peft import PeftModel
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        # Load base model
         base_model = AutoModelForCausalLM.from_pretrained(
             base_model_path, torch_dtype="auto", device_map="auto", trust_remote_code=True
         )
 
-        # Load PEFT adapters
         model = PeftModel.from_pretrained(base_model, peft_path)
 
-        # Merge adapters
         merged_model = model.merge_and_unload()
 
-        # Save merged model
         os.makedirs(output_dir, exist_ok=True)
         merged_model.save_pretrained(output_dir)
 
-        # Save tokenizer
         tokenizer = AutoTokenizer.from_pretrained(base_model_path)
         tokenizer.save_pretrained(output_dir)
 
-        # Copy custom files if they exist
         for filename in ["modeling_gpt2.py", "configuration_gpt2.py"]:
             src_file = Path(base_model_path) / filename
             if src_file.exists():
@@ -71,13 +64,12 @@ def run_lighteval_cli(
 ) -> Optional[Dict[str, Any]]:
     """Run LightEval CLI evaluation and return results."""
     
-    # This creates a unique lock file for the given id
     lock_path = f"/tmp/lighteval_gpu_{eval_config.eval_gpu}.lock"
     gpu_lock = FileLock(lock_path)
 
     try:
         logger.info(f"Process for step {step} is WAITING for GPU {eval_config.eval_gpu} lock...")
-        with gpu_lock: # pause here until the lock is acquired
+        with gpu_lock:
             logger.info(f"Process for step {step} has ACQUIRED lock for GPU {eval_config.eval_gpu}. Starting evaluation.")
             logger.info(f"Starting CLI evaluation for step {step} on {checkpoint_path}")
 
@@ -85,7 +77,6 @@ def run_lighteval_cli(
             eval_model_path = checkpoint_path
             merged_dir = None
 
-            # Check if it's a PEFT model and merge if needed
             if os.path.exists(os.path.join(checkpoint_path, "adapter_config.json")):
                 logger.info("PEFT model detected, merging with base model...")
                 merged_dir = os.path.join(checkpoint_path, "merged")
@@ -113,7 +104,7 @@ def run_lighteval_cli(
                 cmd_string,
                 shell=True,
                 env=env,
-                capture_output=False,
+                capture_output=True,
                 text=True,
                 check=False,
                 preexec_fn=os.setsid,
@@ -137,7 +128,6 @@ def run_lighteval_cli(
             with open(results_file, "r") as f:
                 eval_results = json.load(f)
 
-            # The lock is automatically released when the 'with' block exits.
             logger.info(f"Process for step {step} has RELEASED lock for GPU {eval_config.eval_gpu}.")
             return eval_results
 
@@ -153,22 +143,17 @@ def parse_and_log_results(eval_results: Dict[str, Any], step: int) -> Dict[str, 
         return {}
 
     results_to_log = {}
-    # Parse individual task results
     for task_name, metrics in eval_results["results"].items():
-        if task_name == "all":  # Skip the aggregated results
+        if task_name == "all":
             continue
 
-        # Clean up task name for logging
         clean_task_name = task_name.replace("leaderboard|", "").split("|")[0]
         for metric_name, value in metrics.items():
             log_key = f"eval/{clean_task_name}_{metric_name}"
             results_to_log[log_key] = value
 
-    # Log to WandB if available - include eval_step for out-of-order logging
     if results_to_log and wandb.run is not None:
-        # Add the eval_step to the metrics
         results_to_log["eval_step"] = step
-        # Log without specifying step parameter!
         wandb.log(results_to_log)
         logger.info(f"📊 Logged {len(results_to_log)} metrics to WandB for eval_step {step}")
         for key, value in results_to_log.items():
@@ -189,7 +174,6 @@ class AsyncEvaluator:
         self.executor = ThreadPoolExecutor(max_workers=eval_config.eval_max_workers)
         self.futures = []
 
-        # Setup WandB metrics when evaluator is created
         setup_wandb_metrics()
 
     def submit_evaluation(self, checkpoint_path: str, step: int):
@@ -201,10 +185,9 @@ class AsyncEvaluator:
                 return parse_and_log_results(results, eval_step)
             return {}
 
-        future = self.executor.submit(eval_and_log, step, checkpoint_path)  # Pass explicitly
+        future = self.executor.submit(eval_and_log, step, checkpoint_path)
         self.futures.append((future, step))
 
-        # Clean up completed futures
         self.futures = [(f, s) for f, s in self.futures if not f.done()]
 
         logger.info(f"🎯 Evaluation job submitted for step {step}")

@@ -37,30 +37,25 @@ def freeze_model_layers(model, trainable_layers):
     total_layers = len(model.model.layers)
     logger.info(f"Model has {total_layers} layers")
 
-    # Parse trainable layers
     if trainable_layers == "all":
-        return  # Don't freeze anything
+        return
     elif isinstance(trainable_layers, str) and trainable_layers.startswith("last_"):
         n = int(trainable_layers.split("_")[1])
         trainable_indices = list(range(total_layers - n, total_layers))
     else:
         trainable_indices = trainable_layers if isinstance(trainable_layers, list) else [trainable_layers]
 
-    # Freeze all parameters first
     for param in model.parameters():
         param.requires_grad = False
 
-    # Unfreeze specified layers
     for i in trainable_indices:
         for param in model.model.layers[i].parameters():
             param.requires_grad = True
 
-    # Always keep LM head trainable
     if hasattr(model, "lm_head"):
         for param in model.lm_head.parameters():
             param.requires_grad = True
 
-    # Log stats
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
     logger.info(f"Trainable layers: {trainable_indices}")
@@ -79,7 +74,6 @@ def load_model_and_tokenizer(
     """Load model and tokenizer with optional LoRA and chat format setup."""
     logger.info(f"Loading model from: {model_path}")
 
-    # Try optimized attention implementations with fallbacks
     attention_implementations = ["flash_attention_2", "sdpa", None]
     model = None
     
@@ -110,32 +104,25 @@ def load_model_and_tokenizer(
             else:
                 raise
 
-    # model = torch.compile(model)
-    # logger.info("Model compiled with torch.compile")
-
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-    # Setup chat format
     if hasattr(tokenizer, "chat_template") and tokenizer.chat_template is not None:
         logger.info("Chat template already exists")
     else:
         logger.info("Setting up chat format")
         model, tokenizer = setup_chat_format(model, tokenizer)
     
-    # Special handling for Teuken model
     if "opengpt-x/teuken-7b-instruct-v0.6" in model_path.lower():
         logger.info("Detected Teuken model, resetting chat template")
         tokenizer.chat_template = None
         model, tokenizer = setup_chat_format(model, tokenizer)
 
-    # Apply LoRA if configured
     if lora_config and lora_config.use_lora:
         logger.info(f"Applying LoRA: r={lora_config.lora_r}, alpha={lora_config.lora_alpha}")
         peft_config = create_peft_config(lora_config)
         model = get_peft_model(model, peft_config)
         model.print_trainable_parameters()
     elif trainable_layers is not None:
-        # Apply layer freezing if not using LoRA
         freeze_model_layers(model, trainable_layers)
 
     logger.info(f"Model loaded successfully. Device: {model.device}")
@@ -147,12 +134,10 @@ def save_model_with_custom_code(model, save_path: str, source_model_path: str):
     save_path = Path(save_path)
     source_path = Path(source_model_path)
 
-    # Save the model
     if hasattr(model, "save_pretrained"):
         model.save_pretrained(save_path)
         logger.info(f"Model saved to: {save_path}")
 
-    # Copy custom code files
     for file_name in ["modeling_gpt2.py", "configuration_gpt2.py"]:
         source_file = source_path / file_name
         dest_file = save_path / file_name
@@ -186,7 +171,6 @@ def get_model_info(model, tokenizer) -> Dict[str, Any]:
         "num_trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
     }
 
-    # Add LoRA specific info if it's a PEFT model
     if hasattr(model, "peft_config"):
         info["is_peft_model"] = True
         peft_config = model.peft_config

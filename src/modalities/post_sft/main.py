@@ -8,7 +8,6 @@ from modalities.post_sft.trainer import setup_trainer
 from modalities.post_sft.config import Config
 from modalities.post_sft.data import load_datasets
 
-# Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -16,7 +15,6 @@ logger = logging.getLogger(__name__)
 def setup_wandb(config: Config):
     """Setup Weights & Biases logging."""
     if config.training.report_to == "wandb":
-        # Auto-generate name if not provided
         wandb_name = config.wandb.name
         if not wandb_name:
             dataset_name = config.data.dataset.split(':')[0].split('/')[-1]
@@ -47,10 +45,8 @@ def setup_wandb(config: Config):
 
 def main():
     """Main training function."""
-    # Parse config from command line - automatically generates CLI from dataclass!
     config: Config = parse(Config, description="Fine-tune language model with SFT")
     
-    # Validate required fields
     if not config.model.model_path:
         logger.error("--model.model-path is required")
         sys.exit(1)
@@ -58,7 +54,6 @@ def main():
         logger.error("--training.output-dir is required")
         sys.exit(1)
     
-    # Setup environment
     config.setup_environment()
     
     logger.info(f"Model: {config.model.model_path}")
@@ -68,10 +63,8 @@ def main():
         logger.info(f"LoRA: r={config.model.lora.lora_r}, alpha={config.model.lora.lora_alpha}")
     
     try:
-        # Setup WandB
         setup_wandb(config)
         
-        # Load model and tokenizer
         logger.info("Loading model and tokenizer...")
         model, tokenizer = load_model_and_tokenizer(
             config.model.model_path,
@@ -83,13 +76,11 @@ def main():
             lora_config=config.model.lora,
         )
         
-        # Log model info
         model_info = get_model_info(model, tokenizer)
         logger.info(f"Model info: {model_info}")
         if wandb.run:
             wandb.log({"model_info": model_info})
         
-        # Load dataset
         logger.info("Loading dataset...")
         dataset = load_datasets(
             config.data.dataset,
@@ -99,7 +90,6 @@ def main():
         )
         logger.info(f"Dataset loaded: {len(dataset['train'])} training samples")
         
-        # Setup trainer
         logger.info("Setting up SFT trainer...")
         trainer = setup_trainer(
             model=model,
@@ -112,11 +102,9 @@ def main():
             hf_home=config.hf_home,
         )
         
-        # Start training
         logger.info("🚀 Starting training...")
         trainer.train(resume_from_checkpoint=config.training.resume_from_checkpoint)
         
-        # Save final model
         logger.info("Saving final model...")
         trainer.save_model()
         

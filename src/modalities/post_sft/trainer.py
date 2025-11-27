@@ -64,31 +64,29 @@ class CustomSFTTrainer(SFTTrainer):
         if optimizer is None:
             optimizer = self.optimizer
 
-        # Check if custom decay is configured
         if hasattr(self.args, "lr_decay_from_step") and self.args.lr_decay_from_step is not None:
             decay_start = self.args.lr_decay_from_step
             decay_steps = self.args.lr_decay_steps
 
             def lr_lambda(current_step):
                 if current_step < decay_start:
-                    return 1.0  # Full LR before decay
+                    return 1.0
 
-                # Cosine decay to 10% of original
                 progress = min((current_step - decay_start) / decay_steps, 1.0)
                 cosine_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
-                return 0.1 + 0.9 * cosine_factor  # From 100% to 10%
+                return 0.1 + 0.9 * cosine_factor
 
             self.lr_scheduler = LambdaLR(optimizer, lr_lambda)
-            logger.info(f"✅ Custom LR: cosine decay from step {decay_start} " f"over {decay_steps} steps (100% → 10%)")
+            logger.info(f"✅ Custom LR: cosine decay from step {decay_start} over {decay_steps} steps (100% → 10%)")
             return self.lr_scheduler
 
-        # Default scheduler
         return super().create_scheduler(num_training_steps, optimizer)
 
 
 def create_sft_config(training_config: TrainingConfig, eval_config) -> SFTConfig:
     """Create SFTConfig from TrainingConfig."""
-    print(training_config)
+    logger.info(f"Training config: {training_config}")
+    
     config = SFTConfig(
         output_dir=training_config.output_dir,
         num_train_epochs=training_config.num_train_epochs,
@@ -141,10 +139,8 @@ def setup_trainer(
 ) -> CustomSFTTrainer:
     """Set up the custom SFT trainer with all configurations."""
 
-    # Create SFT config
     sft_config = create_sft_config(training_config, eval_config)
 
-    # Create callbacks
     callbacks = []
     if eval_config and eval_config.eval_enabled:
         callbacks.append(
@@ -160,7 +156,6 @@ def setup_trainer(
     else:
         logger.info("⚠️ Evaluation callback disabled")
 
-    # Create trainer
     trainer = CustomSFTTrainer(
         source_model_path=source_model_path,
         model=model,

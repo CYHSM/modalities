@@ -53,10 +53,10 @@ class ModelConfig:
 class DataConfig:
     """Dataset configuration."""
 
-    dataset: str = "nvidia/OpenMathInstruct-2:train:1.0"  # format: "dataset:subset:weight,dataset2:subset2:weight2"
+    dataset: str = "nvidia/OpenMathInstruct-2:train:1.0"
     test_size: float = 0.0001
     seed: int = 42
-    total_samples: Optional[int] = 21e6
+    total_samples: Optional[int] = 21_000_000
 
 
 @dataclass
@@ -100,8 +100,6 @@ class EvaluationConfig:
     eval_max_samples: int = 50
     eval_max_workers: int = 1
     eval_tasks: str = "leaderboard|arc:challenge|3|1,leaderboard|hellaswag|10|1,helm|mmlu|5|1,leaderboard|gsm8k|8|1,leaderboard|truthfulqa:mc|0|1"
-
-    # "leaderboard|arc:challenge|3|1,leaderboard|hellaswag|5|1,leaderboard|gsm8k|8|1,lighteval|wmt20:en-de|3|1,lighteval|wmt20:en-fr|3|1,lighteval|wmt20:fr-de|3|1"
 
 
 @dataclass
