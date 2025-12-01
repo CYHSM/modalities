@@ -81,6 +81,10 @@ class CLMCrossEntropyLossConfig(BaseModel):
     prediction_key: str
 
 
+class CLMCrossEntropyWithPonderLossConfig(BaseModel):
+    target_key: str
+    prediction_key: str
+
 # Checkpointing
 class SaveEveryKStepsCheckpointingStrategyConfig(BaseModel):
     k: PositiveInt

@@ -202,6 +202,13 @@ class Trainer:
         model.train()
 
         cumulated_losses = self._reset_tracked_losses()
+        
+        # Track loss components separately
+        cumulated_ce_loss = 0.0
+        cumulated_ponder_loss = 0.0
+        cumulated_ponder_cost_unweighted = 0.0
+        cumulated_expected_steps = 0.0
+        num_loss_accumulations = 0
 
         # throughput
         thoughput_aggregator = Aggregator[ThroughputAggregationKeys]()
@@ -256,6 +263,15 @@ class Trainer:
                 cumulated_losses[0] += batch_loss.item()
                 # This works, because we always drop the last batch in case it has less samples than the batch size
                 cumulated_losses[-1] += 1  # number of local batches
+                
+                # Accumulate loss components if available
+                if hasattr(loss_fun, 'get_loss_components'):
+                    components = loss_fun.get_loss_components()
+                    cumulated_ce_loss += components["ce_loss"].item()
+                    cumulated_ponder_loss += components["ponder_loss"].item()
+                    cumulated_ponder_cost_unweighted += components["ponder_cost_unweighted"].item()
+                    cumulated_expected_steps += components["expected_steps"].item()
+                    num_loss_accumulations += 1
 
             # gradient norm is already synced across all ranks
             if gradient_norm_score is not None:
@@ -305,9 +321,43 @@ class Trainer:
                     reduced_losses[0],
                     reduced_losses[1],
                 )
+                
+                # Compute and sync loss components
+                if num_loss_accumulations > 0:
+                    # Compute averages
+                    avg_ce_loss = cumulated_ce_loss / num_loss_accumulations
+                    avg_ponder_loss = cumulated_ponder_loss / num_loss_accumulations
+                    avg_ponder_cost = cumulated_ponder_cost_unweighted / num_loss_accumulations
+                    avg_expected_steps = cumulated_expected_steps / num_loss_accumulations
+                    
+                    # Create tensors for syncing
+                    component_tensor = torch.tensor(
+                        [avg_ce_loss, avg_ponder_loss, avg_ponder_cost, avg_expected_steps],
+                        device=device
+                    )
+                    
+                    # Sync across ranks
+                    synced_components = Reducer.reduce(
+                        tensor=component_tensor,
+                        operation=dist.ReduceOp.SUM,
+                        post_processing_fun=lambda t: t / (dist.get_world_size() / self.pp_degree)
+                    )
+                    
+                    train_ce_loss_avg = synced_components[0]
+                    train_ponder_loss_avg = synced_components[1]
+                    train_ponder_cost_avg = synced_components[2]
+                    train_expected_steps_avg = synced_components[3]
+                else:
+                    train_ce_loss_avg = torch.tensor(0.0)
+                    train_ponder_loss_avg = torch.tensor(0.0)
+                    train_ponder_cost_avg = torch.tensor(0.0)
+                    train_expected_steps_avg = torch.tensor(0.0)
+                
                 losses = {
                     "train loss avg": ResultItem(train_loss_avg, decimal_places=2),
                     "train loss last": ResultItem(train_loss_last_batch, decimal_places=2),
+                    "train ce loss avg": ResultItem(train_ce_loss_avg, decimal_places=2),
+                    "train ponder loss avg": ResultItem(train_ponder_loss_avg, decimal_places=5),
                 }
 
                 consumed_tokens = torch.tensor(training_progress.num_seen_tokens_total)
@@ -315,6 +365,8 @@ class Trainer:
                     "consumed tokens": ResultItem(consumed_tokens, 0),
                     "grad norm avg": ResultItem(torch.mean(torch.Tensor(gradient_norm_scores)), 2),
                     "grad norm last": ResultItem(torch.tensor(gradient_norm_scores[-1]), 2),
+                    "expected steps avg": ResultItem(train_expected_steps_avg, 2),
+                    "ponder cost avg": ResultItem(train_ponder_cost_avg, 2),
                 }
                 gradient_norm_scores = []
                 mfu_score = torch.tensor(-1.0)
@@ -355,6 +407,14 @@ class Trainer:
                 thoughput_aggregator.remove_keys()
 
                 cumulated_losses = self._reset_tracked_losses()
+                
+                # Reset loss component accumulators
+                cumulated_ce_loss = 0.0
+                cumulated_ponder_loss = 0.0
+                cumulated_ponder_cost_unweighted = 0.0
+                cumulated_expected_steps = 0.0
+                num_loss_accumulations = 0
+                
             if step_performed:
                 evaluation_callback(num_train_steps_done=training_progress.num_seen_steps_total)
                 checkpointing_callback(training_progress=training_progress)

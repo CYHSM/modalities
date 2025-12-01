@@ -34,6 +34,7 @@ from modalities.models.gpt2.gpt2_model import (
     PositionTypes,
     SwiGLU,
     TransformerMLP,
+    AdaptiveComputationConfig,
 )
 from modalities.models.model import ActivationType
 from modalities.nn.model_initialization.initialization_if import ModelInitializationIF
@@ -578,6 +579,7 @@ class GPT2ModelFactory:
         use_meta_device: Optional[bool] = False,
         seed: Optional[int] = None,
         enforce_swiglu_hidden_dim_multiple_of: int = 256,
+        adaptive_config: Optional[AdaptiveComputationConfig] = None,  # ADD THIS
     ) -> GPT2LLM:
         config = dict(
             sample_key=sample_key,
@@ -601,6 +603,7 @@ class GPT2ModelFactory:
             seed=seed,
             use_weight_tying=use_weight_tying,
             enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
+            adaptive_config=adaptive_config,  # ADD THIS
         )
         if use_meta_device and use_weight_tying:
             raise ValueError(
@@ -614,6 +617,7 @@ class GPT2ModelFactory:
         else:
             model = GPT2LLM(**config)
         return model
+    
 
     @staticmethod
     def get_gpt2_tensor_parallelized_model(model: GPT2LLM, device_mesh: DeviceMesh) -> nn.Module:

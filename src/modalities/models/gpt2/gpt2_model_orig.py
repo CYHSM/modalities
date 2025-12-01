@@ -23,21 +23,12 @@ try:
     from flash_attn import flash_attn_func
 except ModuleNotFoundError:
     flash_attn_func = None
+
 # Logger configuration
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
-class AdaptiveComputationConfig(BaseModel):
-    """
-    Configuration for Adaptive Computation Time (PonderNet-style).
-    
-    This enables each layer to loop multiple times with a learned halting mechanism.
-    Easy tokens halt early, hard tokens use more loops.
-    """
-    enable_adaptive: bool = False
-    max_loops: int = 10
-    halt_threshold: float = 0.99
-    ponder_penalty_weight: float = 0.01
+# GPT2 implementation taken from nanogpt https://github.com/karpathy/nanoGPT
 
 
 class LayerNorms(LookupEnum):
@@ -366,7 +357,6 @@ class GPT2LLMConfig(BaseModel):
     use_weight_tying: bool
     seed: Optional[int] = None
     enforce_swiglu_hidden_dim_multiple_of: int = 256
-    adaptive_config: Optional[AdaptiveComputationConfig] = None
 
     @model_validator(mode="after")
     def check_divisibility(self) -> "GPT2LLMConfig":
@@ -808,96 +798,9 @@ class GPT2Block(nn.Module):
         return x
 
 
-# ==========================================
-# Adaptive Router and Recursive Block
-# ==========================================
-
-class AdaptiveRouter(nn.Module):
-    """
-    Predicts halting probability for each token.
-    
-    Higher probability = "I'm confident, stop thinking"
-    Lower probability = "I need more loops"
-    """
-    def __init__(self, n_embd: int, bias: bool = True):
-        super().__init__()
-        self.classifier = nn.Linear(n_embd, 1, bias=bias)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.sigmoid(self.classifier(x)).squeeze(-1)
-
-
-class AdaptiveRecursiveBlock(nn.Module):
-    """
-    Wraps a GPT2Block to enable adaptive recursion.
-    
-    The block processes the input multiple times (up to max_loops).
-    At each step, a router decides how much "thinking" has been done.
-    The output is a weighted average of all steps.
-    
-    Key insight: Easy tokens halt early (high router probability),
-    hard tokens use all loops (low router probability until the end).
-    """
-    def __init__(
-        self,
-        block: GPT2Block,
-        adaptive_config: AdaptiveComputationConfig,
-        n_embd: int,
-    ):
-        super().__init__()
-        self.block = block
-        self.config = adaptive_config
-        self.router = AdaptiveRouter(n_embd)
-
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            x: Input tensor [batch, seq_len, n_embd]
-            
-        Returns:
-            final_output: Weighted average of all loop outputs
-            ponder_cost: Regularization cost (sum of remaining probability at each step)
-        """
-        batch_size, seq_len, _ = x.shape
-        device = x.device
-        dtype = x.dtype
-        
-        h = x
-        final_output = torch.zeros_like(h)
-        # FIX: Use the same dtype as input
-        ponder_cost = torch.zeros(batch_size, seq_len, device=device, dtype=dtype)
-        prob_remain = torch.ones(batch_size, seq_len, device=device, dtype=dtype)
-        
-        steps = self.config.max_loops
-
-        for step in range(steps):
-            # Run the transformer block
-            h = self.block(h)
-            
-            # Ask router: should we stop?
-            halt_prob = self.router(h).to(dtype)
-            
-            # Calculate probability of stopping exactly at this step
-            if step == steps - 1:
-                # Last step: must stop, take all remaining probability
-                p_stop_here = prob_remain
-                halt_prob = torch.ones_like(halt_prob, dtype=dtype)
-            else:
-                # p_stop_here = (we're still running) * (we decide to stop)
-                p_stop_here = prob_remain * halt_prob
-
-            # Soft accumulation: add weighted output
-            final_output = final_output + (h * p_stop_here.unsqueeze(-1))
-            
-            # Ponder cost: we "pay" for each step we're still running
-            ponder_cost = ponder_cost + prob_remain
-            
-            # Update remaining probability for next loop
-            prob_remain = prob_remain * (1.0 - halt_prob)
-
-        return final_output, ponder_cost
-
 class GPT2LLM(NNModel):
+    """GPT2LLM class."""
+
     def __init__(
         self,
         sample_key: str,
@@ -921,7 +824,6 @@ class GPT2LLM(NNModel):
         use_weight_tying: bool,
         seed: Optional[int] = None,
         enforce_swiglu_hidden_dim_multiple_of: int = 256,
-        adaptive_config: Optional[AdaptiveComputationConfig] = None,
     ):
         """
         Initializes the GPT2LLM object.
@@ -952,7 +854,7 @@ class GPT2LLM(NNModel):
                 Note that this is only relevant if the activation_type is SwiGLU. Defaults to 256.
         """
         weight_decay_groups = {
-            "linear": [".attn", ".mlp", ".lm_head.weight", ".router"],
+            "linear": [".attn", ".mlp", ".lm_head.weight"],
             "embedding": [".wte", ".wpe"],
             "layernorm": [".attention_norm", ".ffn_norm", ".lm_head_norm"],
         }
@@ -983,47 +885,33 @@ class GPT2LLM(NNModel):
         ]:
             raise ValueError('It is expected to use "RotaryTransform" together with "NOPE".')
 
-        self.use_adaptive = adaptive_config is not None and adaptive_config.enable_adaptive
-        self.adaptive_config = adaptive_config
-        def create_block():
-            return GPT2Block(
-                n_embd=n_embd,
-                bias=bias,
-                n_head_q=n_head_q,
-                n_head_kv=n_head_kv,
-                activation_type=activation_type,
-                attention_impl=attention_implementation,
-                attention_config=attention_config,
-                dropout=dropout,
-                ffn_hidden=ffn_hidden,
-                # deepcopy did not work here! The weights were then automatically
-                # moved to a cuda device even when the deepcopied weights were on
-                # a meta device!
-                attention_norm=attention_norm_config.norm_type.value(**dict(attention_norm_config.config)),
-                ffn_norm=ffn_norm_config.norm_type.value(**dict(ffn_norm_config.config)),
-                enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
-            )
-
-        # Build layers
-        layers = {}
-        for layer_idx in range(n_layer):
-            block = create_block()
-            
-            if self.use_adaptive:
-                layers[str(layer_idx)] = AdaptiveRecursiveBlock(
-                    block=block,
-                    adaptive_config=adaptive_config,
-                    n_embd=n_embd
-                )
-            else:
-                layers[str(layer_idx)] = block
-
         self.transformer = nn.ModuleDict(
             dict(
                 wte=nn.Embedding(num_embeddings=vocab_size, embedding_dim=n_embd),
                 wpe=wpe,
                 drop=nn.Dropout(dropout),
-                h=nn.ModuleDict(layers),
+                h=nn.ModuleDict(
+                    {
+                        str(layer_idx): GPT2Block(
+                            n_embd=n_embd,
+                            bias=bias,
+                            n_head_q=n_head_q,
+                            n_head_kv=n_head_kv,
+                            activation_type=activation_type,
+                            attention_impl=attention_implementation,
+                            attention_config=attention_config,
+                            dropout=dropout,
+                            ffn_hidden=ffn_hidden,
+                            # deepcopy did not work here! The weights were then automatically
+                            # moved to a cuda device even when the deepcopied weights were on
+                            # a meta device!
+                            attention_norm=attention_norm_config.norm_type.value(**dict(attention_norm_config.config)),
+                            ffn_norm=ffn_norm_config.norm_type.value(**dict(ffn_norm_config.config)),
+                            enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
+                        )
+                        for layer_idx in range(n_layer)
+                    }
+                ),
                 lm_head_norm=lm_head_norm_config.norm_type.value(**dict(lm_head_norm_config.config)),
                 # NOTE: If we make the bias configurable, we must update the number of parameters calculation
                 # in the test_initialization_fsdp1.py, accordingly.
@@ -1078,17 +966,11 @@ class GPT2LLM(NNModel):
             dict[str, torch.Tensor] | torch.Tensor: Model output.
         """
         if isinstance(inputs, dict):
-            result = self.forward_impl(inputs[self.sample_key])
-            if isinstance(result, dict):
-                # Adaptive mode: result = {"logits": ..., "ponder_loss": ...}
-                return {self.prediction_key: result}  # Wrap the entire dict
-            else:
-                # Standard mode: result = logits tensor
-                return {self.prediction_key: result}
+            return {self.prediction_key: self.forward_impl(inputs[self.sample_key])}
         else:
             return self.forward_impl(inputs)
 
-    def forward_impl(self, inputs: torch.Tensor) -> dict[str, torch.Tensor] | torch.Tensor:
+    def forward_impl(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Forward pass implementation of the GPT2LLM module.
 
@@ -1096,7 +978,7 @@ class GPT2LLM(NNModel):
             inputs (torch.Tensor): A tensor containing input token ids.
 
         Returns:
-            dict[str, torch.Tensor] | torch.Tensor: Model output.
+            torch.Tensor: A tensor containing output logits.
         """
         device = inputs.device
         seq_len = inputs.size(1)
@@ -1116,38 +998,11 @@ class GPT2LLM(NNModel):
         # TODO: use drop out also without absolute position embedding?
         h = self.transformer.drop(h) if hasattr(self.transformer, "drop") else h
 
-        # Track ponder cost and expected steps
-        total_ponder_cost = torch.tensor(0.0, device=device, dtype=h.dtype)
-        num_adaptive_layers = 0
-
         for layer_idx in self.transformer.h:
-            layer_module = self.transformer.h[layer_idx]
-            
-            if self.use_adaptive:
-                h, cost = layer_module(h)
-                total_ponder_cost = total_ponder_cost + cost.mean()
-                num_adaptive_layers += 1
-            else:
-                h = layer_module(h)
-
+            h = self.transformer.h[layer_idx](h)
         h = self.transformer.lm_head_norm(h) if hasattr(self.transformer, "lm_head_norm") else h
-        logits = self.transformer.lm_head(h) if hasattr(self.transformer, "lm_head") else h
-
-        if self.use_adaptive:
-            # Compute weighted ponder loss (this is what gets added to CE loss)
-            weighted_ponder_loss = (total_ponder_cost * self.adaptive_config.ponder_penalty_weight).to(logits.dtype)
-            
-            # Average expected steps per layer (for monitoring)
-            avg_expected_steps = total_ponder_cost / num_adaptive_layers if num_adaptive_layers > 0 else torch.tensor(0.0, dtype=h.dtype, device=device)
-            
-            return {
-                "logits": logits,
-                "ponder_loss": weighted_ponder_loss,
-                "ponder_cost_unweighted": total_ponder_cost,  # Raw cost before weighting
-                "expected_steps": avg_expected_steps,  # Average steps per layer
-            }
-        
-        return logits
+        h = self.transformer.lm_head(h) if hasattr(self.transformer, "lm_head") else h
+        return h
 
 
 def manual_scaled_dot_product_attention(
