@@ -1116,7 +1116,8 @@ class GPT2LLM(NNModel):
         # TODO: use drop out also without absolute position embedding?
         h = self.transformer.drop(h) if hasattr(self.transformer, "drop") else h
 
-        # Track ponder cost and expected steps
+
+        # Track ponder cost
         total_ponder_cost = torch.tensor(0.0, device=device, dtype=h.dtype)
         num_adaptive_layers = 0
 
@@ -1134,17 +1135,20 @@ class GPT2LLM(NNModel):
         logits = self.transformer.lm_head(h) if hasattr(self.transformer, "lm_head") else h
 
         if self.use_adaptive:
-            # Compute weighted ponder loss (this is what gets added to CE loss)
-            weighted_ponder_loss = (total_ponder_cost * self.adaptive_config.ponder_penalty_weight).to(logits.dtype)
+            avg_ponder_cost = total_ponder_cost / num_adaptive_layers if num_adaptive_layers > 0 else torch.tensor(0.0, dtype=h.dtype, device=device)
             
-            # Average expected steps per layer (for monitoring)
-            avg_expected_steps = total_ponder_cost / num_adaptive_layers if num_adaptive_layers > 0 else torch.tensor(0.0, dtype=h.dtype, device=device)
+            # Normalize: independent of max_loops
+            normalized_steps = (avg_ponder_cost - 1.0) / (self.adaptive_config.max_loops - 1.0) if self.adaptive_config.max_loops > 1 else torch.tensor(0.0, dtype=h.dtype, device=device)
+            
+            # Weight normalized value for transferable penalty
+            weighted_ponder_loss = (normalized_steps * self.adaptive_config.ponder_penalty_weight).to(logits.dtype)
             
             return {
                 "logits": logits,
                 "ponder_loss": weighted_ponder_loss,
-                "ponder_cost_unweighted": total_ponder_cost,  # Raw cost before weighting
-                "expected_steps": avg_expected_steps,  # Average steps per layer
+                "ponder_cost_unweighted": total_ponder_cost,
+                "expected_steps": avg_ponder_cost,
+                "normalized_steps": normalized_steps,
             }
         
         return logits
