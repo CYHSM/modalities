@@ -209,6 +209,9 @@ class Trainer:
         cumulated_ponder_cost_unweighted = 0.0
         cumulated_expected_steps = 0.0
         num_loss_accumulations = 0
+        cumulated_normalized_steps = 0.0 
+        cumulated_step_gate = 0.0
+        cumulated_per_layer_costs: Optional[torch.Tensor] = None 
 
         # throughput
         thoughput_aggregator = Aggregator[ThroughputAggregationKeys]()
@@ -271,6 +274,15 @@ class Trainer:
                     cumulated_ponder_loss += components["ponder_loss"].item()
                     cumulated_ponder_cost_unweighted += components["ponder_cost_unweighted"].item()
                     cumulated_expected_steps += components["expected_steps"].item()
+
+                    cumulated_normalized_steps += components.get("normalized_steps", torch.tensor(0.0)).item()
+                    cumulated_step_gate += components.get("step_gate_mean", torch.tensor(0.0)).item()
+                    layer_costs = components.get("per_layer_ponder_costs", None)
+                    if layer_costs is not None and layer_costs.numel() > 0:
+                        if cumulated_per_layer_costs is None:
+                            cumulated_per_layer_costs = torch.zeros_like(layer_costs)
+                        cumulated_per_layer_costs += layer_costs
+
                     num_loss_accumulations += 1
 
             # gradient norm is already synced across all ranks
@@ -324,50 +336,77 @@ class Trainer:
                 
                 # Compute and sync loss components
                 if num_loss_accumulations > 0:
-                    # Compute averages
+                    # 1. Prepare Scalars
                     avg_ce_loss = cumulated_ce_loss / num_loss_accumulations
                     avg_ponder_loss = cumulated_ponder_loss / num_loss_accumulations
                     avg_ponder_cost = cumulated_ponder_cost_unweighted / num_loss_accumulations
                     avg_expected_steps = cumulated_expected_steps / num_loss_accumulations
+                    avg_normalized_steps = cumulated_normalized_steps / num_loss_accumulations
+                    avg_step_gate = cumulated_step_gate / num_loss_accumulations
                     
-                    # Create tensors for syncing
-                    component_tensor = torch.tensor(
-                        [avg_ce_loss, avg_ponder_loss, avg_ponder_cost, avg_expected_steps],
+                    scalars = torch.tensor(
+                        [avg_ce_loss, avg_ponder_loss, avg_ponder_cost, avg_expected_steps, avg_normalized_steps, avg_step_gate],
                         device=device
                     )
+
+                    # 2. Prepare Layer Vector
+                    if cumulated_per_layer_costs is not None:
+                        avg_layer_costs = cumulated_per_layer_costs / num_loss_accumulations
+                        # Concatenate scalars and layer vector for a single ReduceOp
+                        combined_tensor = torch.cat([scalars, avg_layer_costs])
+                        num_scalars = len(scalars)
+                    else:
+                        combined_tensor = scalars
+                        num_scalars = len(scalars)
                     
-                    # Sync across ranks
-                    synced_components = Reducer.reduce(
-                        tensor=component_tensor,
+                    # 3. Sync everything at once
+                    synced_tensor = Reducer.reduce(
+                        tensor=combined_tensor,
                         operation=dist.ReduceOp.SUM,
                         post_processing_fun=lambda t: t / (dist.get_world_size() / self.pp_degree)
                     )
                     
-                    train_ce_loss_avg = synced_components[0]
-                    train_ponder_loss_avg = synced_components[1]
-                    train_ponder_cost_avg = synced_components[2]
-                    train_expected_steps_avg = synced_components[3]
+                    # 4. Unpack Scalars
+                    train_ce_loss_avg = synced_tensor[0]
+                    train_ponder_loss_avg = synced_tensor[1]
+                    train_ponder_cost_avg = synced_tensor[2]
+                    train_expected_steps_avg = synced_tensor[3]
+                    train_normalized_steps_avg = synced_tensor[4]
+                    train_step_gate_avg = synced_tensor[5]
+                    
+                    # 5. Unpack Layer Vector (if it exists)
+                    synced_layer_costs = synced_tensor[num_scalars:] if len(synced_tensor) > num_scalars else []
+
                 else:
                     train_ce_loss_avg = torch.tensor(0.0)
                     train_ponder_loss_avg = torch.tensor(0.0)
                     train_ponder_cost_avg = torch.tensor(0.0)
                     train_expected_steps_avg = torch.tensor(0.0)
+                    train_normalized_steps_avg = torch.tensor(0.0)
+                    train_step_gate_avg = torch.tensor(0.0)
+                    synced_layer_costs = torch.tensor([])
                 
                 losses = {
-                    "train loss avg": ResultItem(train_loss_avg, decimal_places=2),
-                    "train loss last": ResultItem(train_loss_last_batch, decimal_places=2),
-                    "train ce loss avg": ResultItem(train_ce_loss_avg, decimal_places=2),
-                    "train ponder loss avg": ResultItem(train_ponder_loss_avg, decimal_places=5),
+                    "train/loss_avg": ResultItem(train_loss_avg, decimal_places=2),
+                    "train/loss_last": ResultItem(train_loss_last_batch, decimal_places=2),
+                    "train/ce_loss_avg": ResultItem(train_ce_loss_avg, decimal_places=2),
+                    "train/ponder_loss_avg": ResultItem(train_ponder_loss_avg, decimal_places=5),
                 }
 
                 consumed_tokens = torch.tensor(training_progress.num_seen_tokens_total)
                 metrics = {
-                    "consumed tokens": ResultItem(consumed_tokens, 0),
-                    "grad norm avg": ResultItem(torch.mean(torch.Tensor(gradient_norm_scores)), 2),
-                    "grad norm last": ResultItem(torch.tensor(gradient_norm_scores[-1]), 2),
-                    "expected steps avg": ResultItem(train_expected_steps_avg, 2),
-                    "ponder cost avg": ResultItem(train_ponder_cost_avg, 2),
+                    "train/consumed_tokens": ResultItem(consumed_tokens, 0),
+                    "train/grad_norm_avg": ResultItem(torch.mean(torch.Tensor(gradient_norm_scores)), 2),
+                    "train/grad_norm_last": ResultItem(torch.tensor(gradient_norm_scores[-1]), 2),
+                    "train/expected_steps_avg": ResultItem(train_expected_steps_avg, 2),
+                    "train/ponder_cost_avg": ResultItem(train_ponder_cost_avg, 2),
+                    "train/normalized_steps_avg": ResultItem(train_normalized_steps_avg, 3),
+                    "train/step_gate_avg": ResultItem(train_step_gate_avg, 4),
                 }
+
+                for i, cost_val in enumerate(synced_layer_costs):
+                    metrics[f"train/layer_{i}/ponder_cost"] = ResultItem(cost_val, 2)
+
                 gradient_norm_scores = []
                 mfu_score = torch.tensor(-1.0)
                 if self.mfu_calculator is not None:
@@ -413,6 +452,7 @@ class Trainer:
                 cumulated_ponder_loss = 0.0
                 cumulated_ponder_cost_unweighted = 0.0
                 cumulated_expected_steps = 0.0
+                cumulated_per_layer_costs = None
                 num_loss_accumulations = 0
                 
             if step_performed:

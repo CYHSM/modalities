@@ -88,14 +88,6 @@ class CLMCrossEntropyLoss(Loss):
 
 
 class CLMCrossEntropyWithPonderLoss(Loss):
-    """
-    Cross-entropy loss with adaptive computation penalty.
-    
-    This combines:
-    1. Standard cross-entropy for token prediction
-    2. Ponder loss to penalize excessive computation
-    """
-    
     def __init__(
         self, 
         target_key: str, 
@@ -107,36 +99,34 @@ class CLMCrossEntropyWithPonderLoss(Loss):
         self.prediction_key = prediction_key
         self.ce_loss_fun = CrossEntropyLoss(reduction="mean")
         
-        # Store components for logging (thread-safe per forward pass)
         self._last_ce_loss = None
         self._last_ponder_loss = None
         self._last_ponder_cost_unweighted = None
         self._last_expected_steps = None
-
-    @overload
-    def __call__(self, forward_batch: InferenceResultBatch) -> torch.Tensor:
-        ...
-
-    @overload
-    def __call__(self, outputs: torch.Tensor | dict, targets: torch.Tensor) -> torch.Tensor:
-        ...
+        self._last_normalized_steps = None
+        self._last_step_gate_mean = None
+        self._last_per_layer_ponder_costs = None
 
     def __call__(self, *args, **kwargs) -> torch.Tensor:
         labels, outputs = self._parse_arguments(args, kwargs)
         
-        # Check if outputs is a dict (adaptive mode) or tensor (standard mode)
         if isinstance(outputs, dict):
             lm_logits = outputs["logits"]
             ponder_loss = outputs.get("ponder_loss", torch.tensor(0.0, device=lm_logits.device))
             ponder_cost_unweighted = outputs.get("ponder_cost_unweighted", torch.tensor(0.0, device=lm_logits.device))
             expected_steps = outputs.get("expected_steps", torch.tensor(0.0, device=lm_logits.device))
+            normalized_steps = outputs.get("normalized_steps", torch.tensor(0.0, device=lm_logits.device))
+            step_gate_mean = outputs.get("step_gate_mean", torch.tensor(0.0, device=lm_logits.device))
+            per_layer_ponder_costs = outputs.get("per_layer_ponder_costs", None)
         else:
             lm_logits = outputs
             ponder_loss = torch.tensor(0.0, device=lm_logits.device)
             ponder_cost_unweighted = torch.tensor(0.0, device=lm_logits.device)
             expected_steps = torch.tensor(0.0, device=lm_logits.device)
+            normalized_steps = torch.tensor(0.0, device=lm_logits.device)
+            step_gate_mean = torch.tensor(0.0, device=lm_logits.device)
+            per_layer_ponder_costs = None
 
-        # Compute cross-entropy loss
         labels = labels.to(lm_logits.device)
         shift_logits = lm_logits.contiguous()
         shift_labels = labels.contiguous().long()
@@ -145,27 +135,27 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             shift_labels.view(-1)
         )
         
-        # Store for logging (detach to avoid keeping computation graph)
         self._last_ce_loss = ce_loss.detach()
         self._last_ponder_loss = ponder_loss.detach() if isinstance(ponder_loss, torch.Tensor) else torch.tensor(0.0)
         self._last_ponder_cost_unweighted = ponder_cost_unweighted.detach() if isinstance(ponder_cost_unweighted, torch.Tensor) else torch.tensor(0.0)
         self._last_expected_steps = expected_steps.detach() if isinstance(expected_steps, torch.Tensor) else torch.tensor(0.0)
+        self._last_normalized_steps = normalized_steps.detach() if isinstance(normalized_steps, torch.Tensor) else torch.tensor(0.0)
+        self._last_step_gate_mean = step_gate_mean.detach() if isinstance(step_gate_mean, torch.Tensor) else torch.tensor(0.0)
+        self._last_per_layer_ponder_costs = per_layer_ponder_costs.detach() if per_layer_ponder_costs is not None else None
         
-        # Total loss = cross-entropy + weighted ponder loss
         total_loss = ce_loss + ponder_loss
         
         return total_loss
     
     def get_loss_components(self) -> dict[str, torch.Tensor]:
-        """
-        Returns the loss components from the last forward pass.
-        Safe to call even if no forward pass has occurred.
-        """
         return {
             "ce_loss": self._last_ce_loss if self._last_ce_loss is not None else torch.tensor(0.0),
             "ponder_loss": self._last_ponder_loss if self._last_ponder_loss is not None else torch.tensor(0.0),
             "ponder_cost_unweighted": self._last_ponder_cost_unweighted if self._last_ponder_cost_unweighted is not None else torch.tensor(0.0),
             "expected_steps": self._last_expected_steps if self._last_expected_steps is not None else torch.tensor(0.0),
+            "normalized_steps": self._last_normalized_steps if self._last_normalized_steps is not None else torch.tensor(0.0),
+            "step_gate_mean": self._last_step_gate_mean if self._last_step_gate_mean is not None else torch.tensor(0.0),
+            "per_layer_ponder_costs": self._last_per_layer_ponder_costs if self._last_per_layer_ponder_costs is not None else torch.tensor([]),
         }
 
     def _parse_arguments(

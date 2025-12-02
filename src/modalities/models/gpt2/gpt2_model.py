@@ -813,31 +813,21 @@ class GPT2Block(nn.Module):
 # ==========================================
 
 class AdaptiveRouter(nn.Module):
-    """
-    Predicts halting probability for each token.
-    
-    Higher probability = "I'm confident, stop thinking"
-    Lower probability = "I need more loops"
-    """
     def __init__(self, n_embd: int, bias: bool = True):
         super().__init__()
-        self.classifier = nn.Linear(n_embd, 1, bias=bias)
+        self.net = nn.Sequential(
+            nn.Linear(n_embd + 1, n_embd // 4, bias=bias),
+            nn.GELU(),
+            nn.Linear(n_embd // 4, 1, bias=bias)
+        )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.sigmoid(self.classifier(x)).squeeze(-1)
+    def forward(self, x: torch.Tensor, step_normalized: float) -> torch.Tensor:
+        B, T, _ = x.shape
+        step_feat = torch.full((B, T, 1), step_normalized, device=x.device, dtype=x.dtype)
+        return torch.sigmoid(self.net(torch.cat([x, step_feat], dim=-1))).squeeze(-1)
 
 
 class AdaptiveRecursiveBlock(nn.Module):
-    """
-    Wraps a GPT2Block to enable adaptive recursion.
-    
-    The block processes the input multiple times (up to max_loops).
-    At each step, a router decides how much "thinking" has been done.
-    The output is a weighted average of all steps.
-    
-    Key insight: Easy tokens halt early (high router probability),
-    hard tokens use all loops (low router probability until the end).
-    """
     def __init__(
         self,
         block: GPT2Block,
@@ -847,55 +837,36 @@ class AdaptiveRecursiveBlock(nn.Module):
         super().__init__()
         self.block = block
         self.config = adaptive_config
+        self.max_loops = adaptive_config.max_loops
         self.router = AdaptiveRouter(n_embd)
+        self.step_gate = nn.Parameter(torch.tensor([0.01]))
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            x: Input tensor [batch, seq_len, n_embd]
-            
-        Returns:
-            final_output: Weighted average of all loop outputs
-            ponder_cost: Regularization cost (sum of remaining probability at each step)
-        """
-        batch_size, seq_len, _ = x.shape
-        device = x.device
-        dtype = x.dtype
-        
-        h = x
-        final_output = torch.zeros_like(h)
-        # FIX: Use the same dtype as input
-        ponder_cost = torch.zeros(batch_size, seq_len, device=device, dtype=dtype)
-        prob_remain = torch.ones(batch_size, seq_len, device=device, dtype=dtype)
-        
-        steps = self.config.max_loops
+        B, T, _ = x.shape
+        device, dtype = x.device, x.dtype
 
-        for step in range(steps):
-            # Run the transformer block
+        h = x
+        output = torch.zeros_like(h)
+        ponder_cost = torch.zeros(B, T, device=device, dtype=dtype)
+        prob_remain = torch.ones(B, T, device=device, dtype=dtype)
+
+        for step in range(self.max_loops):
             h = self.block(h)
             
-            # Ask router: should we stop?
-            halt_prob = self.router(h).to(dtype)
-            
-            # Calculate probability of stopping exactly at this step
-            if step == steps - 1:
-                # Last step: must stop, take all remaining probability
-                p_stop_here = prob_remain
-                halt_prob = torch.ones_like(halt_prob, dtype=dtype)
+            step_norm = step / (self.max_loops - 1) if self.max_loops > 1 else 0.0
+            halt_prob = self.router(h, step_norm)
+
+            if step == self.max_loops - 1:
+                p_stop = prob_remain
             else:
-                # p_stop_here = (we're still running) * (we decide to stop)
-                p_stop_here = prob_remain * halt_prob
+                p_stop = prob_remain * halt_prob
 
-            # Soft accumulation: add weighted output
-            final_output = final_output + (h * p_stop_here.unsqueeze(-1))
-            
-            # Ponder cost: we "pay" for each step we're still running
+            output = output + h * p_stop.unsqueeze(-1)
             ponder_cost = ponder_cost + prob_remain
-            
-            # Update remaining probability for next loop
-            prob_remain = prob_remain * (1.0 - halt_prob)
+            prob_remain = prob_remain * (1 - halt_prob)
 
-        return final_output, ponder_cost
+        return output, ponder_cost
+    
 
 class GPT2LLM(NNModel):
     def __init__(
@@ -953,8 +924,8 @@ class GPT2LLM(NNModel):
         """
         weight_decay_groups = {
             "linear": [".attn", ".mlp", ".lm_head.weight", ".router"],
-            "embedding": [".wte", ".wpe"],
-            "layernorm": [".attention_norm", ".ffn_norm", ".lm_head_norm"],
+            "embedding": [".wte", ".wpe", ".step_emb"],
+            "layernorm": [".attention_norm", ".ffn_norm", ".lm_head_norm", ".step_gate"],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
         self.sample_key = sample_key
@@ -1120,14 +1091,21 @@ class GPT2LLM(NNModel):
         # Track ponder cost
         total_ponder_cost = torch.tensor(0.0, device=device, dtype=h.dtype)
         num_adaptive_layers = 0
+        step_gate_values = [] 
+        per_layer_ponder_costs = []
 
         for layer_idx in self.transformer.h:
             layer_module = self.transformer.h[layer_idx]
-            
+
             if self.use_adaptive:
                 h, cost = layer_module(h)
-                total_ponder_cost = total_ponder_cost + cost.mean()
+                cost_mean = cost.mean()
+                
+                total_ponder_cost = total_ponder_cost + cost_mean
+                per_layer_ponder_costs.append(cost_mean)
+                
                 num_adaptive_layers += 1
+                step_gate_values.append(torch.tanh(layer_module.step_gate))
             else:
                 h = layer_module(h)
 
@@ -1142,13 +1120,17 @@ class GPT2LLM(NNModel):
             
             # Weight normalized value for transferable penalty
             weighted_ponder_loss = (normalized_steps * self.adaptive_config.ponder_penalty_weight).to(logits.dtype)
-            
+            avg_step_gate = torch.mean(torch.stack(step_gate_values)) if step_gate_values else torch.tensor(0.0, device=device)
+            layer_costs_tensor = torch.stack(per_layer_ponder_costs) if per_layer_ponder_costs else torch.tensor([], device=device)
+
             return {
                 "logits": logits,
                 "ponder_loss": weighted_ponder_loss,
                 "ponder_cost_unweighted": total_ponder_cost,
                 "expected_steps": avg_ponder_cost,
                 "normalized_steps": normalized_steps,
+                "step_gate_mean": avg_step_gate,
+                "per_layer_ponder_costs": layer_costs_tensor,
             }
         
         return logits
