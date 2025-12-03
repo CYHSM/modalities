@@ -843,29 +843,85 @@ class AdaptiveRecursiveBlock(nn.Module):
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, T, _ = x.shape
-        device, dtype = x.device, x.dtype
-
+        
         h = x
-        output = torch.zeros_like(h)
-        ponder_cost = torch.zeros(B, T, device=device, dtype=dtype)
-        prob_remain = torch.ones(B, T, device=device, dtype=dtype)
+        accumulated_output = torch.zeros_like(h)
+        
+        # State tracking
+        prob_remain = torch.ones(B, T, device=x.device, dtype=x.dtype)
+        expected_steps = torch.zeros(B, T, device=x.device, dtype=x.dtype)
+        
+        # Denominator for normalization (prevent div by zero if max_loops=1)
+        denom = max(1, self.max_loops - 1)
 
         for step in range(self.max_loops):
             h = self.block(h)
-            
-            step_norm = step / (self.max_loops - 1) if self.max_loops > 1 else 0.0
+            step_norm = step / denom
             halt_prob = self.router(h, step_norm)
 
             if step == self.max_loops - 1:
-                p_stop = prob_remain
+                # Last step: strictly halt all remaining probability
+                p_stop_here = prob_remain
+                prob_remain = torch.zeros_like(prob_remain) # Clear remainder
             else:
-                p_stop = prob_remain * halt_prob
+                p_stop_here = prob_remain * halt_prob
+                prob_remain = prob_remain * (1.0 - halt_prob)
 
-            output = output + h * p_stop.unsqueeze(-1)
-            ponder_cost = ponder_cost + prob_remain
-            prob_remain = prob_remain * (1 - halt_prob)
+            accumulated_output = accumulated_output + (h * p_stop_here.unsqueeze(-1))
+            expected_steps = expected_steps + p_stop_here * (step + 1)
+            
+            if not self.training:
+                # We check if the maximum remaining probability in the batch is negligible
+                if prob_remain.max() < (1.0 - self.config.halt_threshold):
+                    break
 
-        return output, ponder_cost
+        # Edge case handling for early exit: 
+        # If we broke early, we must normalize the accumulated output so it sums to 1.0
+        # effectively treating the current state as the final state for the remaining mass.
+        if not self.training and prob_remain.sum() > 0:
+            accumulated_output = accumulated_output + (h * prob_remain.unsqueeze(-1))
+
+        return accumulated_output, expected_steps
+
+# class AdaptiveRecursiveBlock(nn.Module):
+#     def __init__(
+#         self,
+#         block: GPT2Block,
+#         adaptive_config: AdaptiveComputationConfig,
+#         n_embd: int,
+#     ):
+#         super().__init__()
+#         self.block = block
+#         self.config = adaptive_config
+#         self.max_loops = adaptive_config.max_loops
+#         self.router = AdaptiveRouter(n_embd)
+#         self.step_gate = nn.Parameter(torch.tensor([0.01]))
+
+#     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+#         B, T, _ = x.shape
+#         device, dtype = x.device, x.dtype
+
+#         h = x
+#         output = torch.zeros_like(h)
+#         ponder_cost = torch.zeros(B, T, device=device, dtype=dtype)
+#         prob_remain = torch.ones(B, T, device=device, dtype=dtype)
+
+#         for step in range(self.max_loops):
+#             h = self.block(h)
+            
+#             step_norm = step / (self.max_loops - 1) if self.max_loops > 1 else 0.0
+#             halt_prob = self.router(h, step_norm)
+
+#             if step == self.max_loops - 1:
+#                 p_stop = prob_remain
+#             else:
+#                 p_stop = prob_remain * halt_prob
+
+#             output = output + h * p_stop.unsqueeze(-1)
+#             ponder_cost = ponder_cost + prob_remain
+#             prob_remain = prob_remain * (1 - halt_prob)
+
+#         return output, ponder_cost
     
 
 class GPT2LLM(NNModel):
