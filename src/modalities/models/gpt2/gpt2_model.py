@@ -793,38 +793,91 @@ class GPT2Block(nn.Module):
                 f"but got `n_embd = {n_embd}` and `ffn_hidden = {ffn_hidden}`."
             )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    # def forward(self, x: torch.Tensor) -> torch.Tensor:
+    #     """
+    #     Forward pass of the GPT2Block.
+
+    #     Args:
+    #         x (torch.Tensor): Input tensor.
+
+    #     Returns:
+    #         torch.Tensor: Output tensor.
+    #     """
+    #     x = x + self.attn(self.attention_norm(x))
+    #     x = x + self.mlp(self.ffn_norm(x))
+    #     return x
+
+    # LayerNorm Scaling
+    def forward(self, x: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
         """
         Forward pass of the GPT2Block.
 
         Args:
             x (torch.Tensor): Input tensor.
-
-        Returns:
-            torch.Tensor: Output tensor.
+            scale (float): LayerNorm Scaling factor. 
+                           Reduces variance growth in deep layers.
         """
-        x = x + self.attn(self.attention_norm(x))
-        x = x + self.mlp(self.ffn_norm(x))
+        # 
+        # Apply LNS: x = x + scale * SubLayer(Norm(x))
+        x = x + scale * self.attn(self.attention_norm(x))
+        x = x + scale * self.mlp(self.ffn_norm(x))
         return x
+
+    # Post-LN
+    # def forward(self, x: torch.Tensor) -> torch.Tensor:
+    #     """
+    #     Forward pass of the GPT2Block using Post-LN.
+        
+    #     Logic:
+    #     1. Calculate Attention on raw x
+    #     2. Add Residual
+    #     3. Normalize result
+    #     """
+    #     # Block 1: Attention
+    #     # Note: We pass 'x' directly to attn, then add, then norm
+    #     residual = x
+    #     x = self.attn(x)        # 1. Sub-layer
+    #     x = residual + x        # 2. Residual
+    #     x = self.attention_norm(x) # 3. Normalization
+
+    #     # Block 2: MLP
+    #     residual = x
+    #     x = self.mlp(x)         # 1. Sub-layer
+    #     x = residual + x        # 2. Residual
+    #     x = self.ffn_norm(x)    # 3. Normalization
+        
+    #     return x
 
 
 # ==========================================
 # Adaptive Router and Recursive Block
 # ==========================================
 
+# class AdaptiveRouter(nn.Module):
+#     def __init__(self, n_embd: int, bias: bool = True):
+#         super().__init__()
+#         self.net = nn.Sequential(
+#             nn.Linear(n_embd + 1, n_embd // 4, bias=bias),
+#             nn.GELU(),
+#             nn.Linear(n_embd // 4, 1, bias=bias)
+#         )
+
+#     def forward(self, x: torch.Tensor, step_normalized: float) -> torch.Tensor:
+#         B, T, _ = x.shape
+#         step_feat = torch.full((B, T, 1), step_normalized, device=x.device, dtype=x.dtype)
+#         return torch.sigmoid(self.net(torch.cat([x, step_feat], dim=-1))).squeeze(-1)
+
+# Linear
 class AdaptiveRouter(nn.Module):
     def __init__(self, n_embd: int, bias: bool = True):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(n_embd + 1, n_embd // 4, bias=bias),
-            nn.GELU(),
-            nn.Linear(n_embd // 4, 1, bias=bias)
-        )
+        self.net = nn.Linear(n_embd + 1, 1, bias=bias)
 
     def forward(self, x: torch.Tensor, step_normalized: float) -> torch.Tensor:
         B, T, _ = x.shape
         step_feat = torch.full((B, T, 1), step_normalized, device=x.device, dtype=x.dtype)
-        return torch.sigmoid(self.net(torch.cat([x, step_feat], dim=-1))).squeeze(-1)
+        logits = self.net(torch.cat([x, step_feat], dim=-1))
+        return torch.sigmoid(logits).squeeze(-1)
 
 
 class AdaptiveRecursiveBlock(nn.Module):
@@ -833,6 +886,7 @@ class AdaptiveRecursiveBlock(nn.Module):
         block: GPT2Block,
         adaptive_config: AdaptiveComputationConfig,
         n_embd: int,
+        layer_idx: int,
     ):
         super().__init__()
         self.block = block
@@ -840,6 +894,7 @@ class AdaptiveRecursiveBlock(nn.Module):
         self.max_loops = adaptive_config.max_loops
         self.router = AdaptiveRouter(n_embd)
         self.step_gate = nn.Parameter(torch.tensor([0.01]))
+        self.layer_idx = layer_idx
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B, T, _ = x.shape
@@ -855,7 +910,13 @@ class AdaptiveRecursiveBlock(nn.Module):
         denom = max(1, self.max_loops - 1)
 
         for step in range(self.max_loops):
-            h = self.block(h)
+            # LayerNorm Scaling factor
+            current_depth = (self.layer_idx * self.max_loops) + step + 1
+            # lns_scale = 1.0 / math.sqrt(current_depth)
+            lns_scale = 1.0 / current_depth
+            # ---
+            h = self.block(h, scale=lns_scale)
+            # ---
             step_norm = step / denom
             halt_prob = self.router(h, step_norm)
 
@@ -883,46 +944,6 @@ class AdaptiveRecursiveBlock(nn.Module):
 
         return accumulated_output, expected_steps
 
-# class AdaptiveRecursiveBlock(nn.Module):
-#     def __init__(
-#         self,
-#         block: GPT2Block,
-#         adaptive_config: AdaptiveComputationConfig,
-#         n_embd: int,
-#     ):
-#         super().__init__()
-#         self.block = block
-#         self.config = adaptive_config
-#         self.max_loops = adaptive_config.max_loops
-#         self.router = AdaptiveRouter(n_embd)
-#         self.step_gate = nn.Parameter(torch.tensor([0.01]))
-
-#     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-#         B, T, _ = x.shape
-#         device, dtype = x.device, x.dtype
-
-#         h = x
-#         output = torch.zeros_like(h)
-#         ponder_cost = torch.zeros(B, T, device=device, dtype=dtype)
-#         prob_remain = torch.ones(B, T, device=device, dtype=dtype)
-
-#         for step in range(self.max_loops):
-#             h = self.block(h)
-            
-#             step_norm = step / (self.max_loops - 1) if self.max_loops > 1 else 0.0
-#             halt_prob = self.router(h, step_norm)
-
-#             if step == self.max_loops - 1:
-#                 p_stop = prob_remain
-#             else:
-#                 p_stop = prob_remain * halt_prob
-
-#             output = output + h * p_stop.unsqueeze(-1)
-#             ponder_cost = ponder_cost + prob_remain
-#             prob_remain = prob_remain * (1 - halt_prob)
-
-#         return output, ponder_cost
-    
 
 class GPT2LLM(NNModel):
     def __init__(
@@ -1040,7 +1061,8 @@ class GPT2LLM(NNModel):
                 layers[str(layer_idx)] = AdaptiveRecursiveBlock(
                     block=block,
                     adaptive_config=adaptive_config,
-                    n_embd=n_embd
+                    n_embd=n_embd,
+                    layer_idx=layer_idx,
                 )
             else:
                 layers[str(layer_idx)] = block
@@ -1150,20 +1172,27 @@ class GPT2LLM(NNModel):
         step_gate_values = [] 
         per_layer_ponder_costs = []
 
-        for layer_idx in self.transformer.h:
-            layer_module = self.transformer.h[layer_idx]
+        sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
+        for layer_key in sorted_keys:
+            layer_module = self.transformer.h[layer_key]
+            layer_idx = int(layer_key)
 
             if self.use_adaptive:
+                # Adaptive block handles scaling internally
                 h, cost = layer_module(h)
-                cost_mean = cost.mean()
                 
+                # ... cost tracking code ...
+                cost_mean = cost.mean()
                 total_ponder_cost = total_ponder_cost + cost_mean
                 per_layer_ponder_costs.append(cost_mean)
-                
                 num_adaptive_layers += 1
                 step_gate_values.append(torch.tanh(layer_module.step_gate))
             else:
-                h = layer_module(h)
+                # --- LAYER NORM SCALING LOGIC (Standard) ---
+                # lns_scale = 1.0 / math.sqrt(layer_idx + 1)
+                lns_scale = 1.0 / (layer_idx + 1)
+                h = layer_module(h, scale=lns_scale)
+                # -------------------------------------------
 
         h = self.transformer.lm_head_norm(h) if hasattr(self.transformer, "lm_head_norm") else h
         logits = self.transformer.lm_head(h) if hasattr(self.transformer, "lm_head") else h

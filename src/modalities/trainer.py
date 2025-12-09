@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Callable, Optional
 
+import math
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
@@ -24,6 +25,182 @@ from modalities.training.training_progress import TrainingProgress
 from modalities.util import Aggregator, TimeRecorder, print_rank_0
 from modalities.utils.mfu import MFUCalculatorABC
 
+import random
+
+class RandomPonderScheduler:
+    def __init__(
+        self, 
+        model: torch.nn.Module, 
+        min_weight: float = -0.2, 
+        max_weight: float = 0.2,
+        seed: int = 42
+    ):
+        """
+        Random Baseline: Samples a weight uniformly between min and max at every step.
+        """
+        self.model = model
+        self.min_weight = min_weight
+        self.max_weight = max_weight
+        self.rng = random.Random(seed)
+        
+        # Unwrap FSDP if necessary
+        if isinstance(model, FSDP):
+             self.config_module = model.module
+        else:
+             self.config_module = model
+
+    def step(self, global_step: int) -> float:
+        # Uniform sample
+        weight = self.rng.uniform(self.min_weight, self.max_weight)
+        
+        # Update model config in-place
+        if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
+            self.config_module.adaptive_config.ponder_penalty_weight = weight
+            
+        return weight
+
+
+class AsymmetricPonderScheduler:
+    def __init__(
+        self, 
+        model: torch.nn.Module, 
+        steps_per_cycle: int, 
+        base_amplitude: float = 0.05, 
+        negative_damping: float = 0.2
+    ):
+        """
+        Args:
+            model: The model containing the adaptive_config.
+            steps_per_cycle: Length of one full wave (e.g., 1000 steps).
+            base_amplitude: The max positive penalty (e.g., 0.05).
+            negative_damping: Multiplier when wave is negative. 
+                              0.2 means the max reward is only 0.05 * 0.2 = -0.01.
+        """
+        self.model = model
+        self.steps_per_cycle = steps_per_cycle
+        self.base_amplitude = base_amplitude
+        self.negative_damping = negative_damping
+        
+        # Unwrap FSDP if necessary to get to the config
+        if isinstance(model, FSDP):
+             self.config_module = model.module
+        else:
+             self.config_module = model
+
+    def step(self, global_step: int) -> float:
+        # 1. Standard Cosine: oscillates between +1.0 and -1.0
+        cos_val = math.cos(2 * math.pi * global_step / self.steps_per_cycle)
+        
+        # 2. Calculate raw weight
+        weight = self.base_amplitude * cos_val
+        
+        # 3. Apply Asymmetry (The "Cheating" Mitigation)
+        if weight < 0:
+            weight = weight * self.negative_damping
+            
+        # Update model config in-place
+        # We check hasattr because the model might be wrapped or not have the config initialized yet
+        if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
+            self.config_module.adaptive_config.ponder_penalty_weight = weight
+            
+        return weight
+    
+
+class CycleThenConstantPonderScheduler:
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        steps_per_cycle: int,
+        base_amplitude: float = 0.05,
+        negative_damping: float = 0.2,
+        cycle_steps: int = 1000,
+        constant_value: float = 0.0,
+    ):
+        self.model = model
+        self.steps_per_cycle = steps_per_cycle
+        self.base_amplitude = base_amplitude
+        self.negative_damping = negative_damping
+        self.cycle_steps = cycle_steps
+        self.constant_value = constant_value
+        
+        if isinstance(model, FSDP):
+            self.config_module = model.module
+        else:
+            self.config_module = model
+
+    def step(self, global_step: int) -> float:
+        if global_step < self.cycle_steps:
+            cos_val = math.cos(2 * math.pi * global_step / self.steps_per_cycle)
+            weight = self.base_amplitude * cos_val
+            if weight < 0:
+                weight = weight * self.negative_damping
+        else:
+            weight = self.constant_value
+            
+        if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
+            self.config_module.adaptive_config.ponder_penalty_weight = weight
+            
+        return weight    
+
+
+class DecreasingFrequencyPonderScheduler:
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        initial_steps_per_cycle: int,
+        frequency_decay_power: float = 0.75,
+        base_amplitude: float = 0.05,
+        negative_damping: float = 0.2,
+    ):
+        """
+        Decreasing Frequency Scheduler (Chirp).
+        The cycles start fast and gradually become longer (slower frequency).
+
+        Args:
+            model: The model containing the adaptive_config.
+            initial_steps_per_cycle: The length (in steps) of the very first cycle.
+            frequency_decay_power: A float between 0.0 and 1.0. 
+                                   - 1.0 = Constant frequency (standard cosine).
+                                   - 0.5 = Cycle length grows linearly over time.
+                                   - Lower values cause the frequency to drop faster.
+            base_amplitude: The max positive penalty.
+            negative_damping: Multiplier when wave is negative.
+        """
+        self.model = model
+        self.initial_steps_per_cycle = initial_steps_per_cycle
+        self.frequency_decay_power = frequency_decay_power
+        self.base_amplitude = base_amplitude
+        self.negative_damping = negative_damping
+
+        # Unwrap FSDP if necessary
+        if isinstance(model, FSDP):
+            self.config_module = model.module
+        else:
+            self.config_module = model
+
+    def step(self, global_step: int) -> float:
+        # Avoid division by zero or log errors at step 0
+        if global_step == 0:
+            weight = self.base_amplitude
+        else:
+            # 1. Calculate the 'stretched' phase
+            # We normalize step by initial_period, then apply the power law.
+            # This makes the argument grow slower than 't', stretching the wave.
+            phase = (global_step / self.initial_steps_per_cycle) ** self.frequency_decay_power
+            
+            # 2. Compute Cosine
+            cos_val = math.cos(2 * math.pi * phase)
+            weight = self.base_amplitude * cos_val
+
+        # 3. Apply Asymmetry (Mitigation)
+        if weight < 0:
+            weight = weight * self.negative_damping
+
+        # Update model config in-place
+        if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
+            self.config_module.adaptive_config.ponder_penalty_weight = weight
+
+        return weight
 
 class ThroughputAggregationKeys(Enum):
     NUM_SAMPLES = "NUM_SAMPLES"
@@ -201,6 +378,47 @@ class Trainer:
         lr_scheduler = app_state.lr_scheduler
         model.train()
 
+        # ==============================================================================
+        # SCHEDULER SELECTION
+        scheduler_type = "decreasing"  # Options: "random", "constant_cycle", "decreasing", "asymmetric"
+        
+        if scheduler_type == "random":
+            ponder_scheduler = RandomPonderScheduler(
+                model=model,
+                min_weight=-0.1, 
+                max_weight=0.2,
+                seed=42 + self.global_rank 
+            )
+        elif scheduler_type == "decreasing":
+            # STARTS fast (short cycles) and slows down.
+            ponder_scheduler = DecreasingFrequencyPonderScheduler(
+                model=model,
+                initial_steps_per_cycle=10,
+                frequency_decay_power=0.99,
+                base_amplitude=0.3,
+                negative_damping=0.2
+            )
+        elif scheduler_type == "constant_cycle":
+            ponder_scheduler = CycleThenConstantPonderScheduler(
+                model=model,
+                steps_per_cycle=10, 
+                base_amplitude=0.3, 
+                negative_damping=0.2,
+                cycle_steps=1000,
+                constant_value=0.01
+            )
+        else:
+            # Default Asymmetric Cosine
+            ponder_scheduler = AsymmetricPonderScheduler(
+                model=model,
+                steps_per_cycle=1000, 
+                base_amplitude=0.3, 
+                negative_damping=0.2
+            )
+            
+        current_ponder_weight = 0.0
+        # ==============================================================================
+
         cumulated_losses = self._reset_tracked_losses()
         
         # Track loss components separately
@@ -241,6 +459,12 @@ class Trainer:
         num_batches_todo = num_steps_todo * self.gradient_acc_steps
         # Because we might resume training, we add the starting batch id of the data loader
         for _, (micro_batch_id, batch) in zip(range(num_batches_todo), enumerate(train_loader)):
+            
+            # --- Update Ponder Weight ---
+            # Update the weight based on total steps seen
+            current_ponder_weight = ponder_scheduler.step(training_progress.num_seen_steps_total)
+            # ----------------------------
+
             # Train single batch
             (
                 step_performed,
@@ -402,6 +626,8 @@ class Trainer:
                     "train/ponder_cost_avg": ResultItem(train_ponder_cost_avg, 2),
                     "train/normalized_steps_avg": ResultItem(train_normalized_steps_avg, 3),
                     "train/step_gate_avg": ResultItem(train_step_gate_avg, 4),
+                    # --- [Log current weight to check scheduler] ---
+                    "train/ponder_weight": ResultItem(torch.tensor(current_ponder_weight), 4),
                 }
 
                 for i, cost_val in enumerate(synced_layer_costs):
@@ -461,6 +687,7 @@ class Trainer:
             # we start the time recoder here again to also capture the time spend loading
             # via the dataloader.
             forward_backward_time_recorder.start()
+
 
     def _reset_tracked_losses(self):
         # Initializes and returns a tensor representing the cumulated loss and gradient norm.
