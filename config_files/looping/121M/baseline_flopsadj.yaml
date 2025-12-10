@@ -255,7 +255,7 @@ model_raw:
     sequence_length: ${settings.step_profile.sequence_length}
     prediction_key: ${loss_fn.config.prediction_key}
     vocab_size: 128256
-    n_layer: 12
+    n_layer: 24
     n_head_q: 12
     n_head_kv: 12
     ffn_hidden: 3072
@@ -293,8 +293,8 @@ model_raw:
         normalized_shape: 768
         eps: 1.0e-05
     adaptive_config:
-      enable_adaptive: true
-      max_loops: 3
+      enable_adaptive: false
+      max_loops: 1
       halt_threshold: 0.99
       ponder_penalty_weight: 0.0
 

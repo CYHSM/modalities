@@ -879,6 +879,17 @@ class AdaptiveRouter(nn.Module):
         logits = self.net(torch.cat([x, step_feat], dim=-1))
         return torch.sigmoid(logits).squeeze(-1)
 
+# # Without step feature, roughly 0.04 (ce) worse at step 3200
+# class AdaptiveRouter(nn.Module):
+#     def __init__(self, n_embd: int, bias: bool = True):
+#         super().__init__()
+#         self.net = nn.Linear(n_embd, 1, bias=bias)
+
+#     def forward(self, x: torch.Tensor, step_normalized: float) -> torch.Tensor:
+#         B, T, _ = x.shape
+#         logits = self.net(x)
+#         return torch.sigmoid(logits).squeeze(-1)
+
 
 class AdaptiveRecursiveBlock(nn.Module):
     def __init__(
