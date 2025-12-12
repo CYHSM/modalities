@@ -550,7 +550,7 @@ class Trainer:
         if scheduler_type == "constant":
             ponder_scheduler = ConstantPonderScheduler(
                 model=model,
-                constant_value=0.01,
+                constant_value=0,
             )
         elif scheduler_type == "random":
             ponder_scheduler = RandomPonderScheduler(
