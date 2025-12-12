@@ -6,6 +6,7 @@ from typing import Annotated, Optional, overload
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from pydantic import BaseModel, Field, model_validator, validator
 
 from modalities.config.lookup_enum import LookupEnum
@@ -871,12 +872,12 @@ class GPT2Block(nn.Module):
 class AdaptiveRouter(nn.Module):
     def __init__(self, n_embd: int, bias: bool = True):
         super().__init__()
-        self.net = nn.Linear(n_embd + 1, 1, bias=bias)
+        self.net = nn.Linear(n_embd + 2, 1, bias=bias)  # +2 for step_norm and cos_sim
 
-    def forward(self, x: torch.Tensor, step_normalized: float) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, step_normalized: float, cos_sim: torch.Tensor) -> torch.Tensor:
         B, T, _ = x.shape
         step_feat = torch.full((B, T, 1), step_normalized, device=x.device, dtype=x.dtype)
-        logits = self.net(torch.cat([x, step_feat], dim=-1))
+        logits = self.net(torch.cat([x, step_feat, cos_sim], dim=-1))
         return torch.sigmoid(logits).squeeze(-1)
 
 # # Without step feature, roughly 0.04 (ce) worse at step 3200
@@ -907,7 +908,7 @@ class AdaptiveRecursiveBlock(nn.Module):
         self.step_gate = nn.Parameter(torch.tensor([0.01]))
         self.layer_idx = layer_idx
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, T, _ = x.shape
         
         h = x
@@ -916,6 +917,7 @@ class AdaptiveRecursiveBlock(nn.Module):
         # State tracking
         prob_remain = torch.ones(B, T, device=x.device, dtype=x.dtype)
         expected_steps = torch.zeros(B, T, device=x.device, dtype=x.dtype)
+        total_cos_sim = torch.zeros(B, T, device=x.device, dtype=x.dtype)
         
         # Denominator for normalization (prevent div by zero if max_loops=1)
         denom = max(1, self.max_loops - 1)
@@ -925,11 +927,18 @@ class AdaptiveRecursiveBlock(nn.Module):
             current_depth = (self.layer_idx * self.max_loops) + step + 1
             # lns_scale = 1.0 / math.sqrt(current_depth)
             lns_scale = 1.0 / current_depth
+            
+            # Store previous h for cosine similarity
+            h_prev = h
             # ---
             h = self.block(h, scale=lns_scale)
             # ---
+            
+            # Compute cosine similarity between current and previous hidden state
+            cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8).unsqueeze(-1)
+            
             step_norm = step / denom
-            halt_prob = self.router(h, step_norm)
+            halt_prob = self.router(h, step_norm, cos_sim)
 
             if step == self.max_loops - 1:
                 # Last step: strictly halt all remaining probability
@@ -941,6 +950,7 @@ class AdaptiveRecursiveBlock(nn.Module):
 
             accumulated_output = accumulated_output + (h * p_stop_here.unsqueeze(-1))
             expected_steps = expected_steps + p_stop_here * (step + 1)
+            total_cos_sim = total_cos_sim + (cos_sim.squeeze(-1) * p_stop_here)
             
             if not self.training:
                 # We check if the maximum remaining probability in the batch is negligible
@@ -952,8 +962,10 @@ class AdaptiveRecursiveBlock(nn.Module):
         # effectively treating the current state as the final state for the remaining mass.
         if not self.training and prob_remain.sum() > 0:
             accumulated_output = accumulated_output + (h * prob_remain.unsqueeze(-1))
+            final_cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8)
+            total_cos_sim = total_cos_sim + (prob_remain * final_cos_sim)
 
-        return accumulated_output, expected_steps
+        return accumulated_output, expected_steps, total_cos_sim
 
 
 class GPT2LLM(NNModel):
@@ -1182,6 +1194,7 @@ class GPT2LLM(NNModel):
         num_adaptive_layers = 0
         step_gate_values = [] 
         per_layer_ponder_costs = []
+        per_layer_cos_sims = []
 
         sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
         for layer_key in sorted_keys:
@@ -1190,12 +1203,14 @@ class GPT2LLM(NNModel):
 
             if self.use_adaptive:
                 # Adaptive block handles scaling internally
-                h, cost = layer_module(h)
+                h, cost, cos_sim = layer_module(h)
                 
                 # ... cost tracking code ...
                 cost_mean = cost.mean()
+                sim_mean = cos_sim.mean()
                 total_ponder_cost = total_ponder_cost + cost_mean
                 per_layer_ponder_costs.append(cost_mean)
+                per_layer_cos_sims.append(sim_mean)
                 num_adaptive_layers += 1
                 step_gate_values.append(torch.tanh(layer_module.step_gate))
             else:
@@ -1218,6 +1233,7 @@ class GPT2LLM(NNModel):
             weighted_ponder_loss = (normalized_steps * self.adaptive_config.ponder_penalty_weight).to(logits.dtype)
             avg_step_gate = torch.mean(torch.stack(step_gate_values)) if step_gate_values else torch.tensor(0.0, device=device)
             layer_costs_tensor = torch.stack(per_layer_ponder_costs) if per_layer_ponder_costs else torch.tensor([], device=device)
+            layer_sims_tensor = torch.stack(per_layer_cos_sims) if per_layer_cos_sims else torch.tensor([], device=device)
 
             return {
                 "logits": logits,
@@ -1227,6 +1243,7 @@ class GPT2LLM(NNModel):
                 "normalized_steps": normalized_steps,
                 "step_gate_mean": avg_step_gate,
                 "per_layer_ponder_costs": layer_costs_tensor,
+                "per_layer_cos_sims": layer_sims_tensor,
             }
         
         return logits
