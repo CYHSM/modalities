@@ -95,6 +95,105 @@ class RandomPonderScheduler:
         return weight
 
 
+class ConstantPonderScheduler:
+    def __init__(self, model: torch.nn.Module, constant_value: float = 0.0):
+        self.constant_value = constant_value
+        self.config_module = model.module if isinstance(model, FSDP) else model
+
+    def step(self, global_step: int) -> float:
+        if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
+            self.config_module.adaptive_config.ponder_penalty_weight = self.constant_value
+        return self.constant_value
+
+
+class SimpleLinearScheduler:
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        total_train_steps: int,
+        start_weight: float = -0.01,
+        end_weight: float = 0.01,
+    ):
+        """
+        Linearly interpolates from start_weight (reward) to end_weight (penalty).
+        """
+        self.total_train_steps = total_train_steps
+        self.start_weight = start_weight
+        self.end_weight = end_weight
+        
+        # Unwrap FSDP if necessary
+        if isinstance(model, FSDP):
+            self.config_module = model.module
+        else:
+            self.config_module = model
+
+    def step(self, global_step: int) -> float:
+        # Avoid division by zero if total_train_steps is 0 (unlikely but safe)
+        if self.total_train_steps == 0:
+            return self.end_weight
+
+        progress = min(1.0, global_step / self.total_train_steps)
+        
+        # Linear interpolation
+        weight = self.start_weight + progress * (self.end_weight - self.start_weight)
+        
+        # Update config
+        if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
+            self.config_module.adaptive_config.ponder_penalty_weight = weight
+            
+        return weight
+
+
+class NegativeStartAsymmetricPonderScheduler:
+    def __init__(
+        self, 
+        model: torch.nn.Module, 
+        steps_per_cycle: int, 
+        base_amplitude: float = 0.05, 
+        negative_damping: float = 0.2
+    ):
+        """
+        Inverse Asymmetric Scheduler:
+        Starts at the negative trough (Reward) instead of the positive peak (Penalty).
+        
+        Math:
+        W(t) = -1 * Amplitude * cos(2pi * t / T)
+        
+        At t=0:
+        Weight = -Amplitude (Negative). 
+        This is immediately damped by 'negative_damping'.
+        """
+        self.model = model
+        self.steps_per_cycle = steps_per_cycle
+        self.base_amplitude = base_amplitude
+        self.negative_damping = negative_damping
+        
+        # Unwrap FSDP if necessary
+        if isinstance(model, FSDP):
+             self.config_module = model.module
+        else:
+             self.config_module = model
+
+    def step(self, global_step: int) -> float:
+        # 1. Standard Cosine: oscillates between +1.0 and -1.0
+        cos_val = math.cos(2 * math.pi * global_step / self.steps_per_cycle)
+        
+        # 2. Invert direction: Multiply by -1.0
+        # At step 0, cos is 1.0, so weight becomes -base_amplitude.
+        weight = -1.0 * self.base_amplitude * cos_val
+        
+        # 3. Apply Asymmetry (Damping the negative reward)
+        # Since we start negative, this damping applies immediately at step 0.
+        if weight < 0:
+            weight = weight * self.negative_damping
+            
+        # Update model config in-place
+        if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
+            self.config_module.adaptive_config.ponder_penalty_weight = weight
+            
+        return weight
+
+
 class AsymmetricPonderScheduler:
     def __init__(
         self, 
@@ -184,56 +283,29 @@ class DampedOscillationPonderScheduler:
         model: torch.nn.Module,
         total_train_steps: int,
         steps_per_cycle: int,
-        start_amplitude: float = 0.2,
-        final_target_weight: float = 0.01,
-        negative_damping: float = 0.2,
+        amplitude: float = 0.2,
     ):
         """
-        Damped Oscillation:
-        Oscillates around 'final_target_weight'. The amplitude of the oscillation
-        linearly decreases from 'start_amplitude' to 0 over 'total_train_steps'.
+        Symmetric damped oscillation around 0.
+        Starts at -amplitude, oscillates with decreasing amplitude, ends at 0.
         
-        Formula:
-        W(t) = target + (start_amp * (1 - t/T)) * cos(2pi * t / cycle)
+        W(t) = -amplitude * (1 - t/T) * cos(2π * t / cycle)
         """
         self.model = model
         self.total_train_steps = total_train_steps
         self.steps_per_cycle = steps_per_cycle
-        self.start_amplitude = start_amplitude
-        self.final_target_weight = final_target_weight
-        self.negative_damping = negative_damping
-
-        # Unwrap FSDP if necessary
-        if isinstance(model, FSDP):
-            self.config_module = model.module
-        else:
-            self.config_module = model
+        self.amplitude = amplitude
+        self.config_module = model.module if isinstance(model, FSDP) else model
 
     def step(self, global_step: int) -> float:
-        # 1. Calculate progress (0.0 to 1.0)
         progress = min(1.0, global_step / self.total_train_steps)
-        
-        # 2. Calculate current Amplitude (Linear Decay)
-        # At step 0: amplitude = start_amplitude
-        # At last step: amplitude = 0
-        current_amplitude = self.start_amplitude * (1.0 - progress)
-        
-        # 3. Calculate Oscillation
-        cos_val = math.cos(2 * math.pi * global_step / self.steps_per_cycle)
-        
-        # 4. Combine: Center it on the target weight
-        raw_weight = self.final_target_weight + (current_amplitude * cos_val)
-        
-        # 5. Apply Asymmetry (Mitigation for "Cheating")
-        # If the oscillation swings below 0, we dampen it so the reward isn't too huge.
-        if raw_weight < 0:
-            raw_weight = raw_weight * self.negative_damping
+        current_amplitude = self.amplitude * (1.0 - progress)
+        weight = -current_amplitude * math.cos(2 * math.pi * global_step / self.steps_per_cycle)
 
-        # Update model config
         if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
-            self.config_module.adaptive_config.ponder_penalty_weight = raw_weight
+            self.config_module.adaptive_config.ponder_penalty_weight = weight
 
-        return raw_weight
+        return weight
 
 
 class DecreasingFrequencyPonderScheduler:
@@ -473,14 +545,34 @@ class Trainer:
 
         # ==============================================================================
         # SCHEDULER SELECTION
-        scheduler_type = "asymmetric"  # Options: "random", "constant_cycle", "decreasing", "asymmetric"
+        scheduler_type = "constant"  # Options: "random", "constant_cycle", "decreasing", "asymmetric"
         
-        if scheduler_type == "random":
+        if scheduler_type == "constant":
+            ponder_scheduler = ConstantPonderScheduler(
+                model=model,
+                constant_value=0.01,
+            )
+        elif scheduler_type == "random":
             ponder_scheduler = RandomPonderScheduler(
                 model=model,
-                min_weight=-0.1, 
-                max_weight=0.2,
+                min_weight=1, 
+                max_weight=1,
                 seed=42 + self.global_rank 
+            )
+        elif scheduler_type == "linear":
+            ponder_scheduler = SimpleLinearScheduler(
+                model=model,
+                total_train_steps=self.num_target_steps,
+                start_weight=-0.01,
+                end_weight=0.01
+            )
+        elif scheduler_type == "negative_asymmetric":
+            # STARTS at negative (reward), moves to positive (penalty)
+            ponder_scheduler = NegativeStartAsymmetricPonderScheduler(
+                model=model,
+                steps_per_cycle=10, 
+                base_amplitude=0.3, 
+                negative_damping=0.2 # Damping applies immediately at step 0
             )
         elif scheduler_type == "decreasing":
             # STARTS fast (short cycles) and slows down.
@@ -503,11 +595,9 @@ class Trainer:
         elif scheduler_type == "damped_oscillation":
             ponder_scheduler = DampedOscillationPonderScheduler(
                 model=model,
+                steps_per_cycle=10,
                 total_train_steps=self.num_target_steps,
-                steps_per_cycle=100,
-                start_amplitude=0.2,
-                final_target_weight=0.01,
-                negative_damping=0.2
+                amplitude=0.2,
             )
         elif scheduler_type == "linear_decay":
             ponder_scheduler = LinearDecayPonderScheduler(
@@ -522,7 +612,7 @@ class Trainer:
                 model=model,
                 steps_per_cycle=10, 
                 base_amplitude=0.3, 
-                negative_damping=0.2
+                negative_damping=0.6
             )
             
         current_ponder_weight = 0.0
