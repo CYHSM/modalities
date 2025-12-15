@@ -926,7 +926,7 @@ class AdaptiveRecursiveBlock(nn.Module):
             # LayerNorm Scaling factor
             current_depth = (self.layer_idx * self.max_loops) + step + 1
             # lns_scale = 1.0 / math.sqrt(current_depth)
-            lns_scale = 1.0 / (current_depth * 3)
+            lns_scale = 1.0 / current_depth
             
             # Store previous h for cosine similarity
             h_prev = h
