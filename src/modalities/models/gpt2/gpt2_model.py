@@ -882,12 +882,12 @@ class GPT2Block(nn.Module):
 class AdaptiveRouter(nn.Module):
     def __init__(self, n_embd: int, bias: bool = True):
         super().__init__()
-        self.net = nn.Linear(n_embd + 2, 1, bias=bias)  # +2 for step_norm and cos_sim
+        self.net = nn.Linear(n_embd + 1, 1, bias=bias)
 
-    def forward(self, x: torch.Tensor, step_normalized: float, cos_sim: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, step_normalized: float) -> torch.Tensor:
         B, T, _ = x.shape
         step_feat = torch.full((B, T, 1), step_normalized, device=x.device, dtype=x.dtype)
-        logits = self.net(torch.cat([x, step_feat, cos_sim], dim=-1))
+        logits = self.net(torch.cat([x, step_feat], dim=-1))
         return torch.sigmoid(logits).squeeze(-1)
 
 # # Without step feature, roughly 0.04 (ce) worse at step 3200
@@ -948,7 +948,7 @@ class AdaptiveRecursiveBlock(nn.Module):
             cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8).unsqueeze(-1)
             
             step_norm = step / denom
-            halt_prob = self.router(h, step_norm, cos_sim)
+            halt_prob = self.router(h, step_norm)
 
             if step == self.max_loops - 1:
                 # Last step: strictly halt all remaining probability
