@@ -834,50 +834,6 @@ class GPT2Block(nn.Module):
         x = x + scale * self.mlp(self.ffn_norm(x))
         return x
 
-    # Post-LN
-    # def forward(self, x: torch.Tensor) -> torch.Tensor:
-    #     """
-    #     Forward pass of the GPT2Block using Post-LN.
-        
-    #     Logic:
-    #     1. Calculate Attention on raw x
-    #     2. Add Residual
-    #     3. Normalize result
-    #     """
-    #     # Block 1: Attention
-    #     # Note: We pass 'x' directly to attn, then add, then norm
-    #     residual = x
-    #     x = self.attn(x)        # 1. Sub-layer
-    #     x = residual + x        # 2. Residual
-    #     x = self.attention_norm(x) # 3. Normalization
-
-    #     # Block 2: MLP
-    #     residual = x
-    #     x = self.mlp(x)         # 1. Sub-layer
-    #     x = residual + x        # 2. Residual
-    #     x = self.ffn_norm(x)    # 3. Normalization
-        
-    #     return x
-
-
-# ==========================================
-# Adaptive Router and Recursive Block
-# ==========================================
-
-# class AdaptiveRouter(nn.Module):
-#     def __init__(self, n_embd: int, bias: bool = True):
-#         super().__init__()
-#         self.net = nn.Sequential(
-#             nn.Linear(n_embd + 1, n_embd // 4, bias=bias),
-#             nn.GELU(),
-#             nn.Linear(n_embd // 4, 1, bias=bias)
-#         )
-
-#     def forward(self, x: torch.Tensor, step_normalized: float) -> torch.Tensor:
-#         B, T, _ = x.shape
-#         step_feat = torch.full((B, T, 1), step_normalized, device=x.device, dtype=x.dtype)
-#         return torch.sigmoid(self.net(torch.cat([x, step_feat], dim=-1))).squeeze(-1)
-
 # Linear
 class AdaptiveRouter(nn.Module):
     def __init__(self, n_embd: int, bias: bool = True):
@@ -890,18 +846,7 @@ class AdaptiveRouter(nn.Module):
         logits = self.net(torch.cat([x, step_feat], dim=-1))
         return torch.sigmoid(logits).squeeze(-1)
 
-# # Without step feature, roughly 0.04 (ce) worse at step 3200
-# class AdaptiveRouter(nn.Module):
-#     def __init__(self, n_embd: int, bias: bool = True):
-#         super().__init__()
-#         self.net = nn.Linear(n_embd, 1, bias=bias)
-
-#     def forward(self, x: torch.Tensor, step_normalized: float) -> torch.Tensor:
-#         B, T, _ = x.shape
-#         logits = self.net(x)
-#         return torch.sigmoid(logits).squeeze(-1)
-
-
+# With weighting by step
 class AdaptiveRecursiveBlock(nn.Module):
     def __init__(
         self,
@@ -917,6 +862,7 @@ class AdaptiveRecursiveBlock(nn.Module):
         self.router = AdaptiveRouter(n_embd)
         self.step_gate = nn.Parameter(torch.tensor([0.01]))
         self.layer_idx = layer_idx
+        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0)) 
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         B, T, _ = x.shape
@@ -933,15 +879,21 @@ class AdaptiveRecursiveBlock(nn.Module):
         denom = max(1, self.max_loops - 1)
 
         for step in range(self.max_loops):
-            # LayerNorm Scaling factor
+            # Learned Scaling factor per step
+            learnable = F.softplus(self.loop_scales[step])
+
+            # # LayerNorm Scaling factor
             current_depth = (self.layer_idx * self.max_loops) + step + 1
             # lns_scale = 1.0 / math.sqrt(current_depth)
-            lns_scale = 1.0 / current_depth
+            # lns_scale = 1.0 / current_depth
+            lns_scale = 1.0
+
+
+            current_scale = learnable * lns_scale
             
-            # Store previous h for cosine similarity
             h_prev = h
             # ---
-            h = self.block(h, scale=lns_scale)
+            h = self.block(h, scale=current_scale)
             # ---
             
             # Compute cosine similarity between current and previous hidden state
@@ -975,7 +927,53 @@ class AdaptiveRecursiveBlock(nn.Module):
             final_cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8)
             total_cos_sim = total_cos_sim + (prob_remain * final_cos_sim)
 
-        return accumulated_output, expected_steps, total_cos_sim
+        return accumulated_output, expected_steps, total_cos_sim, self.loop_scales.detach()
+
+# No weighting
+# class AdaptiveRecursiveBlock(nn.Module):
+#     def __init__(
+#         self,
+#         block: GPT2Block,
+#         adaptive_config: AdaptiveComputationConfig,
+#         n_embd: int,
+#         layer_idx: int,
+#     ):
+#         super().__init__()
+#         self.block = block
+#         self.config = adaptive_config
+#         self.max_loops = adaptive_config.max_loops
+#         self.layer_idx = layer_idx
+        
+#         # Learned scales for stability
+#         self.loop_scales = nn.Parameter(torch.full((self.max_loops,), 0.1))
+        
+#         # Dummy parameter to keep GPT2LLM logging happy
+#         self.step_gate = nn.Parameter(torch.tensor([0.0])) 
+
+#     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+#         B, T, _ = x.shape
+#         h = x
+        
+#         # Initialize sum
+#         total_cos_sim = torch.zeros(B, T, device=x.device, dtype=x.dtype)
+
+#         for step in range(self.max_loops):
+#             current_scale = self.loop_scales[step]
+#             h_prev = h
+            
+#             # Apply Block
+#             h = self.block(h, scale=current_scale)
+            
+#             # Calculate raw similarity: 1.0 = identical, 0.0 = orthogonal
+#             # We just accumulate this value. 
+#             # Max possible value = max_loops (perfect convergence)
+#             cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8)
+#             total_cos_sim = total_cos_sim + cos_sim
+
+#         # Return: Last H, Constant Steps, and the Convergence Sum
+#         expected_steps = torch.full((B, T), float(self.max_loops), device=x.device, dtype=x.dtype)
+        
+#         return h, expected_steps, total_cos_sim
 
 
 class GPT2LLM(NNModel):
@@ -1035,7 +1033,7 @@ class GPT2LLM(NNModel):
         weight_decay_groups = {
             "linear": [".attn", ".mlp", ".lm_head.weight", ".router"],
             "embedding": [".wte", ".wpe", ".step_emb"],
-            "layernorm": [".attention_norm", ".ffn_norm", ".lm_head_norm", ".step_gate"],
+            "layernorm": [".attention_norm", ".ffn_norm", ".lm_head_norm", ".step_gate", ".loop_scales"],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
         self.sample_key = sample_key
@@ -1205,6 +1203,7 @@ class GPT2LLM(NNModel):
         step_gate_values = [] 
         per_layer_ponder_costs = []
         per_layer_cos_sims = []
+        per_layer_loop_scales = []
 
         sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
         for layer_key in sorted_keys:
@@ -1213,7 +1212,7 @@ class GPT2LLM(NNModel):
 
             if self.use_adaptive:
                 # Adaptive block handles scaling internally
-                h, cost, cos_sim = layer_module(h)
+                h, cost, cos_sim, scales = layer_module(h)
                 
                 # ... cost tracking code ...
                 cost_mean = cost.mean()
@@ -1223,6 +1222,7 @@ class GPT2LLM(NNModel):
                 per_layer_cos_sims.append(sim_mean)
                 num_adaptive_layers += 1
                 step_gate_values.append(torch.tanh(layer_module.step_gate))
+                per_layer_loop_scales.append(scales)
             else:
                 # --- LAYER NORM SCALING LOGIC (Standard) ---
                 # lns_scale = 1.0 / math.sqrt(layer_idx + 1)
@@ -1254,6 +1254,7 @@ class GPT2LLM(NNModel):
                 "step_gate_mean": avg_step_gate,
                 "per_layer_ponder_costs": layer_costs_tensor,
                 "per_layer_cos_sims": layer_sims_tensor,
+                "loop_scales": torch.stack(per_layer_loop_scales) if per_layer_loop_scales else torch.tensor([], device=device),
             }
         
         return logits

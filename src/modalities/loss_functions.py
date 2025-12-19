@@ -107,6 +107,7 @@ class CLMCrossEntropyWithPonderLoss(Loss):
         self._last_step_gate_mean = None
         self._last_per_layer_ponder_costs = None
         self._last_per_layer_cos_sims = None
+        self._last_loop_scales = None
 
     def __call__(self, *args, **kwargs) -> torch.Tensor:
         labels, outputs = self._parse_arguments(args, kwargs)
@@ -120,6 +121,7 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             step_gate_mean = outputs.get("step_gate_mean", torch.tensor(0.0, device=lm_logits.device))
             per_layer_ponder_costs = outputs.get("per_layer_ponder_costs", None)
             per_layer_cos_sims = outputs.get("per_layer_cos_sims", None)
+            loop_scales = outputs.get("loop_scales", None) if isinstance(outputs, dict) else None 
         else:
             lm_logits = outputs
             ponder_loss = torch.tensor(0.0, device=lm_logits.device)
@@ -146,6 +148,7 @@ class CLMCrossEntropyWithPonderLoss(Loss):
         self._last_step_gate_mean = step_gate_mean.detach() if isinstance(step_gate_mean, torch.Tensor) else torch.tensor(0.0)
         self._last_per_layer_ponder_costs = per_layer_ponder_costs.detach() if per_layer_ponder_costs is not None else None
         self._last_per_layer_cos_sims = per_layer_cos_sims.detach() if per_layer_cos_sims is not None else None
+        self._last_loop_scales = loop_scales
         
         total_loss = ce_loss + ponder_loss
         
@@ -161,6 +164,7 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             "step_gate_mean": self._last_step_gate_mean if self._last_step_gate_mean is not None else torch.tensor(0.0),
             "per_layer_ponder_costs": self._last_per_layer_ponder_costs if self._last_per_layer_ponder_costs is not None else torch.tensor([]),
             "per_layer_cos_sims": self._last_per_layer_cos_sims if self._last_per_layer_cos_sims is not None else torch.tensor([]),
+            "loop_scales": self._last_loop_scales if self._last_loop_scales is not None else torch.tensor([]),
         }
 
     def _parse_arguments(

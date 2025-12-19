@@ -863,6 +863,14 @@ class Trainer:
                 for i, sim_val in enumerate(synced_layer_sims):
                     metrics[f"train/layer_{i}/cos_sim"] = ResultItem(sim_val, 4)
 
+                if hasattr(loss_fun, 'get_loss_components'):
+                    batch_scales = loss_fun.get_loss_components().get("loop_scales")
+                    if batch_scales is not None and batch_scales.numel() > 0:
+                        scales_cpu = batch_scales.cpu()
+                        for i, layer_scales in enumerate(scales_cpu):
+                            for j, val in enumerate(layer_scales):
+                                metrics[f"train/layer_{i}/loop_scale_{j}"] = ResultItem(val, 4)
+
                 gradient_norm_scores = []
                 mfu_score = torch.tensor(-1.0)
                 if self.mfu_calculator is not None:
