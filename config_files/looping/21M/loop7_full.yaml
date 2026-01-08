@@ -28,7 +28,7 @@ settings:
       instance_key: dp_degree
       pass_type: BY_REFERENCE
   training_target:
-    num_target_tokens: 13920501760 # 54564794368 divisible by (local_micro_batch_size * dp_degree * gradient_accumulation_steps)
+    num_target_tokens: 54564618240 # 54564794368 divisible by (local_micro_batch_size * dp_degree * gradient_accumulation_steps)
     num_target_steps:
       component_key: number_conversion
       variant_key: num_steps_from_num_tokens
@@ -1002,10 +1002,10 @@ model_raw:
     prediction_key: ${loss_fn.config.prediction_key}
     vocab_size: 50304
     n_layer: 12
-    n_head_q: 12
-    n_head_kv: 12
-    ffn_hidden: 3072
-    n_embd: 768
+    n_head_q: 4         # was 12
+    n_head_kv: 4         # was 12
+    ffn_hidden: 512     # was 3072
+    n_embd: 256          # was 768
     dropout: 0.0
     bias: false
     attention_config:
@@ -1026,21 +1026,21 @@ model_raw:
     attention_norm_config:
       norm_type: pytorch_rms_norm
       config:
-        normalized_shape: 768
+        normalized_shape: 256 # n_embd
         eps: 1.0e-05
     ffn_norm_config:
       norm_type: pytorch_rms_norm
       config:
-        normalized_shape: 768
+        normalized_shape: 256 # n_embd
         eps: 1.0e-05
     lm_head_norm_config:
       norm_type: pytorch_rms_norm
       config:
-        normalized_shape: 768
+        normalized_shape: 256 # n_embd
         eps: 1.0e-05
     adaptive_config:
       enable_adaptive: true
-      max_loops: 3
+      max_loops: 7
       halt_threshold: 0.99
       ponder_penalty_weight: 0.0
 
@@ -1055,7 +1055,7 @@ lr_scheduler:
     div_factor: 10
     final_div_factor: 1
     total_steps: ${settings.training_target.num_target_steps}
-    pct_start: 0.01
+    pct_start: 0.002
     anneal_strategy: cos
     last_epoch: ${settings.training_progress.last_step}
 

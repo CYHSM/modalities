@@ -78,7 +78,7 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
             mode=mode.value.lower(),
             dir=logging_directory,
             config=config,
-            settings=wandb.Settings(init_timeout=120),
+            settings=wandb.Settings(init_timeout=120, console="off"),
         )
 
         self.run.log_artifact(config_file_path, name=f"config_{wandb.run.id}", type="config")

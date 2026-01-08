@@ -228,6 +228,7 @@ class RotaryTransform(QueryKeyValueTransform):
             Tuple containing the modified query tensor, key tensor, and value tensor.
         """
         self._cos_cached, self._sin_cached = self._update_cos_sin_tables(k)
+        
         q = self.apply_rotary_pos_emb(q, self._cos_cached, self._sin_cached)
         k = self.apply_rotary_pos_emb(k, self._cos_cached, self._sin_cached)
 
@@ -860,7 +861,6 @@ class AdaptiveRecursiveBlock(nn.Module):
         self.config = adaptive_config
         self.max_loops = adaptive_config.max_loops
         self.router = AdaptiveRouter(n_embd)
-        self.step_gate = nn.Parameter(torch.tensor([0.01]))
         self.layer_idx = layer_idx
         self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0)) 
 
@@ -1033,7 +1033,7 @@ class GPT2LLM(NNModel):
         weight_decay_groups = {
             "linear": [".attn", ".mlp", ".lm_head.weight", ".router"],
             "embedding": [".wte", ".wpe", ".step_emb"],
-            "layernorm": [".attention_norm", ".ffn_norm", ".lm_head_norm", ".step_gate", ".loop_scales"],
+            "layernorm": [".attention_norm", ".ffn_norm", ".lm_head_norm", ".loop_scales"],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
         self.sample_key = sample_key
@@ -1221,7 +1221,6 @@ class GPT2LLM(NNModel):
                 per_layer_ponder_costs.append(cost_mean)
                 per_layer_cos_sims.append(sim_mean)
                 num_adaptive_layers += 1
-                step_gate_values.append(torch.tanh(layer_module.step_gate))
                 per_layer_loop_scales.append(scales)
             else:
                 # --- LAYER NORM SCALING LOGIC (Standard) ---

@@ -28,7 +28,7 @@ settings:
       instance_key: dp_degree
       pass_type: BY_REFERENCE
   training_target:
-    num_target_tokens: 13920501760 # 54564794368 divisible by (local_micro_batch_size * dp_degree * gradient_accumulation_steps)
+    num_target_tokens: 54564618240 # 54564794368 divisible by (local_micro_batch_size * dp_degree * gradient_accumulation_steps)
     num_target_steps:
       component_key: number_conversion
       variant_key: num_steps_from_num_tokens
@@ -901,7 +901,7 @@ checkpoint_saving:
       component_key: checkpoint_saving_strategy
       variant_key: save_k_most_recent_checkpoints_strategy
       config:
-        k: -1
+        k: 5
     checkpoint_saving_execution:
       component_key: checkpoint_saving_execution
       variant_key: dcp
@@ -1055,7 +1055,7 @@ lr_scheduler:
     div_factor: 10
     final_div_factor: 1
     total_steps: ${settings.training_target.num_target_steps}
-    pct_start: 0.01
+    pct_start: 0.002
     anneal_strategy: cos
     last_epoch: ${settings.training_progress.last_step}
 

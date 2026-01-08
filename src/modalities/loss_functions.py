@@ -131,6 +131,7 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             step_gate_mean = torch.tensor(0.0, device=lm_logits.device)
             per_layer_ponder_costs = None
             per_layer_cos_sims = None
+            loop_scales = None
 
         labels = labels.to(lm_logits.device)
         shift_logits = lm_logits.contiguous()
@@ -148,7 +149,7 @@ class CLMCrossEntropyWithPonderLoss(Loss):
         self._last_step_gate_mean = step_gate_mean.detach() if isinstance(step_gate_mean, torch.Tensor) else torch.tensor(0.0)
         self._last_per_layer_ponder_costs = per_layer_ponder_costs.detach() if per_layer_ponder_costs is not None else None
         self._last_per_layer_cos_sims = per_layer_cos_sims.detach() if per_layer_cos_sims is not None else None
-        self._last_loop_scales = loop_scales
+        self._last_loop_scales = loop_scales if loop_scales is not None else None
         
         total_loss = ce_loss + ponder_loss
         

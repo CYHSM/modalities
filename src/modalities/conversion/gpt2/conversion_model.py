@@ -1,40 +1,53 @@
+import warnings
+
 import torch
 import torch.nn as nn
 from tqdm import tqdm
 
+from modalities.checkpointing.convert_dcp_to_torch import load_dcp_config
+from modalities.config.config import ConfigDictType, PrecisionEnum, ProcessGroupBackendType
 from modalities.conversion.gpt2.configuration_gpt2 import GPT2Config
-from modalities.conversion.gpt2.modeling_gpt2 import GPT2DecoderLayer, GPT2ForCausalLM
-from modalities.models.components.layer_norms import LayerNormConfig
-from modalities.models.gpt2.gpt2_model import GPT2LLM, GPT2Block, PositionTypes
+from modalities.conversion.gpt2.modeling_gpt2 import GPT2DecoderLayer, GPT2ForCausalLM, AdaptiveDecoderLayer
+from modalities.models.gpt2.gpt2_model import (
+    GPT2LLM, 
+    GPT2Block, 
+    PositionTypes, 
+    AdaptiveRecursiveBlock,
+)
 from modalities.models.model import SwiGLU
 from modalities.models.utils import ModelTypeEnum, get_model_from_config
+from modalities.running_env.cuda_env import MultiProcessingCudaEnv
+from modalities.running_env.env_utils import PyTorchDtypes
 
 
-def convert_model_checkpoint(modalities_config: dict) -> tuple[GPT2ForCausalLM, GPT2LLM]:
+def convert_model_checkpoint(modalities_config: ConfigDictType) -> tuple[GPT2ForCausalLM, GPT2LLM]:
     """Converts the modalities model to a Huggingface transformers model.
        Both the loaded modalities model and the converted Huggingface model are returned
        so that they can be compared.
 
     Args:
-        modalities_config (dict): Modalities config dictionary.
+        modalities_config (ConfigDictType): Modalities config dictionary.
 
     Returns:
         tuple[GPT2ForCausalLM, GPT2LLM]: Converted Hugging Face model and the original modalities model.
     """
     gpt2_config = convert_model_config(modalities_config)
-    hf_model = GPT2ForCausalLM(gpt2_config).to(dtype=torch.bfloat16)
+    dtype = PrecisionEnum(
+        modalities_config["checkpointed_model"]["config"]["checkpoint_loading"]["config"]["precision"]
+    )
+    hf_model = GPT2ForCausalLM(gpt2_config).to(dtype=dtype.value)
     modalities_model = get_model_from_config(modalities_config, model_type=ModelTypeEnum.CHECKPOINTED_MODEL)
     _copy_weights_model(hf_model, modalities_model)
     return hf_model, modalities_model
 
 
-def convert_model_config(modalities_config: dict) -> GPT2Config:
+def convert_model_config(modalities_config: ConfigDictType) -> GPT2Config:
     """Converts the modalities model configuration to a Huggingface transformers configuration.
        For this the model_raw or model section of the modalities config is used.
        Corresponding entries are mapped to the Huggingface configuration.
 
     Args:
-        modalities_config (dict): Modalities config dictionary.
+        modalities_config (ConfigDictType): Modalities config dictionary.
 
     Returns:
         GPT2Config: Converted Huggingface model configuration.
@@ -42,7 +55,35 @@ def convert_model_config(modalities_config: dict) -> GPT2Config:
     config = modalities_config["model_raw" if "model_raw" in modalities_config else "model"]["config"]
     _check_conversion_criteria(config)
 
-    ffn_norm_key = "ffn_norm_config"
+    attention_type = _map_attention_type(config)
+    if attention_type != "sdpa":
+        warnings.warn(
+            f"transformers checkpoint will not save the attention implementation "
+            f"(set to {attention_type}) and use sdpa by default."
+        )
+
+    # Extract RMSNorm eps from any norm config (they should all be the same)
+    ffn_norm_config = config["ffn_norm_config"]["config"]
+    rms_norm_eps = ffn_norm_config.get("eps", 1e-05)
+    
+    # Extract QK norm config if present
+    attention_config = config.get("attention_config", {})
+    qk_norm_config = attention_config.get("qk_norm_config")
+    use_qk_norm = qk_norm_config is not None
+    qk_norm_eps = qk_norm_config["config"].get("eps", 1e-05) if use_qk_norm else 1e-05
+
+    # Extract adaptive computation config if present
+    adaptive_config = config.get("adaptive_config")
+    enable_adaptive = False
+    max_loops = 10
+    halt_threshold = 0.99
+    ponder_penalty_weight = 0.01
+    
+    if adaptive_config is not None:
+        enable_adaptive = adaptive_config.get("enable_adaptive", False)
+        max_loops = adaptive_config.get("max_loops", 10)
+        halt_threshold = adaptive_config.get("halt_threshold", 0.99)
+        ponder_penalty_weight = adaptive_config.get("ponder_penalty_weight", 0.01)
 
     return GPT2Config(
         vocab_size=config["vocab_size"],
@@ -57,14 +98,32 @@ def convert_model_config(modalities_config: dict) -> GPT2Config:
         attention_bias=config["bias"],
         mlp_bias=config["bias"],
         hidden_act="silu",
-        layer_norm_eps=_get_layer_norm_value(config[ffn_norm_key]["config"], "eps"),
-        layer_norm_elementwise_affine=_get_layer_norm_value(config[ffn_norm_key]["config"], "elementwise_affine"),
-        layer_norm_bias=_get_layer_norm_value(config[ffn_norm_key]["config"], "bias"),
+        rms_norm_eps=rms_norm_eps,
         max_position_embeddings=config["sequence_length"],
         rope_theta=config["attention_config"]["qkv_transforms"][0]["config"]["base_freq"],
-        _attn_implementation=_map_attention_type(config),
-        output_attentions=False,
+        attn_implementation=attention_type,
+        # QK norm config
+        use_qk_norm=use_qk_norm,
+        qk_norm_eps=qk_norm_eps,
+        # Adaptive computation config
+        enable_adaptive=enable_adaptive,
+        max_loops=max_loops,
+        halt_threshold=halt_threshold,
+        ponder_penalty_weight=ponder_penalty_weight,
     )
+
+
+def check_converted_dcp_model(
+    hf_model_dir: str, dcp_dir: str, num_testruns: int, device_id_modalities: str | int, device_hf: str
+):
+    new_config: ConfigDictType = _build_single_node_dcp_config(dcp_dir)
+    hf_model = _load_hf_model_for_dcp_comparison(hf_model_dir, new_config, device_hf)
+    vocab_size: int = new_config["model_raw" if "model_raw" in new_config else "model"]["config"]["vocab_size"]
+    if isinstance(device_id_modalities, str):
+        device_id_modalities = int(device_id_modalities.replace("cuda:", ""))
+    with MultiProcessingCudaEnv(ProcessGroupBackendType.nccl, 0, 0, 1, 24570, device_id=device_id_modalities):
+        modalities_model = get_model_from_config(new_config, model_type=ModelTypeEnum.DCP_CHECKPOINTED_MODEL)
+        check_converted_model(hf_model, modalities_model, num_testruns=num_testruns, vocab_size=vocab_size)
 
 
 def check_converted_model(hf_model: GPT2ForCausalLM, modalities_model: GPT2LLM, num_testruns: int, vocab_size: int):
@@ -76,23 +135,131 @@ def check_converted_model(hf_model: GPT2ForCausalLM, modalities_model: GPT2LLM, 
         num_testruns (int): Number of test runs to perform.
         vocab_size (int): Vocabulary size of the model. (Required for generating random input tokens.)
     """
+    # Move to Float32 for verification to eliminate BF16 associativity errors
+    hf_model = hf_model.float()
+    modalities_model = modalities_model.float()
+    
+    # Ensure they are in Eval mode (to disable dropout randomness)
+    hf_model.eval()
+    modalities_model.eval()
+
     for _ in tqdm(range(num_testruns), desc="Testing converted model"):
         input_ids = torch.randint(0, vocab_size, (1, modalities_model.sequence_length), device=hf_model.device)
         inputs = {modalities_model.sample_key: input_ids.to(modalities_model.transformer.wte.weight.device)}
 
         with torch.no_grad():
-            llama_logits = hf_model(input_ids=input_ids).logits.to("cpu")
-            modalities_logits = modalities_model(inputs)[modalities_model.prediction_key].to("cpu")
+            hf_output = hf_model(input_ids=input_ids)
+            hf_logits = hf_output.logits.to("cpu")
+            
+            modalities_output = modalities_model(inputs)[modalities_model.prediction_key]
+            
+            # Handle adaptive compute output format
+            if isinstance(modalities_output, dict):
+                modalities_logits = modalities_output["logits"].to("cpu")
+            else:
+                modalities_logits = modalities_output.to("cpu")
 
-        assert llama_logits.shape == modalities_logits.shape
-        assert torch.equal(llama_logits, modalities_logits)
+        assert hf_logits.shape == modalities_logits.shape, (
+            f"Shape mismatch: HF {hf_logits.shape} vs Modalities {modalities_logits.shape}"
+        )
+        assert hf_logits.dtype == modalities_logits.dtype, (
+            f"Dtype mismatch: HF {hf_logits.dtype} vs Modalities {modalities_logits.dtype}"
+        )
+        # Put some better debug statements when logits dont match, like mean, median, max, min, etc.
+        if not torch.equal(hf_logits, modalities_logits):
+            print(f"Logits mismatch detected:")
+            print(f"  HF logits mean: {hf_logits.mean()}")
+            print(f"  Modalities logits mean: {modalities_logits.mean()}")
+            print(f"  HF logits max: {hf_logits.max()}")
+            print(f"  Modalities logits max: {modalities_logits.max()}")
+            print(f"  HF logits min: {hf_logits.min()}")
+            print(f"  Modalities logits min: {modalities_logits.min()}")
+            # Also some example slices
+            print(f"  HF logits slice [0, :5]: {hf_logits[0, :5]}")
+            print(f"  Modalities logits slice [0, :5]: {modalities_logits[0, :5]}")
+            # Also print the indices of where they differ and the values at those indices
+            # diff_indices = (hf_logits != modalities_logits).nonzero(as_tuple=False)
+            # for idx in diff_indices:
+            #     print(f"  Difference at index {idx.tolist()}: HF={hf_logits[tuple(idx)].item()}, Modalities={modalities_logits[tuple(idx)].item()}")
+
+        assert torch.equal(hf_logits, modalities_logits), "Logits mismatch between HF and modalities model"
 
 
-def _check_conversion_criteria(model_config: dict) -> None:
+def _build_single_node_dcp_config(dcp_dir: str) -> ConfigDictType:
+    """Builds a modalities config dictionary for loading a DCP checkpointed model on a single node.
+
+    Args:
+        dcp_dir (str): Directory containing the DCP checkpoint.
+
+    Returns:
+        ConfigDictType: New modalities config dictionary for loading the DCP checkpointed model.
+    """
+    _, dcp_config = load_dcp_config(dcp_dir)
+    model_key = "model_raw" if "model_raw" in dcp_config else "model"
+    new_config: ConfigDictType = {
+        "fsdp_model": dcp_config["fsdp_model"],
+        "initialized_model": dcp_config["initialized_model"],
+        model_key: dcp_config[model_key],
+    }
+    if "settings" in dcp_config:
+        new_config["settings"] = dcp_config["settings"]
+        new_config["settings"]["config_file_path"] = "converted_dcp_config.yaml"
+    if "dp_degree" in dcp_config:
+        new_config["dp_degree"] = dcp_config["dp_degree"]
+    if "optimizer" in dcp_config:
+        new_config["optimizer"] = dcp_config["optimizer"]
+    if "lr_scheduler" in dcp_config:
+        new_config["lr_scheduler"] = dcp_config["lr_scheduler"]
+    new_config["app_state"] = {
+        "component_key": "app_state",
+        "variant_key": "dcp",
+        "config": {
+            "raw_app_state": dcp_config["app_state_raw" if "app_state_raw" in dcp_config else "app_state"],
+            "checkpoint_dir_path": dcp_dir,
+        },
+    }
+    new_config["device_mesh"] = {
+        "component_key": "device_mesh",
+        "variant_key": "default",
+        "config": {
+            "device_type": "cuda",
+            "data_parallel_shard_degree": 1,
+            "world_size": 1,
+        },
+    }
+    new_config["fsdp_model"]["config"]["model"]["instance_key"] = model_key
+    new_config["initialized_model"]["config"]["model"] = {"instance_key": "fsdp_model", "pass_type": "BY_REFERENCE"}
+    return new_config
+
+
+def _load_hf_model_for_dcp_comparison(
+    hf_model_dir: str, dcp_modalities_config: ConfigDictType, device_hf: str
+) -> GPT2ForCausalLM:
+    # Need execution dtype of FSDP2 to get same outputs from model.
+    dtype = dcp_modalities_config["fsdp_model"]["config"]["mixed_precision_settings"]["param_dtype"]
+    hf_model: GPT2ForCausalLM = (
+        GPT2ForCausalLM.from_pretrained(hf_model_dir, local_files_only=True, trust_remote_code=True)
+        .to(device=device_hf)
+        .to(PyTorchDtypes(dtype).value)
+    )
+    # Need to match attention implementation
+    hf_model.config._attn_implementation = _map_attention_type(
+        dcp_modalities_config["model_raw" if "model_raw" in dcp_modalities_config else "model"]["config"]
+    )
+    # Rotary embedding frequencies are not downcasted in FSDP2.
+    # Therefore, we need to ensure they remain in the original precision.
+    hf_model.model.rotary_emb.inv_freq = hf_model.model.rotary_emb.original_inv_freq.to(
+        hf_model.model.rotary_emb.inv_freq.device
+    )
+
+    return hf_model
+
+
+def _check_conversion_criteria(model_config: ConfigDictType) -> None:
     """Checks that the modalities config fulfills criteria necessary for conversion
 
     Args:
-        model_config (dict): model or model_raw part of the Modalities config dictionary.
+        model_config (ConfigDictType): model or model_raw part of the Modalities config dictionary.
 
     Returns:
         None
@@ -101,27 +268,24 @@ def _check_conversion_criteria(model_config: dict) -> None:
     assert model_config["activation_type"] == "swiglu"
     assert model_config["attention_implementation"] in ["pytorch_flash", "manual"]
 
+    # Check that all norms use RMSNorm (either pytorch_rms_norm or rms_norm)
     norms = ["attention_norm_config", "ffn_norm_config", "lm_head_norm_config"]
+    valid_rms_norm_types = ["pytorch_rms_norm", "rms_norm"]
     for norm in norms:
-        assert model_config[norm]["norm_type"] == "layer_norm"
+        norm_type = model_config[norm]["norm_type"]
+        assert norm_type in valid_rms_norm_types, (
+            f"{norm} must use RMSNorm (got {norm_type})"
+        )
 
-    assert (
-        len(set(_get_layer_norm_value(model_config[norm]["config"], "bias") for norm in norms)) == 1
-    ), "All norms must have the same bias setting."
-    assert (
-        len(set(_get_layer_norm_value(model_config[norm]["config"], "elementwise_affine") for norm in norms)) == 1
-    ), "All norms must have the same elementwise_affine setting."
-    assert (
-        len(set(_get_layer_norm_value(model_config[norm]["config"], "eps") for norm in norms)) == 1
-    ), "All norms must have the same eps setting."
-
-
-def _get_layer_norm_value(config: dict, field: str) -> bool | float | int:
-    default = LayerNormConfig.model_fields[field].default
-    return config.get(field, default)
+    # Check that all norms have the same eps
+    eps_values = set()
+    for norm in norms:
+        eps = model_config[norm]["config"].get("eps", 1e-05)
+        eps_values.add(eps)
+    assert len(eps_values) == 1, "All norms must have the same eps setting."
 
 
-def _map_attention_type(config: dict):
+def _map_attention_type(config: ConfigDictType) -> str:
     if config["attention_implementation"] == "pytorch_flash":
         attention_impl = "sdpa"
     elif config["attention_implementation"] == "manual":
@@ -139,36 +303,114 @@ def _copy_weights_model(hf_model: GPT2ForCausalLM, modalities_model: GPT2LLM):
                                     The weights will be copied here.
         modalities_model (GPT2LLM): The modalities model from which the weights will be copied.
     """
+    # Copy embedding weights
     hf_model.model.embed_tokens.weight.data.copy_(modalities_model.transformer.wte.weight.data)
+    
+    # Determine if we're using adaptive computation
+    use_adaptive = modalities_model.use_adaptive
+    
+    # Copy layer weights
     for hf_layer, modalities_layer_idx in zip(hf_model.model.layers, modalities_model.transformer.h):
-        _copy_weights_attention(hf_layer, modalities_model.transformer.h[modalities_layer_idx])
-        _copy_weights_mlp(hf_layer, modalities_model.transformer.h[modalities_layer_idx])
-        _copy_weights_layer_norms(hf_layer, modalities_model.transformer.h[modalities_layer_idx])
-    _copy_weights_base_modules(hf_model.lm_head, modalities_model.transformer.lm_head)
-    _copy_weights_base_modules(hf_model.model.norm, modalities_model.transformer.lm_head_norm)
+        modalities_layer = modalities_model.transformer.h[modalities_layer_idx]
+        
+        if use_adaptive:
+            # Both models use adaptive layers
+            assert isinstance(modalities_layer, AdaptiveRecursiveBlock), (
+                f"Expected AdaptiveRecursiveBlock, got {type(modalities_layer).__name__}"
+            )
+            assert isinstance(hf_layer, AdaptiveDecoderLayer), (
+                f"Expected AdaptiveDecoderLayer, got {type(hf_layer).__name__}"
+            )
+            
+            # Copy core block weights
+            _copy_weights_attention(hf_layer.block, modalities_layer.block)
+            _copy_weights_mlp(hf_layer.block, modalities_layer.block)
+            _copy_weights_rms_norms(hf_layer.block, modalities_layer.block)
+            
+            # Copy adaptive computation weights
+            _copy_weights_adaptive(hf_layer, modalities_layer)
+        else:
+            # Standard layers
+            assert isinstance(modalities_layer, GPT2Block), (
+                f"Expected GPT2Block, got {type(modalities_layer).__name__}"
+            )
+            _copy_weights_attention(hf_layer, modalities_layer)
+            _copy_weights_mlp(hf_layer, modalities_layer)
+            _copy_weights_rms_norms(hf_layer, modalities_layer)
+    
+    # Copy output layer weights
+    _copy_weights_linear(hf_model.lm_head, modalities_model.transformer.lm_head)
+    _copy_weights_rms_norm(hf_model.model.norm, modalities_model.transformer.lm_head_norm)
+
+
+def _copy_weights_adaptive(hf_layer: AdaptiveDecoderLayer, modalities_layer: AdaptiveRecursiveBlock):
+    """Copies the adaptive computation weights (router, loop_scales).
+    
+    Args:
+        hf_layer (AdaptiveDecoderLayer): HuggingFace adaptive layer.
+        modalities_layer (AdaptiveRecursiveBlock): Modalities adaptive layer.
+    """
+    # Copy router weights
+    _copy_weights_linear(hf_layer.router.net, modalities_layer.router.net)
+    
+    # Copy loop_scales parameter
+    assert hf_layer.loop_scales.shape == modalities_layer.loop_scales.shape, (
+        f"loop_scales shape mismatch: HF {hf_layer.loop_scales.shape} vs "
+        f"Modalities {modalities_layer.loop_scales.shape}"
+    )
+    hf_layer.loop_scales.data.copy_(modalities_layer.loop_scales.data)
 
 
 def _copy_weights_attention(hf_layer: GPT2DecoderLayer, modalities_layer: GPT2Block):
-    _copy_weights_base_modules(hf_layer.self_attn.q_proj, modalities_layer.attn.q_attn)
-    _copy_weights_base_modules(hf_layer.self_attn.k_proj, modalities_layer.attn.k_attn)
-    _copy_weights_base_modules(hf_layer.self_attn.v_proj, modalities_layer.attn.v_attn)
-    _copy_weights_base_modules(hf_layer.self_attn.o_proj, modalities_layer.attn.c_proj)
+    """Copy attention weights including QK norm if present."""
+    _copy_weights_linear(hf_layer.self_attn.q_proj, modalities_layer.attn.q_attn)
+    _copy_weights_linear(hf_layer.self_attn.k_proj, modalities_layer.attn.k_attn)
+    _copy_weights_linear(hf_layer.self_attn.v_proj, modalities_layer.attn.v_attn)
+    _copy_weights_linear(hf_layer.self_attn.o_proj, modalities_layer.attn.c_proj)
+    
+    # Copy QK norm weights if present
+    if hf_layer.self_attn.use_qk_norm:
+        assert modalities_layer.attn.q_norm is not None, "HF model has QK norm but modalities model doesn't"
+        assert modalities_layer.attn.k_norm is not None, "HF model has QK norm but modalities model doesn't"
+        _copy_weights_rms_norm(hf_layer.self_attn.q_norm, modalities_layer.attn.q_norm)
+        _copy_weights_rms_norm(hf_layer.self_attn.k_norm, modalities_layer.attn.k_norm)
 
 
 def _copy_weights_mlp(hf_layer: GPT2DecoderLayer, modalities_layer: GPT2Block):
-    _copy_weights_base_modules(hf_layer.mlp.down_proj, modalities_layer.mlp.W_2)
-    _copy_weights_base_modules(hf_layer.mlp.gate_proj, modalities_layer.mlp.W)
-    _copy_weights_base_modules(hf_layer.mlp.up_proj, modalities_layer.mlp.V)
+    _copy_weights_linear(hf_layer.mlp.down_proj, modalities_layer.mlp.W_2)
+    _copy_weights_linear(hf_layer.mlp.gate_proj, modalities_layer.mlp.W)
+    _copy_weights_linear(hf_layer.mlp.up_proj, modalities_layer.mlp.V)
 
 
-def _copy_weights_layer_norms(hf_layer: GPT2DecoderLayer, modalities_layer: GPT2Block):
-    _copy_weights_base_modules(hf_layer.input_layernorm, modalities_layer.attention_norm)
-    _copy_weights_base_modules(hf_layer.post_attention_layernorm, modalities_layer.ffn_norm)
+def _copy_weights_rms_norms(hf_layer: GPT2DecoderLayer, modalities_layer: GPT2Block):
+    """Copy RMSNorm weights for attention and FFN norms."""
+    _copy_weights_rms_norm(hf_layer.input_layernorm, modalities_layer.attention_norm)
+    _copy_weights_rms_norm(hf_layer.post_attention_layernorm, modalities_layer.ffn_norm)
 
 
-def _copy_weights_base_modules(m1: nn.Linear | nn.LayerNorm, m2: nn.Linear | nn.LayerNorm):
-    assert m1.weight.shape == m2.weight.shape
-    assert (m1.bias is None and m2.bias is None) or m1.bias.shape == m2.bias.shape
+def _copy_weights_linear(m1: nn.Linear, m2: nn.Linear):
+    """Copy weights for Linear layers."""
+    assert m1.weight.shape == m2.weight.shape, (
+        f"Weight shape mismatch: {m1.weight.shape} vs {m2.weight.shape}"
+    )
     m1.weight.data.copy_(m2.weight.data)
-    if m1.bias is not None:
+    
+    if m1.bias is not None and m2.bias is not None:
+        assert m1.bias.shape == m2.bias.shape, (
+            f"Bias shape mismatch: {m1.bias.shape} vs {m2.bias.shape}"
+        )
         m1.bias.data.copy_(m2.bias.data)
+    elif m1.bias is not None or m2.bias is not None:
+        raise ValueError("Bias mismatch: one layer has bias, the other doesn't")
+
+
+def _copy_weights_rms_norm(m1: nn.RMSNorm, m2: nn.Module):
+    """Copy weights for RMSNorm layers.
+    
+    Note: RMSNorm only has a weight parameter, no bias.
+    The modalities model might use nn.RMSNorm or a custom RMSLayerNorm.
+    """
+    assert m1.weight.shape == m2.weight.shape, (
+        f"RMSNorm weight shape mismatch: {m1.weight.shape} vs {m2.weight.shape}"
+    )
+    m1.weight.data.copy_(m2.weight.data)
