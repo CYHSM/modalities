@@ -1104,6 +1104,6 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loop
     mode: ONLINE
-    experiment_id: mf_looped_125M_3.0_3.5_65_B_tokens_mfconfig
+    experiment_id: baseline_buckets
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}

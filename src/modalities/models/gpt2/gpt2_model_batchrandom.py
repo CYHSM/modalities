@@ -847,8 +847,17 @@ class AdaptiveRouter(nn.Module):
         logits = self.net(torch.cat([x, step_feat], dim=-1))
         return torch.sigmoid(logits).squeeze(-1)
 
-# With weighting by step
+
+# With random loops:
 class AdaptiveRecursiveBlock(nn.Module):
+    """
+    Wraps a GPT2Block with adaptive computation (PonderNet-style).
+    
+    Uses hidden budget sampling during training for efficiency:
+    - Randomly samples compute budget per forward pass
+    - Router never sees the budget (anytime behavior)
+    - Remaining probability mass at budget boundary is assigned to last state
+    """
     def __init__(
         self,
         block: GPT2Block,
@@ -862,81 +871,190 @@ class AdaptiveRecursiveBlock(nn.Module):
         self.max_loops = adaptive_config.max_loops
         self.router = AdaptiveRouter(n_embd)
         self.layer_idx = layer_idx
-        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0)) 
+        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0))
+        
+        # Budget sampling parameters
+        self.budget_sample_p = 0.5  # Geometric distribution parameter
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _sample_budget(self) -> int:
+        """
+        Sample compute budget from geometric distribution.
+        Heavy on low budgets, tail toward max_loops.
+        
+        With p=0.35:
+          P(1) ≈ 0.35, P(2) ≈ 0.23, P(3) ≈ 0.15, P(4) ≈ 0.10, ...
+        """
+        for k in range(1, self.max_loops + 1):
+            if torch.rand(1).item() < self.budget_sample_p:
+                return k
+        return self.max_loops
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Forward pass with hidden budget sampling.
+        
+        Returns:
+            accumulated_output: Weighted sum of hidden states by halt probability
+            expected_steps: Expected number of steps per token (ponder cost)
+            total_cos_sim: Accumulated cosine similarity (convergence metric)
+            loop_scales: Detached loop scales for logging
+        """
         B, T, _ = x.shape
+        device, dtype = x.device, x.dtype
         
         h = x
         accumulated_output = torch.zeros_like(h)
         
         # State tracking
-        prob_remain = torch.ones(B, T, device=x.device, dtype=x.dtype)
-        expected_steps = torch.zeros(B, T, device=x.device, dtype=x.dtype)
-        total_cos_sim = torch.zeros(B, T, device=x.device, dtype=x.dtype)
-        halt_probs_list = []
+        prob_remain = torch.ones(B, T, device=device, dtype=dtype)
+        expected_steps = torch.zeros(B, T, device=device, dtype=dtype)
+        total_cos_sim = torch.zeros(B, T, device=device, dtype=dtype)
         
-        # Denominator for normalization (prevent div by zero if max_loops=1)
+        # Sample budget (hidden from router)
+        if self.training:
+            budget = self._sample_budget()
+        else:
+            budget = self.max_loops
+        
+        # Normalization denominator (consistent regardless of budget)
         denom = max(1, self.max_loops - 1)
-
-        for step in range(self.max_loops):
-            # Learned Scaling factor per step
+        
+        h_prev = h  # Track for cosine similarity
+        
+        for step in range(budget):
+            # Learned scaling factor per step
             learnable = F.softplus(self.loop_scales[step])
-
-            # # LayerNorm Scaling factor
-            current_depth = (self.layer_idx * self.max_loops) + step + 1
-            # lns_scale = 1.0 / math.sqrt(current_depth)
-            # lns_scale = 1.0 / current_depth
-            lns_scale = 1.0
-
-
-            current_scale = learnable * lns_scale
-            
             h_prev = h
-            # ---
-            h = self.block(h, scale=current_scale)
-            # ---
+            h = self.block(h, scale=learnable)
             
-            # Compute cosine similarity between current and previous hidden state
-            cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8).unsqueeze(-1)
+            # Convergence metric
+            cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8)
             
+            # Router decides halt probability (doesn't know budget!)
             step_norm = step / denom
             halt_prob = self.router(h, step_norm)
-            halt_probs_list.append(halt_prob.detach().mean())
-
+            
+            # Only force-halt at TRUE max_loops, not at budget boundary
             if step == self.max_loops - 1:
-                # Last step: strictly halt all remaining probability
                 p_stop_here = prob_remain
-                prob_remain = torch.zeros_like(prob_remain) # Clear remainder
+                prob_remain = torch.zeros_like(prob_remain)
             else:
                 p_stop_here = prob_remain * halt_prob
                 prob_remain = prob_remain * (1.0 - halt_prob)
-
+            
+            # Accumulate weighted output
             accumulated_output = accumulated_output + (h * p_stop_here.unsqueeze(-1))
             expected_steps = expected_steps + p_stop_here * (step + 1)
-            total_cos_sim = total_cos_sim + (cos_sim.squeeze(-1) * p_stop_here)
+            total_cos_sim = total_cos_sim + (cos_sim * p_stop_here)
             
-            # if not self.training:
-            #     # We check if the maximum remaining probability in the batch is negligible
-            #     if prob_remain.max() < (1.0 - self.config.halt_threshold):
-            #         break
-
-        # Edge case handling for early exit: 
-        # If we broke early, we must normalize the accumulated output so it sums to 1.0
-        # effectively treating the current state as the final state for the remaining mass.
-        if not self.training and prob_remain.sum() > 0:
+            # Early exit during inference if nearly all probability has halted
+            if not self.training:
+                if prob_remain.max() < (1.0 - self.config.halt_threshold):
+                    break
+        
+        # Handle remaining probability mass
+        # This happens when: (1) budget < max_loops, or (2) inference early exit
+        if prob_remain.sum() > 0:
+            # Assign remaining mass to last computed hidden state
             accumulated_output = accumulated_output + (h * prob_remain.unsqueeze(-1))
+            
+            # Credit remaining mass to the step we stopped at
+            # This creates gradient pressure: "you should have halted earlier"
+            expected_steps = expected_steps + prob_remain * budget
+            
+            # Final similarity for remaining mass
             final_cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8)
             total_cos_sim = total_cos_sim + (prob_remain * final_cos_sim)
+        
+        # Return scales only for steps we computed (for logging)
+        return (
+            accumulated_output,
+            expected_steps,
+            total_cos_sim,
+            self.loop_scales[:budget].detach()
+        )
 
-        # # Stack the recorded halt probabilities
-        # halt_probs_stacked = torch.stack(halt_probs_list)
-        # steps_taken = halt_probs_stacked.size(0)
-        # if steps_taken < self.max_loops:
-        #     padding = torch.zeros(self.max_loops - steps_taken, device=x.device, dtype=halt_probs_stacked.dtype)
-        #     halt_probs_stacked = torch.cat([halt_probs_stacked, padding])
+# With weighting by step
+# class AdaptiveRecursiveBlock(nn.Module):
+#     def __init__(
+#         self,
+#         block: GPT2Block,
+#         adaptive_config: AdaptiveComputationConfig,
+#         n_embd: int,
+#         layer_idx: int,
+#     ):
+#         super().__init__()
+#         self.block = block
+#         self.config = adaptive_config
+#         self.max_loops = adaptive_config.max_loops
+#         self.router = AdaptiveRouter(n_embd)
+#         self.layer_idx = layer_idx
+#         self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0)) 
 
-        return accumulated_output, expected_steps, total_cos_sim, self.loop_scales.detach(), torch.stack(halt_probs_list)
+#     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+#         B, T, _ = x.shape
+        
+#         h = x
+#         accumulated_output = torch.zeros_like(h)
+        
+#         # State tracking
+#         prob_remain = torch.ones(B, T, device=x.device, dtype=x.dtype)
+#         expected_steps = torch.zeros(B, T, device=x.device, dtype=x.dtype)
+#         total_cos_sim = torch.zeros(B, T, device=x.device, dtype=x.dtype)
+        
+#         # Denominator for normalization (prevent div by zero if max_loops=1)
+#         denom = max(1, self.max_loops - 1)
+
+#         for step in range(self.max_loops):
+#             # Learned Scaling factor per step
+#             learnable = F.softplus(self.loop_scales[step])
+
+#             # # LayerNorm Scaling factor
+#             current_depth = (self.layer_idx * self.max_loops) + step + 1
+#             # lns_scale = 1.0 / math.sqrt(current_depth)
+#             # lns_scale = 1.0 / current_depth
+#             lns_scale = 1.0
+
+
+#             current_scale = learnable * lns_scale
+            
+#             h_prev = h
+#             # ---
+#             h = self.block(h, scale=current_scale)
+#             # ---
+            
+#             # Compute cosine similarity between current and previous hidden state
+#             cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8).unsqueeze(-1)
+            
+#             step_norm = step / denom
+#             halt_prob = self.router(h, step_norm)
+
+#             if step == self.max_loops - 1:
+#                 # Last step: strictly halt all remaining probability
+#                 p_stop_here = prob_remain
+#                 prob_remain = torch.zeros_like(prob_remain) # Clear remainder
+#             else:
+#                 p_stop_here = prob_remain * halt_prob
+#                 prob_remain = prob_remain * (1.0 - halt_prob)
+
+#             accumulated_output = accumulated_output + (h * p_stop_here.unsqueeze(-1))
+#             expected_steps = expected_steps + p_stop_here * (step + 1)
+#             total_cos_sim = total_cos_sim + (cos_sim.squeeze(-1) * p_stop_here)
+            
+#             if not self.training:
+#                 # We check if the maximum remaining probability in the batch is negligible
+#                 if prob_remain.max() < (1.0 - self.config.halt_threshold):
+#                     break
+
+#         # Edge case handling for early exit: 
+#         # If we broke early, we must normalize the accumulated output so it sums to 1.0
+#         # effectively treating the current state as the final state for the remaining mass.
+#         if not self.training and prob_remain.sum() > 0:
+#             accumulated_output = accumulated_output + (h * prob_remain.unsqueeze(-1))
+#             final_cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8)
+#             total_cos_sim = total_cos_sim + (prob_remain * final_cos_sim)
+
+#         return accumulated_output, expected_steps, total_cos_sim, self.loop_scales.detach()
 
 # No weighting
 # class AdaptiveRecursiveBlock(nn.Module):
@@ -1213,7 +1331,6 @@ class GPT2LLM(NNModel):
         per_layer_ponder_costs = []
         per_layer_cos_sims = []
         per_layer_loop_scales = []
-        per_layer_halt_probs = []
 
         sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
         for layer_key in sorted_keys:
@@ -1222,7 +1339,7 @@ class GPT2LLM(NNModel):
 
             if self.use_adaptive:
                 # Adaptive block handles scaling internally
-                h, cost, cos_sim, scales, halt_probs = layer_module(h)
+                h, cost, cos_sim, scales = layer_module(h)
                 
                 # ... cost tracking code ...
                 cost_mean = cost.mean()
@@ -1230,9 +1347,19 @@ class GPT2LLM(NNModel):
                 total_ponder_cost = total_ponder_cost + cost_mean
                 per_layer_ponder_costs.append(cost_mean)
                 per_layer_cos_sims.append(sim_mean)
-                per_layer_loop_scales.append(scales)
-                per_layer_halt_probs.append(halt_probs)
                 num_adaptive_layers += 1
+
+                # scales may have variable length now, pad for logging consistency
+                if scales.numel() < self.adaptive_config.max_loops:
+                    padded = torch.full(
+                        (self.adaptive_config.max_loops,), 
+                        float('nan'), 
+                        device=scales.device
+                    )
+                    padded[:scales.numel()] = scales
+                    per_layer_loop_scales.append(padded)
+                else:
+                    per_layer_loop_scales.append(scales)
             else:
                 # --- LAYER NORM SCALING LOGIC (Standard) ---
                 # lns_scale = 1.0 / math.sqrt(layer_idx + 1)
@@ -1265,7 +1392,6 @@ class GPT2LLM(NNModel):
                 "per_layer_ponder_costs": layer_costs_tensor,
                 "per_layer_cos_sims": layer_sims_tensor,
                 "loop_scales": torch.stack(per_layer_loop_scales) if per_layer_loop_scales else torch.tensor([], device=device),
-                "halt_probs": torch.stack(per_layer_halt_probs) if per_layer_halt_probs else torch.tensor([], device=device),
             }
         
         return logits

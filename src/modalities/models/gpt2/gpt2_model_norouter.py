@@ -860,83 +860,65 @@ class AdaptiveRecursiveBlock(nn.Module):
         self.block = block
         self.config = adaptive_config
         self.max_loops = adaptive_config.max_loops
-        self.router = AdaptiveRouter(n_embd)
         self.layer_idx = layer_idx
-        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0)) 
+        
+        # Learned scaling per step
+        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0))
+        
+        # Single learnable parameter for halt sensitivity (replaces entire router)
+        self.halt_temperature = nn.Parameter(torch.tensor([1.0]))
 
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         B, T, _ = x.shape
+        device, dtype = x.device, x.dtype
         
         h = x
         accumulated_output = torch.zeros_like(h)
         
-        # State tracking
-        prob_remain = torch.ones(B, T, device=x.device, dtype=x.dtype)
-        expected_steps = torch.zeros(B, T, device=x.device, dtype=x.dtype)
-        total_cos_sim = torch.zeros(B, T, device=x.device, dtype=x.dtype)
-        halt_probs_list = []
+        prob_remain = torch.ones(B, T, device=device, dtype=dtype)
+        expected_steps = torch.zeros(B, T, device=device, dtype=dtype)
+        total_relative_change = torch.zeros(B, T, device=device, dtype=dtype)
         
-        # Denominator for normalization (prevent div by zero if max_loops=1)
-        denom = max(1, self.max_loops - 1)
+        # Keep temperature positive
+        temperature = F.softplus(self.halt_temperature)
 
         for step in range(self.max_loops):
-            # Learned Scaling factor per step
-            learnable = F.softplus(self.loop_scales[step])
-
-            # # LayerNorm Scaling factor
-            current_depth = (self.layer_idx * self.max_loops) + step + 1
-            # lns_scale = 1.0 / math.sqrt(current_depth)
-            # lns_scale = 1.0 / current_depth
-            lns_scale = 1.0
-
-
-            current_scale = learnable * lns_scale
+            # Learned scale for this step
+            learnable_scale = F.softplus(self.loop_scales[step])
             
             h_prev = h
-            # ---
-            h = self.block(h, scale=current_scale)
-            # ---
+            h = self.block(h, scale=learnable_scale)
             
-            # Compute cosine similarity between current and previous hidden state
-            cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8).unsqueeze(-1)
+            # Relative change magnitude (captures both angle and magnitude)
+            delta = h - h_prev
+            relative_change = delta.norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-8)
             
-            step_norm = step / denom
-            halt_prob = self.router(h, step_norm)
-            halt_probs_list.append(halt_prob.detach().mean())
+            # Small change = high halt probability
+            halt_prob = torch.exp(-relative_change / temperature)
 
             if step == self.max_loops - 1:
-                # Last step: strictly halt all remaining probability
                 p_stop_here = prob_remain
-                prob_remain = torch.zeros_like(prob_remain) # Clear remainder
+                prob_remain = torch.zeros_like(prob_remain)
             else:
                 p_stop_here = prob_remain * halt_prob
                 prob_remain = prob_remain * (1.0 - halt_prob)
 
             accumulated_output = accumulated_output + (h * p_stop_here.unsqueeze(-1))
             expected_steps = expected_steps + p_stop_here * (step + 1)
-            total_cos_sim = total_cos_sim + (cos_sim.squeeze(-1) * p_stop_here)
-            
-            # if not self.training:
-            #     # We check if the maximum remaining probability in the batch is negligible
-            #     if prob_remain.max() < (1.0 - self.config.halt_threshold):
-            #         break
+            total_relative_change = total_relative_change + (relative_change * p_stop_here)
 
-        # Edge case handling for early exit: 
-        # If we broke early, we must normalize the accumulated output so it sums to 1.0
-        # effectively treating the current state as the final state for the remaining mass.
+            # Early exit during inference
+            if not self.training:
+                if prob_remain.max() < (1.0 - self.config.halt_threshold):
+                    break
+
+        # Handle early exit remainder
         if not self.training and prob_remain.sum() > 0:
             accumulated_output = accumulated_output + (h * prob_remain.unsqueeze(-1))
-            final_cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8)
-            total_cos_sim = total_cos_sim + (prob_remain * final_cos_sim)
+            final_change = (h - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-8)
+            total_relative_change = total_relative_change + (prob_remain * final_change)
 
-        # # Stack the recorded halt probabilities
-        # halt_probs_stacked = torch.stack(halt_probs_list)
-        # steps_taken = halt_probs_stacked.size(0)
-        # if steps_taken < self.max_loops:
-        #     padding = torch.zeros(self.max_loops - steps_taken, device=x.device, dtype=halt_probs_stacked.dtype)
-        #     halt_probs_stacked = torch.cat([halt_probs_stacked, padding])
-
-        return accumulated_output, expected_steps, total_cos_sim, self.loop_scales.detach(), torch.stack(halt_probs_list)
+        return accumulated_output, expected_steps, total_relative_change, self.loop_scales.detach(), self.halt_temperature.detach()
 
 # No weighting
 # class AdaptiveRecursiveBlock(nn.Module):
@@ -1040,9 +1022,9 @@ class GPT2LLM(NNModel):
                 Note that this is only relevant if the activation_type is SwiGLU. Defaults to 256.
         """
         weight_decay_groups = {
-            "linear": [".attn", ".mlp", ".lm_head.weight", ".router"],
+            "linear": [".attn", ".mlp", ".lm_head.weight"],
             "embedding": [".wte", ".wpe", ".step_emb"],
-            "layernorm": [".attention_norm", ".ffn_norm", ".lm_head_norm", ".loop_scales"],
+            "layernorm": [".attention_norm", ".ffn_norm", ".lm_head_norm", ".loop_scales", ".halt_temperature"],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
         self.sample_key = sample_key
@@ -1213,7 +1195,7 @@ class GPT2LLM(NNModel):
         per_layer_ponder_costs = []
         per_layer_cos_sims = []
         per_layer_loop_scales = []
-        per_layer_halt_probs = []
+        per_layer_temps = []
 
         sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
         for layer_key in sorted_keys:
@@ -1222,7 +1204,7 @@ class GPT2LLM(NNModel):
 
             if self.use_adaptive:
                 # Adaptive block handles scaling internally
-                h, cost, cos_sim, scales, halt_probs = layer_module(h)
+                h, cost, cos_sim, scales, temp = layer_module(h)
                 
                 # ... cost tracking code ...
                 cost_mean = cost.mean()
@@ -1230,9 +1212,9 @@ class GPT2LLM(NNModel):
                 total_ponder_cost = total_ponder_cost + cost_mean
                 per_layer_ponder_costs.append(cost_mean)
                 per_layer_cos_sims.append(sim_mean)
-                per_layer_loop_scales.append(scales)
-                per_layer_halt_probs.append(halt_probs)
                 num_adaptive_layers += 1
+                per_layer_loop_scales.append(scales)
+                per_layer_temps.append(temp)
             else:
                 # --- LAYER NORM SCALING LOGIC (Standard) ---
                 # lns_scale = 1.0 / math.sqrt(layer_idx + 1)
@@ -1265,7 +1247,7 @@ class GPT2LLM(NNModel):
                 "per_layer_ponder_costs": layer_costs_tensor,
                 "per_layer_cos_sims": layer_sims_tensor,
                 "loop_scales": torch.stack(per_layer_loop_scales) if per_layer_loop_scales else torch.tensor([], device=device),
-                "halt_probs": torch.stack(per_layer_halt_probs) if per_layer_halt_probs else torch.tensor([], device=device),
+                "halt_temperatures": torch.stack(per_layer_temps) if per_layer_temps else torch.tensor([], device=device),
             }
         
         return logits

@@ -108,6 +108,7 @@ class CLMCrossEntropyWithPonderLoss(Loss):
         self._last_per_layer_ponder_costs = None
         self._last_per_layer_cos_sims = None
         self._last_loop_scales = None
+        self._last_halt_probs = None
 
     def __call__(self, *args, **kwargs) -> torch.Tensor:
         labels, outputs = self._parse_arguments(args, kwargs)
@@ -121,7 +122,9 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             step_gate_mean = outputs.get("step_gate_mean", torch.tensor(0.0, device=lm_logits.device))
             per_layer_ponder_costs = outputs.get("per_layer_ponder_costs", None)
             per_layer_cos_sims = outputs.get("per_layer_cos_sims", None)
-            loop_scales = outputs.get("loop_scales", None) if isinstance(outputs, dict) else None 
+            loop_scales = outputs.get("loop_scales", None)
+            halt_temperatures = outputs.get("halt_temperatures", None)
+            halt_probs = outputs.get("halt_probs", None)
         else:
             lm_logits = outputs
             ponder_loss = torch.tensor(0.0, device=lm_logits.device)
@@ -132,6 +135,8 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             per_layer_ponder_costs = None
             per_layer_cos_sims = None
             loop_scales = None
+            halt_temperatures = None
+            halt_probs = None
 
         labels = labels.to(lm_logits.device)
         shift_logits = lm_logits.contiguous()
@@ -150,6 +155,8 @@ class CLMCrossEntropyWithPonderLoss(Loss):
         self._last_per_layer_ponder_costs = per_layer_ponder_costs.detach() if per_layer_ponder_costs is not None else None
         self._last_per_layer_cos_sims = per_layer_cos_sims.detach() if per_layer_cos_sims is not None else None
         self._last_loop_scales = loop_scales if loop_scales is not None else None
+        self._last_halt_temperatures = halt_temperatures.detach() if halt_temperatures is not None else None
+        self._last_halt_probs = halt_probs.detach() if halt_probs is not None else None
         
         total_loss = ce_loss + ponder_loss
         
@@ -166,6 +173,8 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             "per_layer_ponder_costs": self._last_per_layer_ponder_costs if self._last_per_layer_ponder_costs is not None else torch.tensor([]),
             "per_layer_cos_sims": self._last_per_layer_cos_sims if self._last_per_layer_cos_sims is not None else torch.tensor([]),
             "loop_scales": self._last_loop_scales if self._last_loop_scales is not None else torch.tensor([]),
+            "halt_temperatures": self._last_halt_temperatures if self._last_halt_temperatures is not None else torch.tensor([]),
+            "halt_probs": self._last_halt_probs if self._last_halt_probs is not None else torch.tensor([]),
         }
 
     def _parse_arguments(

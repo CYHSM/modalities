@@ -864,12 +864,29 @@ class Trainer:
                     metrics[f"train/layer_{i}/cos_sim"] = ResultItem(sim_val, 4)
 
                 if hasattr(loss_fun, 'get_loss_components'):
-                    batch_scales = loss_fun.get_loss_components().get("loop_scales")
+                    components = loss_fun.get_loss_components()
+                    batch_scales = components.get("loop_scales")
                     if batch_scales is not None and batch_scales.numel() > 0:
                         scales_cpu = batch_scales.cpu()
                         for i, layer_scales in enumerate(scales_cpu):
                             for j, val in enumerate(layer_scales):
                                 metrics[f"train/layer_{i}/loop_scale_{j}"] = ResultItem(val, 4)
+
+                    # --- NEW HALT PROBS ---
+                    batch_halt_probs = components.get("halt_probs")
+                    if batch_halt_probs is not None and batch_halt_probs.numel() > 0:
+                        probs_cpu = batch_halt_probs.float().cpu()
+                        for i, layer_probs in enumerate(probs_cpu):
+                            for j, val in enumerate(layer_probs):
+                                # Log as layer_X/halt_prob_Y
+                                metrics[f"layer_{i}/halt_prob_{j}"] = ResultItem(val, 4)
+
+                    batch_temps = components.get("halt_temperatures")
+                    if batch_temps is not None and batch_temps.numel() > 0:
+                        temps_cpu = batch_temps.float().cpu() 
+                        for i, val in enumerate(temps_cpu):
+                            metrics[f"train/layer_{i}/halt_temperature"] = ResultItem(val, 4)
+
 
                 gradient_norm_scores = []
                 mfu_score = torch.tensor(-1.0)
