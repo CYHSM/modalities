@@ -413,64 +413,119 @@ class AdaptiveRouter(nn.Module):
         logits = self.net(torch.cat([x, step_feat], dim=-1))
         return torch.sigmoid(logits).squeeze(-1)
 
+
 class MemoryBankRegistry(nn.Module):
     """
-    Memory Bank with both local (per-layer) and global (shared) memory.
+    Stable Memory Bank using QK-style LayerNorm.
+    
+    LayerNorm bounds the key/query magnitudes (similar effect to cosine similarity)
+    but uses highly optimized CUDA kernels.
     """
     
-    def __init__(self, n_layer: int, n_embd: int, num_local_slots: int = 1024, num_global_slots: int = 512):
+    def __init__(self, n_layer: int, n_embd: int, num_slots: int = 4096):
         super().__init__()
         self.n_layer = n_layer
         self.n_embd = n_embd
+        self.num_slots = num_slots
         self.scale = n_embd ** -0.5
         
-        # Local (per-layer) memory
-        self.local_keys = nn.Parameter(torch.randn(n_layer, num_local_slots, n_embd) * 0.02)
-        self.local_values = nn.Parameter(torch.randn(n_layer, num_local_slots, n_embd) * 0.02)
+        self.keys = nn.Parameter(torch.randn(n_layer, num_slots, n_embd) * 0.02)
+        self.values = nn.Parameter(torch.randn(n_layer, num_slots, n_embd) * 0.001)
         
-        # Global (shared across all layers) memory
-        self.global_keys = nn.Parameter(torch.randn(num_global_slots, n_embd) * 0.02)
-        self.global_values = nn.Parameter(torch.randn(num_global_slots, n_embd) * 0.02)
-        
-        # QK-norm for stable attention
+        # QK-norm style: LayerNorm on queries and keys
+        # This bounds magnitudes and stabilizes attention, similar to cosine sim
+        # but MUCH faster due to optimized kernels
         self.q_norm = nn.LayerNorm(n_embd)
         self.k_norm = nn.LayerNorm(n_embd)
+        self.out_norm = nn.LayerNorm(n_embd)
 
-    def forward(self, query: torch.Tensor, layer_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Returns (local_retrieved, global_retrieved).
-        Args:
-            query: [B, T, D]
-            layer_idx: which layer's local memory to access
-        Returns:
-            local_out: [B, T, D] - from layer-specific memory
-            global_out: [B, T, D] - from shared global memory
-        """
+    def forward(self, query: torch.Tensor, bank_weights: torch.Tensor) -> torch.Tensor:
+        # Normalize query: [B, T, D] - fast
         q = self.q_norm(query)
         
-        # Local lookup (layer-specific)
-        local_k = self.k_norm(self.local_keys[layer_idx])
-        local_v = self.local_values[layer_idx]
-        local_attn = F.softmax(torch.einsum('btd,sd->bts', q, local_k) * self.scale, dim=-1)
-        local_out = torch.einsum('bts,sd->btd', local_attn, local_v)
+        # Normalize keys: [n_layer, num_slots, D]
+        # LayerNorm operates on last dim, so this works directly
+        k = self.k_norm(self.keys)
         
-        # Global lookup (shared)
-        global_k = self.k_norm(self.global_keys)
-        global_v = self.global_values
-        global_attn = F.softmax(torch.einsum('btd,sd->bts', q, global_k) * self.scale, dim=-1)
-        global_out = torch.einsum('bts,sd->btd', global_attn, global_v)
+        # Standard scaled dot-product attention
+        attn_logits = torch.einsum('btd,lsd->btls', q, k) * self.scale
+        attn_weights = F.softmax(attn_logits, dim=-1)
         
-        return local_out, global_out
+        retrieved = torch.einsum('btls,lsd->btld', attn_weights, self.values)
+        blended = torch.einsum('btl,btld->btd', bank_weights, retrieved)
+        
+        return self.out_norm(blended)
+
+
+class HippocampalRouter(nn.Module):
+    """
+    Routes queries to appropriate memory banks (per-token).
     
+    Initialized to strongly prefer the current layer's memory bank,
+    reducing noise from cross-layer attention at the start of training.
+    """
+    
+    def __init__(self, n_embd: int, n_layers: int, own_layer_idx: int):
+        super().__init__()
+        self.n_layers = n_layers
+        self.own_layer_idx = own_layer_idx
+        
+        # Projection for computing routing logits
+        self.proj = CustomLinear(n_embd, n_layers, bias=False, init_weight_std=0.001)
+        
+        # Bias for own layer - initialized HIGH to prefer own layer initially
+        # This makes the router output ~1.0 for own layer, ~0.0 for others at start
+        self.own_bias = nn.Parameter(torch.tensor([5.0]))
+        
+        # Pre-register the mask
+        mask = torch.zeros(n_layers)
+        mask[own_layer_idx] = 1.0
+        self.register_buffer('own_mask', mask)
+
+    def forward(self, h: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            h: [B, T, D]
+        Returns:
+            weights: [B, T, n_layers] - softmax routing weights
+        """
+        # Ensure bias/mask matches input dtype
+        bias_term = (self.own_bias * self.own_mask).to(dtype=h.dtype)
+        logits = self.proj(h) + bias_term
+        return F.softmax(logits, dim=-1)
+
+
+class CustomLinear(nn.Linear):
+    def __init__(self, in_features, out_features, bias=True, 
+                 init_weight_std=None, init_weight_zero=False, init_bias_val=None):
+        # Save config for reset_parameters
+        self.init_weight_std = init_weight_std
+        self.init_weight_zero = init_weight_zero
+        self.init_bias_val = init_bias_val
+        super().__init__(in_features, out_features, bias=bias)
+
+    def reset_parameters(self):
+        # 1. Standard init first
+        super().reset_parameters()
+        
+        # 2. Apply your overrides
+        if getattr(self, 'init_weight_zero', False):
+            nn.init.zeros_(self.weight)
+        elif getattr(self, 'init_weight_std', None) is not None:
+            nn.init.normal_(self.weight, std=self.init_weight_std)
+            
+        if getattr(self, 'init_bias_val', None) is not None and self.bias is not None:
+            nn.init.constant_(self.bias, self.init_bias_val)
+
 
 class AdaptiveRecursiveBlock(nn.Module):
     """
-    Adaptive computation with both local and global memory.
+    Adaptive computation block with stable hippocampal memory routing.
     
-    Key design:
-    - local_mem_scale: controls contribution from layer-specific memory
-    - global_mem_scale: controls contribution from shared global memory
-    - Both initialized small; model learns to use what it needs
+    Key stability features:
+    1. Zero-initialized gate weights (memory disabled at start)
+    2. Additive gating (no (1-z) scaling of main pathway)
+    3. Cosine similarity in memory lookup (bounded attention)
     """
     
     def __init__(
@@ -491,23 +546,21 @@ class AdaptiveRecursiveBlock(nn.Module):
         # Halting mechanism
         self.halt_router = AdaptiveRouter(n_embd)
         self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0))
-
-        # Loop embeddings
-        self.loop_embeddings = nn.Parameter(torch.zeros(self.max_loops, n_embd))
         
-        # Memory injection - LOCAL
+        # Memory components
         self.mem_norm = nn.LayerNorm(n_embd)
-        self.local_mem_proj = nn.Linear(n_embd, n_embd, bias=False)
-        self.local_mem_scale = nn.Parameter(torch.tensor([0.01]))
+        self.bank_router = HippocampalRouter(n_embd, memory_registry.n_layer, layer_idx)
         
-        # Memory injection - GLOBAL
-        self.global_mem_proj = nn.Linear(n_embd, n_embd, bias=False)
-        self.global_mem_scale = nn.Parameter(torch.tensor([0.01]))
+        # Memory projection and gate
+        self.mem_proj = CustomLinear(n_embd, n_embd, bias=False, init_weight_zero=True)
+        self.mem_gate = CustomLinear(n_embd * 2, 1, init_bias_val=-3.0, init_weight_zero=True)
+        self.mem_bypass_scale = nn.Parameter(torch.tensor([0.001]))
 
     def forward(self, x: torch.Tensor) -> tuple:
         B, T, D = x.shape
         device = x.device
         
+        # ==================== PHASE 1: PONDER ====================
         h = x
         accumulated_output = torch.zeros_like(h)
         prob_remain = torch.ones(B, T, device=device, dtype=x.dtype)
@@ -518,28 +571,14 @@ class AdaptiveRecursiveBlock(nn.Module):
         denom = max(1, self.max_loops - 1)
 
         for step in range(self.max_loops):
-            # Prepare step embedding
-            h = h + self.loop_embeddings[step]
-
-            # ========== 1. MEMORY RETRIEVAL ==========
-            query = self.mem_norm(h)
-            local_mem, global_mem = self.memory_registry(query, self.layer_idx)
-            
-            # ========== 2. DUAL MEMORY INJECTION ==========
-            h_enriched = (
-                h 
-                + self.local_mem_scale * self.local_mem_proj(local_mem)
-                + self.global_mem_scale * self.global_mem_proj(global_mem)
-            )
-            
-            # ========== 3. TRANSFORMER BLOCK ==========
             scale = F.softplus(self.loop_scales[step])
             h_prev = h
-            h_new = self.block(h_enriched, scale=scale)
             
-            # ========== 4. HALTING (PonderNet) ==========
-            cos_sim = F.cosine_similarity(h_new, h_prev, dim=-1, eps=1e-8)
-            halt_prob = self.halt_router(h_new, step / denom)
+            h = self.block(h, scale=scale)
+            
+            # Halting probability
+            cos_sim = F.cosine_similarity(h, h_prev, dim=-1, eps=1e-8)
+            halt_prob = self.halt_router(h, step / denom)
             halt_probs_list.append(halt_prob.detach().mean())
 
             if step == self.max_loops - 1:
@@ -549,31 +588,43 @@ class AdaptiveRecursiveBlock(nn.Module):
                 p_stop = prob_remain * halt_prob
                 prob_remain = prob_remain * (1.0 - halt_prob)
 
-            accumulated_output = accumulated_output + h_new * p_stop.unsqueeze(-1)
+            accumulated_output = accumulated_output + h * p_stop.unsqueeze(-1)
             expected_steps = expected_steps + p_stop * (step + 1)
             total_cos_sim = total_cos_sim + cos_sim * p_stop
-            
-            h = h_new
             
             # Early exit during inference
             if not self.training and prob_remain.max() < 0.01:
                 break
         
-        # Handle remainder for early exits
+        # Handle early exit remainder
         if not self.training and prob_remain.sum() > 0:
             accumulated_output = accumulated_output + h * prob_remain.unsqueeze(-1)
 
-        # Pack diagnostics
-        halt_probs_stacked = self._pad_to_max(halt_probs_list, device)
+        # ==================== PHASE 2: MEMORY ====================
+        query = self.mem_norm(accumulated_output)
+        bank_weights = self.bank_router(query)  # [B, T, n_layers]
+        mem_out = self.memory_registry(query, bank_weights)  # [B, T, D]
         
+        # ==================== PHASE 3: MERGE (ADDITIVE) ====================
+        # Using ADDITIVE gating: output = accumulated + z * memory
+        # This avoids the (1-z) scaling issue that changes output at init
+        mem_contribution = self.mem_proj(mem_out)
+        z = torch.sigmoid(self.mem_gate(torch.cat([accumulated_output, mem_out], dim=-1)))
+        output = accumulated_output + z * mem_contribution + self.mem_bypass_scale * mem_out
+        
+        # ==================== PACK DIAGNOSTICS ====================
+        halt_probs_stacked = self._pad_to_max(halt_probs_list, device)
+        bank_weights_mean = bank_weights.detach().mean(dim=(0, 1))
+        gate_value_mean = z.detach().mean()
+
         return (
-            accumulated_output,
+            output,
             expected_steps,
             total_cos_sim,
             self.loop_scales.detach(),
             halt_probs_stacked,
-            self.local_mem_scale.detach().item(),
-            self.global_mem_scale.detach().item(),  # NEW: track global scale too
+            bank_weights_mean,
+            gate_value_mean,
         )
     
     def _pad_to_max(self, lst, device):
@@ -582,154 +633,6 @@ class AdaptiveRecursiveBlock(nn.Module):
             pad = torch.zeros(self.max_loops - stacked.size(0), device=device, dtype=stacked.dtype)
             stacked = torch.cat([stacked, pad])
         return stacked
-
-
-# class MemoryBankRegistry(nn.Module):
-#     """
-#     Simplified Memory Bank with QK-norm for stability.
-#     """
-    
-#     def __init__(self, n_layer: int, n_embd: int, num_slots: int = 1024):
-#         super().__init__()
-#         self.n_layer = n_layer
-#         self.n_embd = n_embd
-#         self.num_slots = num_slots
-#         self.scale = n_embd ** -0.5
-        
-#         # Learnable memory
-#         self.keys = nn.Parameter(torch.randn(n_layer, num_slots, n_embd) * 0.02)
-#         self.values = nn.Parameter(torch.randn(n_layer, num_slots, n_embd) * 0.02)
-        
-#         # QK-norm for stable attention
-#         self.q_norm = nn.LayerNorm(n_embd)
-#         self.k_norm = nn.LayerNorm(n_embd)
-
-#     def forward(self, query: torch.Tensor, layer_idx: int) -> torch.Tensor:
-#         """
-#         Simple single-layer lookup (no cross-layer routing).
-#         Args:
-#             query: [B, T, D]
-#             layer_idx: which layer's memory to access
-#         Returns:
-#             retrieved: [B, T, D]
-#         """
-#         q = self.q_norm(query)  # [B, T, D]
-#         k = self.k_norm(self.keys[layer_idx])  # [num_slots, D]
-#         v = self.values[layer_idx]  # [num_slots, D]
-        
-#         # Standard attention
-#         attn_logits = torch.einsum('btd,sd->bts', q, k) * self.scale
-#         attn_weights = F.softmax(attn_logits, dim=-1)
-#         retrieved = torch.einsum('bts,sd->btd', attn_weights, v)
-        
-#         return retrieved
-
-
-# class AdaptiveRecursiveBlock(nn.Module):
-#     """
-#     Simplified adaptive computation with memory INSIDE the loop.
-    
-#     Key design choices:
-#     - Memory accessed every iteration (enables multi-hop reasoning)
-#     - Simple additive injection with learnable scale
-#     - No complex gating - let the model learn what it needs
-#     """
-    
-#     def __init__(
-#         self,
-#         block: GPT2Block,
-#         adaptive_config: AdaptiveComputationConfig,
-#         n_embd: int,
-#         layer_idx: int,
-#         memory_registry: MemoryBankRegistry,
-#     ):
-#         super().__init__()
-#         self.block = block
-#         self.config = adaptive_config
-#         self.max_loops = adaptive_config.max_loops
-#         self.layer_idx = layer_idx
-#         self.memory_registry = memory_registry
-        
-#         # Halting mechanism
-#         self.halt_router = AdaptiveRouter(n_embd)
-#         self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0))
-        
-#         # Memory injection (SIMPLE: just norm + projection + scale)
-#         self.mem_norm = nn.LayerNorm(n_embd)
-#         self.mem_proj = nn.Linear(n_embd, n_embd, bias=False)
-#         self.mem_scale = nn.Parameter(torch.tensor([0.01]))
-
-#     def forward(self, x: torch.Tensor) -> tuple:
-#         B, T, D = x.shape
-#         device = x.device
-        
-#         h = x
-#         accumulated_output = torch.zeros_like(h)
-#         prob_remain = torch.ones(B, T, device=device, dtype=x.dtype)
-#         expected_steps = torch.zeros(B, T, device=device, dtype=x.dtype)
-#         total_cos_sim = torch.zeros(B, T, device=device, dtype=x.dtype)
-#         halt_probs_list = []
-        
-#         denom = max(1, self.max_loops - 1)
-
-#         for step in range(self.max_loops):
-#             # ========== 1. MEMORY RETRIEVAL ==========
-#             query = self.mem_norm(h)
-#             mem_out = self.memory_registry(query, self.layer_idx)
-            
-#             # ========== 2. SIMPLE ADDITIVE INJECTION ==========
-#             # h_enriched = h + scale * proj(memory)
-#             h_enriched = h + self.mem_scale * self.mem_proj(mem_out)
-            
-#             # ========== 3. TRANSFORMER BLOCK ==========
-#             scale = F.softplus(self.loop_scales[step])
-#             h_prev = h
-#             h_new = self.block(h_enriched, scale=scale)
-            
-#             # ========== 4. HALTING (PonderNet) ==========
-#             cos_sim = F.cosine_similarity(h_new, h_prev, dim=-1, eps=1e-8)
-#             halt_prob = self.halt_router(h_new, step / denom)
-#             halt_probs_list.append(halt_prob.detach().mean())
-
-#             if step == self.max_loops - 1:
-#                 p_stop = prob_remain
-#                 prob_remain = torch.zeros_like(prob_remain)
-#             else:
-#                 p_stop = prob_remain * halt_prob
-#                 prob_remain = prob_remain * (1.0 - halt_prob)
-
-#             accumulated_output = accumulated_output + h_new * p_stop.unsqueeze(-1)
-#             expected_steps = expected_steps + p_stop * (step + 1)
-#             total_cos_sim = total_cos_sim + cos_sim * p_stop
-            
-#             h = h_new
-            
-#             # Early exit during inference
-#             if not self.training and prob_remain.max() < 0.01:
-#                 break
-        
-#         # Handle remainder for early exits
-#         if not self.training and prob_remain.sum() > 0:
-#             accumulated_output = accumulated_output + h * prob_remain.unsqueeze(-1)
-
-#         # Pack diagnostics
-#         halt_probs_stacked = self._pad_to_max(halt_probs_list, device)
-        
-#         return (
-#             accumulated_output,
-#             expected_steps,
-#             total_cos_sim,
-#             self.loop_scales.detach(),
-#             halt_probs_stacked,
-#             self.mem_scale.detach().item(),  # Track memory scale
-#         )
-    
-#     def _pad_to_max(self, lst, device):
-#         stacked = torch.stack(lst)
-#         if stacked.size(0) < self.max_loops:
-#             pad = torch.zeros(self.max_loops - stacked.size(0), device=device, dtype=stacked.dtype)
-#             stacked = torch.cat([stacked, pad])
-#         return stacked
 
 
 class GPT2LLM(NNModel):
@@ -764,29 +667,29 @@ class GPT2LLM(NNModel):
                 ".mlp", 
                 ".lm_head.weight",
                 ".halt_router.net.weight",
-                ".local_mem_proj.weight",
-                ".global_mem_proj.weight",
+                ".bank_router.proj.weight",
+                ".mem_proj.weight",
+                ".mem_gate.weight",
             ],
             "embedding": [
                 ".wte", 
                 ".wpe",
-                ".loop_embeddings",
             ],
             "layernorm": [
                 ".attention_norm", 
                 ".ffn_norm", 
                 ".lm_head_norm",
                 ".mem_norm",
+                ".out_norm",
                 ".loop_scales",
+                ".bank_router.own_bias",
+                ".mem_gate.bias",
                 ".halt_router.net.bias",
-                "memory_registry.local_keys",
-                "memory_registry.local_values",
-                "memory_registry.global_keys",
-                "memory_registry.global_values",
+                "memory_registry.keys",
+                "memory_registry.values",
                 "memory_registry.q_norm",
                 "memory_registry.k_norm",
-                ".local_mem_scale",
-                ".global_mem_scale",
+                ".mem_bypass_scale",
             ],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
@@ -837,8 +740,7 @@ class GPT2LLM(NNModel):
             self.memory_registry = MemoryBankRegistry(
                 n_layer=n_layer,
                 n_embd=n_embd,
-                num_local_slots=1024,
-                num_global_slots=512,
+                num_slots=1024,
             )
         else:
             self.memory_registry = None
@@ -872,6 +774,13 @@ class GPT2LLM(NNModel):
         
         if use_weight_tying:
             self.transformer.wte.weight = self.transformer.lm_head.weight
+
+        # Register gradient scaling hooks for shared memory parameters
+        # This prevents gradient explosion from accumulation across layers
+        if self.memory_registry is not None:
+            n = n_layer  # Capture in closure
+            self.memory_registry.keys.register_hook(lambda grad: grad / n)
+            self.memory_registry.values.register_hook(lambda grad: grad / n)
 
     @overload
     def forward(self, inputs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -912,7 +821,8 @@ class GPT2LLM(NNModel):
         per_layer_cos_sims = []
         per_layer_loop_scales = []
         per_layer_halt_probs = []
-        per_layer_mem_scales = []  # NEW: track mem_scale per layer
+        per_layer_bank_weights = []
+        per_layer_mem_gates = []
 
         sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
         for layer_key in sorted_keys:
@@ -920,8 +830,7 @@ class GPT2LLM(NNModel):
             layer_idx = int(layer_key)
 
             if self.use_adaptive:
-                # Now returns 7 values (added global_mem_scale)
-                h, cost, cos_sim, scales, halt_probs, local_mem_scale, global_mem_scale = layer_module(h)
+                h, cost, cos_sim, scales, halt_probs, bank_weights, mem_gate = layer_module(h)
                 
                 cost_mean = cost.mean()
                 sim_mean = cos_sim.mean()
@@ -930,7 +839,8 @@ class GPT2LLM(NNModel):
                 per_layer_cos_sims.append(sim_mean)
                 per_layer_loop_scales.append(scales)
                 per_layer_halt_probs.append(halt_probs)
-                per_layer_mem_scales.append((local_mem_scale, global_mem_scale))
+                per_layer_bank_weights.append(bank_weights)
+                per_layer_mem_gates.append(mem_gate)
                 num_adaptive_layers += 1
             else:
                 lns_scale = 1.0 / (layer_idx + 1)
@@ -948,8 +858,8 @@ class GPT2LLM(NNModel):
             
             layer_costs_tensor = torch.stack(per_layer_ponder_costs) if per_layer_ponder_costs else torch.tensor([], device=device)
             layer_sims_tensor = torch.stack(per_layer_cos_sims) if per_layer_cos_sims else torch.tensor([], device=device)
-            local_scales = torch.tensor([s[0] for s in per_layer_mem_scales], device=device)
-            global_scales = torch.tensor([s[1] for s in per_layer_mem_scales], device=device)
+            routing_matrix = torch.stack(per_layer_bank_weights) if per_layer_bank_weights else torch.tensor([], device=device)
+            mem_gates_tensor = torch.stack(per_layer_mem_gates) if per_layer_mem_gates else torch.tensor([], device=device)
 
             return {
                 "logits": logits,
@@ -957,12 +867,13 @@ class GPT2LLM(NNModel):
                 "ponder_cost_unweighted": total_ponder_cost,
                 "expected_steps": avg_ponder_cost,
                 "normalized_steps": normalized_steps,
+                "step_gate_mean": torch.tensor(0.0, device=device),  # Deprecated
                 "per_layer_ponder_costs": layer_costs_tensor,
                 "per_layer_cos_sims": layer_sims_tensor,
                 "loop_scales": torch.stack(per_layer_loop_scales) if per_layer_loop_scales else torch.tensor([], device=device),
                 "halt_probs": torch.stack(per_layer_halt_probs) if per_layer_halt_probs else torch.tensor([], device=device),
-                "local_mem_scales": local_scales, 
-                "global_mem_scales": global_scales,
+                "routing_matrix": routing_matrix,
+                "mem_gates": mem_gates_tensor,
             }
         
         return logits

@@ -630,6 +630,7 @@ class Trainer:
         cumulated_step_gate = 0.0
         cumulated_per_layer_costs: Optional[torch.Tensor] = None 
         cumulated_per_layer_sims: Optional[torch.Tensor] = None
+        cumulated_routing_matrix: Optional[torch.Tensor] = None
 
         # throughput
         thoughput_aggregator = Aggregator[ThroughputAggregationKeys]()
@@ -712,6 +713,12 @@ class Trainer:
                         if cumulated_per_layer_sims is None:
                             cumulated_per_layer_sims = torch.zeros_like(layer_sims)
                         cumulated_per_layer_sims += layer_sims
+
+                    routing_matrix = components.get("routing_matrix", None)
+                    if routing_matrix is not None:
+                        if cumulated_routing_matrix is None:
+                            cumulated_routing_matrix = torch.zeros_like(routing_matrix)
+                        cumulated_routing_matrix += routing_matrix
 
                     num_loss_accumulations += 1
 
@@ -863,6 +870,14 @@ class Trainer:
                 for i, sim_val in enumerate(synced_layer_sims):
                     metrics[f"train/layer_{i}/cos_sim"] = ResultItem(sim_val, 4)
 
+                if cumulated_routing_matrix is not None and num_loss_accumulations > 0:
+                    avg_routing = cumulated_routing_matrix / num_loss_accumulations
+                    for src_layer in range(avg_routing.size(0)):
+                        for tgt_bank in range(avg_routing.size(1)):
+                            metrics[f"routing/layer_{src_layer}_to_bank_{tgt_bank}"] = ResultItem(
+                                avg_routing[src_layer, tgt_bank], 4
+                            )
+
                 if hasattr(loss_fun, 'get_loss_components'):
                     components = loss_fun.get_loss_components()
                     batch_scales = components.get("loop_scales")
@@ -880,6 +895,22 @@ class Trainer:
                             for j, val in enumerate(layer_probs):
                                 # Log as layer_X/halt_prob_Y
                                 metrics[f"layer_{i}/halt_prob_{j}"] = ResultItem(val, 4)
+
+                    # --- LOCAL MEM SCALES ---
+                    batch_local_mem_scales = components.get("local_mem_scales")
+                    if batch_local_mem_scales is not None and batch_local_mem_scales.numel() > 0:
+                        local_scales_cpu = batch_local_mem_scales.float().cpu()
+                        for i, val in enumerate(local_scales_cpu):
+                            metrics[f"layer_{i}/local_mem_scale"] = ResultItem(val, 4)
+                        metrics["train/local_mem_scale_mean"] = ResultItem(local_scales_cpu.mean(), 4)
+
+                    # --- GLOBAL MEM SCALES ---
+                    batch_global_mem_scales = components.get("global_mem_scales")
+                    if batch_global_mem_scales is not None and batch_global_mem_scales.numel() > 0:
+                        global_scales_cpu = batch_global_mem_scales.float().cpu()
+                        for i, val in enumerate(global_scales_cpu):
+                            metrics[f"layer_{i}/global_mem_scale"] = ResultItem(val, 4)
+                        metrics["train/global_mem_scale_mean"] = ResultItem(global_scales_cpu.mean(), 4)
 
                     batch_temps = components.get("halt_temperatures")
                     if batch_temps is not None and batch_temps.numel() > 0:
@@ -937,6 +968,7 @@ class Trainer:
                 cumulated_step_gate = 0.0
                 cumulated_per_layer_costs = None
                 cumulated_per_layer_sims = None
+                cumulated_routing_matrix = None
                 num_loss_accumulations = 0
                 
             if step_performed:
