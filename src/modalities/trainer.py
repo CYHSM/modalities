@@ -1,8 +1,9 @@
 from datetime import datetime
 from enum import Enum
 from typing import Callable, Optional
-
+import random
 import math
+
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
@@ -25,7 +26,6 @@ from modalities.training.training_progress import TrainingProgress
 from modalities.util import Aggregator, TimeRecorder, print_rank_0
 from modalities.utils.mfu import MFUCalculatorABC
 
-import random
 
 class LinearDecayPonderScheduler:
     def __init__(
@@ -52,7 +52,6 @@ class LinearDecayPonderScheduler:
 
     def step(self, global_step: int) -> float:
         progress = min(1.0, global_step / self.total_train_steps)
-        
         # Linear interpolation
         weight = self.start_weight + progress * (self.end_weight - self.start_weight)
         
@@ -128,16 +127,12 @@ class SimpleLinearScheduler:
             self.config_module = model
 
     def step(self, global_step: int) -> float:
-        # Avoid division by zero if total_train_steps is 0 (unlikely but safe)
         if self.total_train_steps == 0:
             return self.end_weight
 
         progress = min(1.0, global_step / self.total_train_steps)
-        
-        # Linear interpolation
         weight = self.start_weight + progress * (self.end_weight - self.start_weight)
         
-        # Update config
         if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
             self.config_module.adaptive_config.ponder_penalty_weight = weight
             
@@ -155,39 +150,28 @@ class NegativeStartAsymmetricPonderScheduler:
         """
         Inverse Asymmetric Scheduler:
         Starts at the negative trough (Reward) instead of the positive peak (Penalty).
-        
-        Math:
-        W(t) = -1 * Amplitude * cos(2pi * t / T)
-        
-        At t=0:
-        Weight = -Amplitude (Negative). 
-        This is immediately damped by 'negative_damping'.
         """
         self.model = model
         self.steps_per_cycle = steps_per_cycle
         self.base_amplitude = base_amplitude
         self.negative_damping = negative_damping
         
-        # Unwrap FSDP if necessary
         if isinstance(model, FSDP):
              self.config_module = model.module
         else:
              self.config_module = model
 
     def step(self, global_step: int) -> float:
-        # 1. Standard Cosine: oscillates between +1.0 and -1.0
+        # Standard Cosine: oscillates between +1.0 and -1.0
         cos_val = math.cos(2 * math.pi * global_step / self.steps_per_cycle)
         
-        # 2. Invert direction: Multiply by -1.0
-        # At step 0, cos is 1.0, so weight becomes -base_amplitude.
+        # Invert direction: Multiply by -1.0
         weight = -1.0 * self.base_amplitude * cos_val
         
-        # 3. Apply Asymmetry (Damping the negative reward)
-        # Since we start negative, this damping applies immediately at step 0.
+        # Apply Asymmetry (Damping the negative reward)
         if weight < 0:
             weight = weight * self.negative_damping
             
-        # Update model config in-place
         if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
             self.config_module.adaptive_config.ponder_penalty_weight = weight
             
@@ -202,38 +186,24 @@ class AsymmetricPonderScheduler:
         base_amplitude: float = 0.05, 
         negative_damping: float = 0.2
     ):
-        """
-        Args:
-            model: The model containing the adaptive_config.
-            steps_per_cycle: Length of one full wave (e.g., 1000 steps).
-            base_amplitude: The max positive penalty (e.g., 0.05).
-            negative_damping: Multiplier when wave is negative. 
-                              0.2 means the max reward is only 0.05 * 0.2 = -0.01.
-        """
         self.model = model
         self.steps_per_cycle = steps_per_cycle
         self.base_amplitude = base_amplitude
         self.negative_damping = negative_damping
         
-        # Unwrap FSDP if necessary to get to the config
         if isinstance(model, FSDP):
              self.config_module = model.module
         else:
              self.config_module = model
 
     def step(self, global_step: int) -> float:
-        # 1. Standard Cosine: oscillates between +1.0 and -1.0
         cos_val = math.cos(2 * math.pi * global_step / self.steps_per_cycle)
-        
-        # 2. Calculate raw weight
         weight = self.base_amplitude * cos_val
         
-        # 3. Apply Asymmetry (The "Cheating" Mitigation)
+        # Apply Asymmetry (The "Cheating" Mitigation)
         if weight < 0:
             weight = weight * self.negative_damping
             
-        # Update model config in-place
-        # We check hasattr because the model might be wrapped or not have the config initialized yet
         if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
             self.config_module.adaptive_config.ponder_penalty_weight = weight
             
@@ -288,8 +258,6 @@ class DampedOscillationPonderScheduler:
         """
         Symmetric damped oscillation around 0.
         Starts at -amplitude, oscillates with decreasing amplitude, ends at 0.
-        
-        W(t) = -amplitude * (1 - t/T) * cos(2π * t / cycle)
         """
         self.model = model
         self.total_train_steps = total_train_steps
@@ -320,16 +288,6 @@ class DecreasingFrequencyPonderScheduler:
         """
         Decreasing Frequency Scheduler (Chirp).
         The cycles start fast and gradually become longer (slower frequency).
-
-        Args:
-            model: The model containing the adaptive_config.
-            initial_steps_per_cycle: The length (in steps) of the very first cycle.
-            frequency_decay_power: A float between 0.0 and 1.0. 
-                                   - 1.0 = Constant frequency (standard cosine).
-                                   - 0.5 = Cycle length grows linearly over time.
-                                   - Lower values cause the frequency to drop faster.
-            base_amplitude: The max positive penalty.
-            negative_damping: Multiplier when wave is negative.
         """
         self.model = model
         self.initial_steps_per_cycle = initial_steps_per_cycle
@@ -337,31 +295,22 @@ class DecreasingFrequencyPonderScheduler:
         self.base_amplitude = base_amplitude
         self.negative_damping = negative_damping
 
-        # Unwrap FSDP if necessary
         if isinstance(model, FSDP):
             self.config_module = model.module
         else:
             self.config_module = model
 
     def step(self, global_step: int) -> float:
-        # Avoid division by zero or log errors at step 0
         if global_step == 0:
             weight = self.base_amplitude
         else:
-            # 1. Calculate the 'stretched' phase
-            # We normalize step by initial_period, then apply the power law.
-            # This makes the argument grow slower than 't', stretching the wave.
             phase = (global_step / self.initial_steps_per_cycle) ** self.frequency_decay_power
-            
-            # 2. Compute Cosine
             cos_val = math.cos(2 * math.pi * phase)
             weight = self.base_amplitude * cos_val
 
-        # 3. Apply Asymmetry (Mitigation)
         if weight < 0:
             weight = weight * self.negative_damping
 
-        # Update model config in-place
         if hasattr(self.config_module, 'adaptive_config') and self.config_module.adaptive_config is not None:
             self.config_module.adaptive_config.ponder_penalty_weight = weight
 
@@ -390,24 +339,6 @@ class Trainer:
     ) -> None:
         """
         Initializes the Trainer object.
-
-        Args:
-            global_rank (int): The global rank.
-            progress_publisher (MessagePublisher[ProgressUpdate]): Progress publisher.
-            evaluation_result_publisher (MessagePublisher[EvaluationResultBatch]): Evaluation result publisher.
-            gradient_acc_steps (int): Gradient accumulation steps.
-            global_num_tokens_per_train_step (int): Global number of tokens per train step.
-            dp_degree (int): Data parallelism degree.
-            pp_degree (int): Pipeline parallelism degree.
-            num_seen_train_steps (int): Number of seen train steps.
-            global_num_seen_tokens (int): Global number of seen tokens.
-            num_target_steps (int): Number of target steps.
-            num_target_tokens (int): Number of target tokens.
-            gradient_clipper (GradientClipperIF): Gradient clipper.
-            mfu_calculator (Optional[MFUCalculatorABC]): MFU calculator.
-
-        Returns:
-            None
         """
         self.global_rank = global_rank
         if device_mesh is not None:
@@ -431,16 +362,6 @@ class Trainer:
 
     @staticmethod
     def _get_num_train_steps_done(micro_batch_id: int, gradient_acc_steps: int) -> int:
-        """
-        Calculates the number of training steps done based on the micro batch ID and gradient accumulation steps.
-
-        Args:
-            micro_batch_id (int): The ID of the current micro batch.
-            gradient_acc_steps (int): The number of gradient accumulation steps.
-
-        Returns:
-            int: The number of training steps done.
-        """
         return (micro_batch_id + 1) // gradient_acc_steps
 
     def _train_batch(
@@ -455,31 +376,9 @@ class Trainer:
     ) -> tuple[bool, int, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Conducts a training step on batch of data.
-
-        Args:
-            batch (DatasetBatch): The input batch of data.
-            model (FSDP): The model to train.
-            optimizer (Optimizer): The optimizer used for training.
-            scheduler (LRScheduler): The learning rate scheduler.
-            loss_fun (Loss): The loss function used for training.
-            micro_batch_id (int): The ID of the micro batch.
-            scheduled_pipeline (Optional[Pipeline], optional): In case of pipeline parallelism, this is used to
-                operate the model. Defaults to None.
-
-        Returns:
-            tuple[bool, int, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
-                A tuple containing the following:
-                    - step_performed (bool): Indicates whether a training step was performed.
-                    - num_train_steps_done (int): The number of training steps done.
-                    - loss (Optional[torch.Tensor]): The computed loss.
-                        None, if a non-last stage was processes in pipeline parallelism.
-                    - gradient_norm_score (Optional[torch.Tensor]): The gradient norm score,
-                        if a training step was performed otherwise return None.
         """
         if scheduled_pipeline is not None:
             pp_schedule = scheduled_pipeline.pp_schedule
-            # Pipeline Parallel forward / backward inside step() call
-            # with self.train_context(optional_context_parallel_ctx):
             targets, losses = (
                 (batch.targets[loss_fun.target_key].contiguous(), [])
                 if scheduled_pipeline.is_last_pp_stage
@@ -524,19 +423,6 @@ class Trainer:
     ):
         """
         Trains the model.
-
-        Args:
-            app_state (AppState): The application state containing the model, optimizer and lr scheduler.
-            train_loader (LLMDataLoader): The data loader containing the training data.
-            loss_fun (Loss): The loss function used for training.
-            training_log_interval_in_steps (int): The interval at which training progress is logged.
-            evaluation_callback (Callable[[TrainingProgress], None]): A callback function for evaluation.
-            checkpointing_callback (Callable[[TrainingProgress], None]): A callback function for checkpointing.
-            scheduled_pipeline (Pipeline | None, optional): In case of pipeline parallelism, this is used to
-                operate the model. Defaults to None.
-
-        Returns:
-            None
         """
         model = app_state.model
         optimizer = app_state.optimizer
@@ -544,13 +430,24 @@ class Trainer:
         model.train()
 
         # ==============================================================================
-        # SCHEDULER SELECTION
-        scheduler_type = "constant"  # Options: "random", "constant_cycle", "decreasing", "asymmetric"
+        # SCHEDULER SELECTION (Dynamic from Config)
+        # ==============================================================================
         
+        # 1. Access the underlying model config safely
+        underlying_model = model.module if isinstance(model, FSDP) else model
+        
+        # 2. Get scheduler type string from config (default to "constant")
+        scheduler_type = "constant"
+        config_weight = 0.0
+        if hasattr(underlying_model, 'adaptive_config') and underlying_model.adaptive_config is not None:
+             scheduler_type = underlying_model.adaptive_config.scheduler_type
+             config_weight = getattr(underlying_model.adaptive_config, "ponder_penalty_weight", 0.0)
+
+        # 3. Select Scheduler
         if scheduler_type == "constant":
             ponder_scheduler = ConstantPonderScheduler(
                 model=model,
-                constant_value=0,
+                constant_value=config_weight,
             )
         elif scheduler_type == "random":
             ponder_scheduler = RandomPonderScheduler(
@@ -567,15 +464,13 @@ class Trainer:
                 end_weight=0.01
             )
         elif scheduler_type == "negative_asymmetric":
-            # STARTS at negative (reward), moves to positive (penalty)
             ponder_scheduler = NegativeStartAsymmetricPonderScheduler(
                 model=model,
                 steps_per_cycle=10, 
                 base_amplitude=0.3, 
-                negative_damping=0.2 # Damping applies immediately at step 0
+                negative_damping=0.2
             )
         elif scheduler_type == "decreasing":
-            # STARTS fast (short cycles) and slows down.
             ponder_scheduler = DecreasingFrequencyPonderScheduler(
                 model=model,
                 initial_steps_per_cycle=10,
@@ -606,7 +501,7 @@ class Trainer:
                 start_weight=0.1,
                 end_weight=0.01
             )
-        else:
+        elif scheduler_type == "asymmetric":
             # Default Asymmetric Cosine
             ponder_scheduler = AsymmetricPonderScheduler(
                 model=model,
@@ -627,10 +522,9 @@ class Trainer:
         cumulated_expected_steps = 0.0
         num_loss_accumulations = 0
         cumulated_normalized_steps = 0.0 
-        cumulated_step_gate = 0.0
+        
         cumulated_per_layer_costs: Optional[torch.Tensor] = None 
         cumulated_per_layer_sims: Optional[torch.Tensor] = None
-        cumulated_routing_matrix: Optional[torch.Tensor] = None
 
         # throughput
         thoughput_aggregator = Aggregator[ThroughputAggregationKeys]()
@@ -638,8 +532,6 @@ class Trainer:
 
         # batch loop
         batch: DatasetBatch
-        # TODO: why do we need a barrier here?
-        # dist.barrier()
         forward_backward_time_recorder = TimeRecorder()
         forward_backward_time_recorder.start()
         gradient_norm_scores = []
@@ -658,11 +550,10 @@ class Trainer:
 
         num_steps_todo = self.num_target_steps - self.num_seen_train_steps
         num_batches_todo = num_steps_todo * self.gradient_acc_steps
-        # Because we might resume training, we add the starting batch id of the data loader
+        
         for _, (micro_batch_id, batch) in zip(range(num_batches_todo), enumerate(train_loader)):
             
             # --- Update Ponder Weight ---
-            # Update the weight based on total steps seen
             current_ponder_weight = ponder_scheduler.step(training_progress.num_seen_steps_total)
             # ----------------------------
 
@@ -685,11 +576,10 @@ class Trainer:
             training_progress.num_seen_steps_current_run = num_train_steps_done
             training_progress.num_seen_tokens_current_run = self.global_num_tokens_per_train_step * num_train_steps_done
 
-            # The batch_loss might be None if we use pipeline parallelism and are not the last stage.
+            # Accumulate loss metrics
             if batch_loss is not None:
                 # Save the batch loss
                 cumulated_losses[0] += batch_loss.item()
-                # This works, because we always drop the last batch in case it has less samples than the batch size
                 cumulated_losses[-1] += 1  # number of local batches
                 
                 # Accumulate loss components if available
@@ -699,9 +589,8 @@ class Trainer:
                     cumulated_ponder_loss += components["ponder_loss"].item()
                     cumulated_ponder_cost_unweighted += components["ponder_cost_unweighted"].item()
                     cumulated_expected_steps += components["expected_steps"].item()
-
                     cumulated_normalized_steps += components.get("normalized_steps", torch.tensor(0.0)).item()
-                    cumulated_step_gate += components.get("step_gate_mean", torch.tensor(0.0)).item()
+
                     layer_costs = components.get("per_layer_ponder_costs", None)
                     if layer_costs is not None and layer_costs.numel() > 0:
                         if cumulated_per_layer_costs is None:
@@ -713,12 +602,6 @@ class Trainer:
                         if cumulated_per_layer_sims is None:
                             cumulated_per_layer_sims = torch.zeros_like(layer_sims)
                         cumulated_per_layer_sims += layer_sims
-
-                    routing_matrix = components.get("routing_matrix", None)
-                    if routing_matrix is not None:
-                        if cumulated_routing_matrix is None:
-                            cumulated_routing_matrix = torch.zeros_like(routing_matrix)
-                        cumulated_routing_matrix += routing_matrix
 
                     num_loss_accumulations += 1
 
@@ -734,6 +617,7 @@ class Trainer:
                 num_train_steps_done=training_progress.num_seen_steps_total,
                 dataloader_tag=train_loader.dataloader_tag,
             )
+            
             # Check if model performance should be logged
             if training_progress.num_seen_steps_total % training_log_interval_in_steps == 0 and step_performed:
                 forward_backward_time = torch.tensor(forward_backward_time_recorder.delta_t).to(device)
@@ -742,8 +626,7 @@ class Trainer:
                 thoughput_aggregator.add_value(
                     key=ThroughputAggregationKeys.FORWARD_BACKWARD_TIME, value=forward_backward_time
                 )
-                # we only want to sync the num samples across data parallel ranks
-                # so we divide the world size by the dp degree
+                
                 synced_num_samples = thoughput_aggregator.get_all_reduced_value(
                     ThroughputAggregationKeys.NUM_SAMPLES
                 ) / (dist.get_world_size() / self.dp_degree)
@@ -751,16 +634,13 @@ class Trainer:
                     ThroughputAggregationKeys.FORWARD_BACKWARD_TIME, reduce_operation=dist.ReduceOp.MAX
                 )
                 synced_num_samples_per_second = synced_num_samples / synced_forward_backward_time
-                # TODO: insert reducer from outside so Trainer is independent of FSDP
-                # add the loss and gradient norm for the LAST batch
-
+                
+                # Reduce total loss
                 cumulated_losses[1] = batch_loss.item() if batch_loss is not None else 0.0
 
                 reduced_losses = Reducer.reduce(
                     tensor=cumulated_losses,
                     operation=dist.ReduceOp.SUM,
-                    # 1.) summed batch loss / (num batches * (world size / dp_degree))
-                    # 2.) last batch loss / (world size / pp_degree)
                     post_processing_fun=lambda t: torch.stack(
                         [t[0] / t[-1], t[1] / dist.get_world_size() * self.pp_degree]
                     ),
@@ -779,10 +659,9 @@ class Trainer:
                     avg_ponder_cost = cumulated_ponder_cost_unweighted / num_loss_accumulations
                     avg_expected_steps = cumulated_expected_steps / num_loss_accumulations
                     avg_normalized_steps = cumulated_normalized_steps / num_loss_accumulations
-                    avg_step_gate = cumulated_step_gate / num_loss_accumulations
                     
                     scalars = torch.tensor(
-                        [avg_ce_loss, avg_ponder_loss, avg_ponder_cost, avg_expected_steps, avg_normalized_steps, avg_step_gate],
+                        [avg_ce_loss, avg_ponder_loss, avg_ponder_cost, avg_expected_steps, avg_normalized_steps],
                         device=device
                     )
 
@@ -817,9 +696,8 @@ class Trainer:
                     train_ponder_cost_avg = synced_tensor[2]
                     train_expected_steps_avg = synced_tensor[3]
                     train_normalized_steps_avg = synced_tensor[4]
-                    train_step_gate_avg = synced_tensor[5]
                     
-                    # 5. Unpack Layer Vectors (Robust Version)
+                    # 5. Unpack Layer Vectors
                     current_idx = num_scalars
                     
                     if num_cost_layers > 0:
@@ -840,99 +718,106 @@ class Trainer:
                     train_ponder_cost_avg = torch.tensor(0.0)
                     train_expected_steps_avg = torch.tensor(0.0)
                     train_normalized_steps_avg = torch.tensor(0.0)
-                    train_step_gate_avg = torch.tensor(0.0)
                     synced_layer_costs = []
                     synced_layer_sims = []
                 
+                # ==============================================================================
+                # LOGGING / METRICS CONSTRUCTION
+                # ==============================================================================
+                
                 losses = {
-                    "train/loss_avg": ResultItem(train_loss_avg, decimal_places=2),
-                    "train/loss_last": ResultItem(train_loss_last_batch, decimal_places=2),
-                    "train/ce_loss_avg": ResultItem(train_ce_loss_avg, decimal_places=2),
-                    "train/ponder_loss_avg": ResultItem(train_ponder_loss_avg, decimal_places=5),
+                    "loss/avg": ResultItem(train_loss_avg, decimal_places=2),
+                    "loss/last": ResultItem(train_loss_last_batch, decimal_places=2),
+                    "loss/ce_avg": ResultItem(train_ce_loss_avg, decimal_places=2),
+                    "ponder/loss_avg": ResultItem(train_ponder_loss_avg, decimal_places=5),
                 }
 
                 consumed_tokens = torch.tensor(training_progress.num_seen_tokens_total)
+                
                 metrics = {
-                    "train/consumed_tokens": ResultItem(consumed_tokens, 0),
-                    "train/grad_norm_avg": ResultItem(torch.mean(torch.Tensor(gradient_norm_scores)), 2),
-                    "train/grad_norm_last": ResultItem(torch.tensor(gradient_norm_scores[-1]), 2),
-                    "train/expected_steps_avg": ResultItem(train_expected_steps_avg, 2),
-                    "train/ponder_cost_avg": ResultItem(train_ponder_cost_avg, 2),
-                    "train/normalized_steps_avg": ResultItem(train_normalized_steps_avg, 3),
-                    "train/step_gate_avg": ResultItem(train_step_gate_avg, 4),
-                    # --- [Log current weight to check scheduler] ---
-                    "train/ponder_weight": ResultItem(torch.tensor(current_ponder_weight), 4),
+                    "progress/consumed_tokens": ResultItem(consumed_tokens, 0),
+                    "grads/norm_avg": ResultItem(torch.mean(torch.Tensor(gradient_norm_scores)), 2),
+                    "grads/norm_last": ResultItem(torch.tensor(gradient_norm_scores[-1]), 2),
+                    "adaptive/expected_steps_avg": ResultItem(train_expected_steps_avg, 2),
+                    "adaptive/ponder_cost_avg": ResultItem(train_ponder_cost_avg, 2),
+                    "adaptive/normalized_steps_avg": ResultItem(train_normalized_steps_avg, 3),
+                    "adaptive/ponder_weight": ResultItem(torch.tensor(current_ponder_weight), 4),
                 }
 
+                # --- 1. Average Layer Stats (The Overview) ---
+                if len(synced_layer_costs) > 0:
+                    metrics["adaptive/avg_layer_cost"] = ResultItem(synced_layer_costs.mean(), 2)
+                    metrics["adaptive/avg_layer_cos_sim"] = ResultItem(synced_layer_sims.mean(), 4)
+
+                # --- 2. Detailed Layer Stats (The specific dashboard) ---
                 for i, cost_val in enumerate(synced_layer_costs):
-                    metrics[f"train/layer_{i}/ponder_cost"] = ResultItem(cost_val, 2)
+                    metrics[f"layers/{i}/ponder_cost"] = ResultItem(cost_val, 2)
 
                 for i, sim_val in enumerate(synced_layer_sims):
-                    metrics[f"train/layer_{i}/cos_sim"] = ResultItem(sim_val, 4)
+                    metrics[f"layers/{i}/cos_sim"] = ResultItem(sim_val, 4)
 
-                if cumulated_routing_matrix is not None and num_loss_accumulations > 0:
-                    avg_routing = cumulated_routing_matrix / num_loss_accumulations
-                    for src_layer in range(avg_routing.size(0)):
-                        for tgt_bank in range(avg_routing.size(1)):
-                            metrics[f"routing/layer_{src_layer}_to_bank_{tgt_bank}"] = ResultItem(
-                                avg_routing[src_layer, tgt_bank], 4
-                            )
-
+                # --- 3. Complex Metrics (Vectors) with Averages ---
                 if hasattr(loss_fun, 'get_loss_components'):
                     components = loss_fun.get_loss_components()
+                    
+                    # --- Loop Scales ---
                     batch_scales = components.get("loop_scales")
                     if batch_scales is not None and batch_scales.numel() > 0:
-                        scales_cpu = batch_scales.cpu()
+                        scales_cpu = batch_scales.float().cpu() # Shape: [n_layers, n_loops]
+                        
+                        # Overview: Average per step across all layers
+                        avg_scales = torch.mean(scales_cpu, dim=0) 
+                        for j, val in enumerate(avg_scales):
+                            metrics[f"adaptive/avg_loop_scale_step_{j}"] = ResultItem(val, 4)
+
+                        # Detailed: Per layer
                         for i, layer_scales in enumerate(scales_cpu):
                             for j, val in enumerate(layer_scales):
-                                metrics[f"train/layer_{i}/loop_scale_{j}"] = ResultItem(val, 4)
+                                metrics[f"layers/{i}/loop_scale_{j}"] = ResultItem(val, 4)
 
-                    # --- NEW HALT PROBS ---
+                    # --- Halt Probs ---
                     batch_halt_probs = components.get("halt_probs")
                     if batch_halt_probs is not None and batch_halt_probs.numel() > 0:
-                        probs_cpu = batch_halt_probs.float().cpu()
+                        probs_cpu = batch_halt_probs.float().cpu() # Shape: [n_layers, n_loops]
+
+                        # Overview: Average per step across all layers
+                        avg_probs = torch.mean(probs_cpu, dim=0)
+                        for j, val in enumerate(avg_probs):
+                            metrics[f"adaptive/avg_halt_prob_step_{j}"] = ResultItem(val, 4)
+
+                        # Detailed: Per layer
                         for i, layer_probs in enumerate(probs_cpu):
                             for j, val in enumerate(layer_probs):
-                                # Log as layer_X/halt_prob_Y
-                                metrics[f"layer_{i}/halt_prob_{j}"] = ResultItem(val, 4)
+                                metrics[f"layers/{i}/halt_prob_{j}"] = ResultItem(val, 4)
 
-                    # --- LOCAL MEM SCALES ---
+                    # --- Local Mem Scales ---
                     batch_local_mem_scales = components.get("local_mem_scales")
                     if batch_local_mem_scales is not None and batch_local_mem_scales.numel() > 0:
-                        local_scales_cpu = batch_local_mem_scales.float().cpu()
-                        for i, val in enumerate(local_scales_cpu):
-                            metrics[f"layer_{i}/local_mem_scale"] = ResultItem(val, 4)
-                        metrics["train/local_mem_scale_mean"] = ResultItem(local_scales_cpu.mean(), 4)
+                        scales_cpu = batch_local_mem_scales.float().cpu()
+                        metrics["adaptive/avg_local_mem_scale"] = ResultItem(scales_cpu.mean(), 4)
+                        for layer_idx, val in enumerate(scales_cpu):
+                            metrics[f"layers/{layer_idx}/local_mem_scale"] = ResultItem(val, 4)
 
-                    # --- GLOBAL MEM SCALES ---
+                    # --- Global Mem Scales ---
                     batch_global_mem_scales = components.get("global_mem_scales")
                     if batch_global_mem_scales is not None and batch_global_mem_scales.numel() > 0:
-                        global_scales_cpu = batch_global_mem_scales.float().cpu()
-                        for i, val in enumerate(global_scales_cpu):
-                            metrics[f"layer_{i}/global_mem_scale"] = ResultItem(val, 4)
-                        metrics["train/global_mem_scale_mean"] = ResultItem(global_scales_cpu.mean(), 4)
-
-                    batch_temps = components.get("halt_temperatures")
-                    if batch_temps is not None and batch_temps.numel() > 0:
-                        temps_cpu = batch_temps.float().cpu() 
-                        for i, val in enumerate(temps_cpu):
-                            metrics[f"train/layer_{i}/halt_temperature"] = ResultItem(val, 4)
-
+                        scales_cpu = batch_global_mem_scales.float().cpu()
+                        metrics["adaptive/avg_global_mem_scale"] = ResultItem(scales_cpu.mean(), 4)
+                        for layer_idx, val in enumerate(scales_cpu):
+                            metrics[f"layers/{layer_idx}/global_mem_scale"] = ResultItem(val, 4)
 
                 gradient_norm_scores = []
                 mfu_score = torch.tensor(-1.0)
                 if self.mfu_calculator is not None:
                     mfu_score = self.mfu_calculator.compute(num_samples_per_second=synced_num_samples_per_second)
 
-                # Collect peak memory depending on device type. On CPU we fall back to RSS (if available) or -1.
+                # Collect peak memory depending on device type
                 if device.type == "cuda":
                     peak_memory_MB = torch.cuda.max_memory_allocated(device) / 1024**2  # in MB
                     torch.cuda.reset_peak_memory_stats(device)
                 else:
-                    # ru_maxrss is in kilobytes on Linux; convert to MB. Use -1.0 if resource unavailable.
                     try:
-                        import resource  # Standard lib (POSIX). Not available on some platforms.
-
+                        import resource 
                         peak_memory_MB = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
                     except Exception:
                         peak_memory_MB = -1.0
@@ -965,24 +850,19 @@ class Trainer:
                 cumulated_ponder_cost_unweighted = 0.0
                 cumulated_expected_steps = 0.0
                 cumulated_normalized_steps = 0.0
-                cumulated_step_gate = 0.0
                 cumulated_per_layer_costs = None
                 cumulated_per_layer_sims = None
-                cumulated_routing_matrix = None
                 num_loss_accumulations = 0
                 
             if step_performed:
                 evaluation_callback(num_train_steps_done=training_progress.num_seen_steps_total)
                 checkpointing_callback(training_progress=training_progress)
-            # we start the time recoder here again to also capture the time spend loading
-            # via the dataloader.
+            
             forward_backward_time_recorder.start()
 
 
     def _reset_tracked_losses(self):
         # Initializes and returns a tensor representing the cumulated loss and gradient norm.
-        # The tensor is initialized with zeros and its device is set based on the availability of CUDA.
-
         cumulated_loss_and_gradient_norm = torch.zeros(3)
         if torch.cuda.is_available():
             cumulated_loss_and_gradient_norm = cumulated_loss_and_gradient_norm.to(torch.device("cuda"))
@@ -996,8 +876,6 @@ class Trainer:
         num_train_steps_done: int,
         dataloader_tag: str,
     ):
-        # Publishes the progress of the training, i.e., number of training steps done.
-
         payload = ProgressUpdate(
             num_steps_done=num_train_steps_done,
             experiment_status=ExperimentStatus.TRAIN,
@@ -1010,8 +888,6 @@ class Trainer:
         evaluation_result_publisher: MessagePublisher[EvaluationResultBatch],
         evaluation_result: EvaluationResultBatch,
     ):
-        # Publishes the evaluation result.
-
         evaluation_result_publisher.publish_message(
             payload=evaluation_result, message_type=MessageTypes.EVALUATION_RESULT
         )

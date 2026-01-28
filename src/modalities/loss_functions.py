@@ -99,11 +99,12 @@ class CLMCrossEntropyWithPonderLoss(Loss):
         self.prediction_key = prediction_key
         self.ce_loss_fun = CrossEntropyLoss(reduction="mean")
         
-        self._last_ce_loss = None
-        self._last_ponder_loss = None
-        self._last_ponder_cost_unweighted = None
-        self._last_expected_steps = None
-        self._last_normalized_steps = None
+        # Initialize trackers
+        self._last_ce_loss = torch.tensor(0.0)
+        self._last_ponder_loss = torch.tensor(0.0)
+        self._last_ponder_cost_unweighted = torch.tensor(0.0)
+        self._last_expected_steps = torch.tensor(0.0)
+        self._last_normalized_steps = torch.tensor(0.0)
         self._last_per_layer_ponder_costs = None
         self._last_per_layer_cos_sims = None
         self._last_loop_scales = None
@@ -120,6 +121,8 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             ponder_cost_unweighted = outputs.get("ponder_cost_unweighted", torch.tensor(0.0, device=lm_logits.device))
             expected_steps = outputs.get("expected_steps", torch.tensor(0.0, device=lm_logits.device))
             normalized_steps = outputs.get("normalized_steps", torch.tensor(0.0, device=lm_logits.device))
+            
+            # Tensors / Lists
             per_layer_ponder_costs = outputs.get("per_layer_ponder_costs", None)
             per_layer_cos_sims = outputs.get("per_layer_cos_sims", None)
             loop_scales = outputs.get("loop_scales", None)
@@ -142,16 +145,18 @@ class CLMCrossEntropyWithPonderLoss(Loss):
         labels = labels.to(lm_logits.device)
         shift_logits = lm_logits.contiguous()
         shift_labels = labels.contiguous().long()
+        
         ce_loss = self.ce_loss_fun(
             shift_logits.view(-1, shift_logits.size(-1)), 
             shift_labels.view(-1)
         )
         
+        # Store for retrieval by Trainer
         self._last_ce_loss = ce_loss.detach()
-        self._last_ponder_loss = ponder_loss.detach() if isinstance(ponder_loss, torch.Tensor) else torch.tensor(0.0)
-        self._last_ponder_cost_unweighted = ponder_cost_unweighted.detach() if isinstance(ponder_cost_unweighted, torch.Tensor) else torch.tensor(0.0)
-        self._last_expected_steps = expected_steps.detach() if isinstance(expected_steps, torch.Tensor) else torch.tensor(0.0)
-        self._last_normalized_steps = normalized_steps.detach() if isinstance(normalized_steps, torch.Tensor) else torch.tensor(0.0)
+        self._last_ponder_loss = ponder_loss.detach()
+        self._last_ponder_cost_unweighted = ponder_cost_unweighted.detach()
+        self._last_expected_steps = expected_steps.detach()
+        self._last_normalized_steps = normalized_steps.detach()
         self._last_per_layer_ponder_costs = per_layer_ponder_costs.detach() if per_layer_ponder_costs is not None else None
         self._last_per_layer_cos_sims = per_layer_cos_sims.detach() if per_layer_cos_sims is not None else None
         self._last_loop_scales = loop_scales if loop_scales is not None else None
@@ -161,20 +166,23 @@ class CLMCrossEntropyWithPonderLoss(Loss):
         
         total_loss = ce_loss + ponder_loss
         return total_loss
-    
-    def get_loss_components(self) -> dict[str, torch.Tensor]:
+
+    def get_loss_components(self):
+        """
+        Returns a dictionary of the components of the last calculated loss.
+        """
         return {
-            "ce_loss": self._last_ce_loss if self._last_ce_loss is not None else torch.tensor(0.0),
-            "ponder_loss": self._last_ponder_loss if self._last_ponder_loss is not None else torch.tensor(0.0),
-            "ponder_cost_unweighted": self._last_ponder_cost_unweighted if self._last_ponder_cost_unweighted is not None else torch.tensor(0.0),
-            "expected_steps": self._last_expected_steps if self._last_expected_steps is not None else torch.tensor(0.0),
-            "normalized_steps": self._last_normalized_steps if self._last_normalized_steps is not None else torch.tensor(0.0),
-            "per_layer_ponder_costs": self._last_per_layer_ponder_costs if self._last_per_layer_ponder_costs is not None else torch.tensor([]),
-            "per_layer_cos_sims": self._last_per_layer_cos_sims if self._last_per_layer_cos_sims is not None else torch.tensor([]),
-            "loop_scales": self._last_loop_scales if self._last_loop_scales is not None else torch.tensor([]),
-            "halt_probs": self._last_halt_probs if self._last_halt_probs is not None else torch.tensor([]),
-            "local_mem_scales": self._last_local_mem_scales if self._last_local_mem_scales is not None else torch.tensor([]),
-            "global_mem_scales": self._last_global_mem_scales if self._last_global_mem_scales is not None else torch.tensor([]),
+            "ce_loss": self._last_ce_loss,
+            "ponder_loss": self._last_ponder_loss,
+            "ponder_cost_unweighted": self._last_ponder_cost_unweighted,
+            "expected_steps": self._last_expected_steps,
+            "normalized_steps": self._last_normalized_steps,
+            "per_layer_ponder_costs": self._last_per_layer_ponder_costs,
+            "per_layer_cos_sims": self._last_per_layer_cos_sims,
+            "loop_scales": self._last_loop_scales,
+            "halt_probs": self._last_halt_probs,
+            "local_mem_scales": self._last_local_mem_scales,
+            "global_mem_scales": self._last_global_mem_scales,
         }
 
     def _parse_arguments(

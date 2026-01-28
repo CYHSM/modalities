@@ -13,7 +13,7 @@ from olmes_evaluator import evaluate_modalities_checkpoint
 
 # --- CONFIGURATION MATCHING YOUR CLI ---
 ENTITY = "cyhsm"
-PROJECT = "loop"
+PROJECT = "loom"
 CHECKPOINTS_ROOT = "/raid/s3/opengptx/mfrey/loop/checkpoints"
 BENCHMARK_ROOT = "./benchmarks_v1" 
 
@@ -43,9 +43,22 @@ FOLDER_MAPPING = {
     #"2026-01-13__16-31-27_68708f8c380c52c4": "7lswnrp7",
     #"2026-01-13__16-19-19_4fde1337716312ed": "2qwnjk33",
     #"2026-01-13__16-17-05_cfb2b82b2d1f3129": "kb904d0r",
-    "2026-01-13__16-15-53_ac0fe16b31e73093": "15dsfdv6", 
-    "2026-01-14__08-46-21_d2cfb3a1e9e8f3b1": "pw702435",
-    "2026-01-15__09-28-10_6293597212cdaed8": "2u49bm6x",
+    # "2026-01-13__16-15-53_ac0fe16b31e73093": "15dsfdv6", 
+    # "2026-01-14__08-46-21_d2cfb3a1e9e8f3b1": "pw702435",
+    # "2026-01-15__09-28-10_6293597212cdaed8": "2u49bm6x",
+    # "2026-01-21__15-18-18_6293597212cdaed8": "775dn24r",
+    # "2026-01-21__15-28-45_6293597212cdaed8": "f3jqn4le",
+    # "2026-01-22__15-05-59_6293597212cdaed8": "doljtbka",
+    #"2026-01-23__19-52-07_6756580fe4bb252b": "zhvqr1sl",
+    #"2026-01-23__22-42-46_6756580fe4bb252b": "fu2lz8ci",
+    #"2026-01-23__22-45-27_6756580fe4bb252b": "89w112fv",
+    "2026-01-25__01-09-00_6756580fe4bb252b": "t5qfh6mu",
+    "2026-01-26__11-06-54_e3e769aaa0033a7e": "zxwh48wu",
+    "2026-01-26__11-16-53_96a467fd7a75f1db": "2h4fgihj",
+    "2026-01-26__11-22-50_82a1729fd64c49f8": "1ket85g0",
+    "2026-01-26__13-49-58_9ffb0931b75711c2": "jhtbyhil",
+    "2026-01-26__13-52-26_a8c42b25b4d84f03": "dy705ftt",
+    "2026-01-26__14-49-40_02da07efbc8445e6": "acw5j6ox",
 }
 
 
