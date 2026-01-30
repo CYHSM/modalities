@@ -354,6 +354,10 @@ def load_modalities_model(
 ) -> tuple:
     """
     Load a modalities model from either a DCP or standard checkpoint.
+    
+    Note: If converted_output_dir is provided, the caller is responsible for
+    cleaning it up. If not provided, this function requires that
+    converted_output_dir is set by the caller (e.g., evaluate_modalities_checkpoint).
     """
     # Check if this is a DCP checkpoint
     if os.path.isdir(checkpoint_path):
@@ -361,13 +365,13 @@ def load_modalities_model(
         if is_dcp_checkpoint(actual_ckpt_dir):
             print(f"Detected distributed checkpoint (DCP) at: {actual_ckpt_dir}")
             
-            # Create output directory for converted checkpoint
-            use_temp_dir = converted_output_dir is None
-            if use_temp_dir:
-                converted_output_dir = tempfile.mkdtemp(prefix="modalities_converted_")
-                print(f"Using temporary directory: {converted_output_dir}")
-            else:
-                os.makedirs(converted_output_dir, exist_ok=True)
+            if converted_output_dir is None:
+                raise ValueError(
+                    "converted_output_dir must be provided for DCP checkpoints. "
+                    "The caller is responsible for cleanup."
+                )
+            
+            os.makedirs(converted_output_dir, exist_ok=True)
             
             # Convert DCP to PyTorch format
             print(f"Converting DCP to PyTorch format...")
@@ -459,154 +463,168 @@ def evaluate_modalities_checkpoint(
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    print(f"Loading model from {checkpoint_path}...")
-    model, tokenizer, _ = load_modalities_model(
-        checkpoint_path=checkpoint_path,
-        config_path=config_path,
-        model_key=model_key,
-        converted_output_dir=converted_checkpoint_dir,
-    )
+    # Handle temporary directory for DCP conversion
+    temp_dir_to_cleanup = None
+    if converted_checkpoint_dir is None:
+        temp_dir_to_cleanup = tempfile.mkdtemp(prefix="modalities_converted_")
+        converted_checkpoint_dir = temp_dir_to_cleanup
+        print(f"Using temporary directory: {converted_checkpoint_dir}")
     
-    print("Wrapping model for OLMES...")
-    olmes_model = ModalitiesOLMESWrapper(
-        model=model,
-        tokenizer=tokenizer,
-        max_length=max_length,
-        batch_size=batch_size,
-        device=torch.device(device),
-    )
-    
-    os.makedirs(output_dir, exist_ok=True)
-    
-    model_config = {
-        "model": checkpoint_path,
-        "model_type": "modalities",
-        "max_length": max_length,
-    }
-    model_hash = hash_dict(model_config, MODEL_DEFAULTS)
-    
-    compute_config = {
-        "batch_size": batch_size,
-        "output_dir": output_dir,
-        "num_recorded_inputs": 3,
-        "gsheet": None,
-        "hf_save_dir": None,
-        "save_raw_requests": True,
-        "recompute_metrics": False,
-        "wandb_run_path": None,
-        "wandb_run_step": None,
-    }
-    
-    # Resolve task suites and get full task configs
-    print(f"Resolving {len(tasks)} task(s)/suite(s)...")
-    task_configs = resolve_tasks_and_configs(tasks)
-    print(f"Expanded to {len(task_configs)} individual task(s)")
-    
-    # Apply limit override if specified
-    if limit is not None:
-        for tc in task_configs:
-            tc["limit"] = limit
-    
-    all_metrics = []
-    
-    for task_idx, task_config in enumerate(task_configs):
-        task_name = task_config.get("metadata", {}).get("alias") or task_config.get("task_name")
-        print(f"\n{'='*60}")
-        print(f"Task {task_idx + 1}/{len(task_configs)}: {task_name}")
-        print(f"{'='*60}")
-        
-        task = load_task(task_config, output_dir)
-        task_hash = task._task_hash
-        
-        print(f"  Downloading...")
-        task.download()
-        task.set_model(olmes_model, model_config)
-        
-        print(f"  Building requests...")
-        task.build_all_requests()
-        
-        instances = task._instances or []
-        print(f"  Instances: {len(instances)}")
-        
-        if not instances:
-            print(f"  Skipping (no instances)")
-            continue
-        
-        print(f"  Running inference...")
-        start_time = datetime.datetime.now()
-        
-        results_for_requests = evaluate(
-            model=olmes_model,
-            instances=instances,
-            task_config=task.task_config,
-            model_config=model_config,
+    try:
+        print(f"Loading model from {checkpoint_path}...")
+        model, tokenizer, _ = load_modalities_model(
+            checkpoint_path=checkpoint_path,
+            config_path=config_path,
+            model_key=model_key,
+            converted_output_dir=converted_checkpoint_dir,
         )
-        processing_time = (datetime.datetime.now() - start_time).total_seconds()
-        task.make_metrics()
         
-        full_config = {
-            "task_name": task_name,
-            "task_hash": task_hash["hash"],
-            "model_hash": model_hash["hash"],
-            "model_config": model_config,
-            "task_config": task.task_config,
-            "compute_config": compute_config,
-            "processing_time": processing_time,
-            "current_date": datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            "num_instances": 0,
-            "beaker_info": {},
+        print("Wrapping model for OLMES...")
+        olmes_model = ModalitiesOLMESWrapper(
+            model=model,
+            tokenizer=tokenizer,
+            max_length=max_length,
+            batch_size=batch_size,
+            device=torch.device(device),
+        )
+        
+        os.makedirs(output_dir, exist_ok=True)
+        
+        model_config = {
+            "model": checkpoint_path,
+            "model_type": "modalities",
+            "max_length": max_length,
+        }
+        model_hash = hash_dict(model_config, MODEL_DEFAULTS)
+        
+        compute_config = {
+            "batch_size": batch_size,
+            "output_dir": output_dir,
+            "num_recorded_inputs": 3,
+            "gsheet": None,
+            "hf_save_dir": None,
+            "save_raw_requests": True,
+            "recompute_metrics": False,
+            "wandb_run_path": None,
+            "wandb_run_step": None,
         }
         
-        eval_requests_raw = [ins.to_dict() for ins in instances]
-        metrics = compute_save_metrics(
-            task_idx=task_idx,
-            task=task,
-            full_config=full_config,
-            compute_config=compute_config,
-            eval_requests_raw=eval_requests_raw,
-            results_for_requests=results_for_requests,
-        )
-        all_metrics.append(metrics)
+        # Resolve task suites and get full task configs
+        print(f"Resolving {len(tasks)} task(s)/suite(s)...")
+        task_configs = resolve_tasks_and_configs(tasks)
+        print(f"Expanded to {len(task_configs)} individual task(s)")
         
-        print(f"\n  Primary score: {metrics['metrics'].get('primary_score', 'N/A')}")
-    
-    # Compute aggregate metrics for task suites
-    print(f"\n{'='*60}")
-    print("Computing aggregate metrics...")
-    print(f"{'='*60}")
-    aggregate_metrics = add_aggregate_tasks(all_metrics)
-    
-    # Combine aggregate metrics with individual metrics
-    all_metrics_with_aggregates = aggregate_metrics + all_metrics
-    
-    # Save results
-    with open(os.path.join(output_dir, "all_results.json"), "w") as f:
-        json.dump(all_metrics_with_aggregates, f, indent=2, default=str)
-    
-    # Summary
-    print(f"\n{'='*60}")
-    print("SUMMARY")
-    print(f"{'='*60}")
-    
-    # Print aggregate scores first
-    if aggregate_metrics:
-        print("\n  Aggregate scores:")
-        for m in aggregate_metrics:
+        # Apply limit override if specified
+        if limit is not None:
+            for tc in task_configs:
+                tc["limit"] = limit
+        
+        all_metrics = []
+        
+        for task_idx, task_config in enumerate(task_configs):
+            task_name = task_config.get("metadata", {}).get("alias") or task_config.get("task_name")
+            print(f"\n{'='*60}")
+            print(f"Task {task_idx + 1}/{len(task_configs)}: {task_name}")
+            print(f"{'='*60}")
+            
+            task = load_task(task_config, output_dir)
+            task_hash = task._task_hash
+            
+            print(f"  Downloading...")
+            task.download()
+            task.set_model(olmes_model, model_config)
+            
+            print(f"  Building requests...")
+            task.build_all_requests()
+            
+            instances = task._instances or []
+            print(f"  Instances: {len(instances)}")
+            
+            if not instances:
+                print(f"  Skipping (no instances)")
+                continue
+            
+            print(f"  Running inference...")
+            start_time = datetime.datetime.now()
+            
+            results_for_requests = evaluate(
+                model=olmes_model,
+                instances=instances,
+                task_config=task.task_config,
+                model_config=model_config,
+            )
+            processing_time = (datetime.datetime.now() - start_time).total_seconds()
+            task.make_metrics()
+            
+            full_config = {
+                "task_name": task_name,
+                "task_hash": task_hash["hash"],
+                "model_hash": model_hash["hash"],
+                "model_config": model_config,
+                "task_config": task.task_config,
+                "compute_config": compute_config,
+                "processing_time": processing_time,
+                "current_date": datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "num_instances": 0,
+                "beaker_info": {},
+            }
+            
+            eval_requests_raw = [ins.to_dict() for ins in instances]
+            metrics = compute_save_metrics(
+                task_idx=task_idx,
+                task=task,
+                full_config=full_config,
+                compute_config=compute_config,
+                eval_requests_raw=eval_requests_raw,
+                results_for_requests=results_for_requests,
+            )
+            all_metrics.append(metrics)
+            
+            print(f"\n  Primary score: {metrics['metrics'].get('primary_score', 'N/A')}")
+        
+        # Compute aggregate metrics for task suites
+        print(f"\n{'='*60}")
+        print("Computing aggregate metrics...")
+        print(f"{'='*60}")
+        aggregate_metrics = add_aggregate_tasks(all_metrics)
+        
+        # Combine aggregate metrics with individual metrics
+        all_metrics_with_aggregates = aggregate_metrics + all_metrics
+        
+        # Save results
+        with open(os.path.join(output_dir, "all_results.json"), "w") as f:
+            json.dump(all_metrics_with_aggregates, f, indent=2, default=str)
+        
+        # Summary
+        print(f"\n{'='*60}")
+        print("SUMMARY")
+        print(f"{'='*60}")
+        
+        # Print aggregate scores first
+        if aggregate_metrics:
+            print("\n  Aggregate scores:")
+            for m in aggregate_metrics:
+                score = m["metrics"].get("primary_score", "N/A")
+                score_str = f"{score:.4f}" if isinstance(score, float) else str(score)
+                print(f"    {m['task_name']}: {score_str}")
+        
+        # Print individual scores
+        print("\n  Individual task scores:")
+        for m in all_metrics:
+            task_name = m["task_config"].get("metadata", {}).get("alias", m["task_name"])
             score = m["metrics"].get("primary_score", "N/A")
             score_str = f"{score:.4f}" if isinstance(score, float) else str(score)
-            print(f"    {m['task_name']}: {score_str}")
+            print(f"    {task_name}: {score_str}")
+        
+        print(f"\nResults saved to: {output_dir}")
+        
+        return {"metrics": all_metrics_with_aggregates, "output_dir": output_dir}
     
-    # Print individual scores
-    print("\n  Individual task scores:")
-    for m in all_metrics:
-        task_name = m["task_config"].get("metadata", {}).get("alias", m["task_name"])
-        score = m["metrics"].get("primary_score", "N/A")
-        score_str = f"{score:.4f}" if isinstance(score, float) else str(score)
-        print(f"    {task_name}: {score_str}")
-    
-    print(f"\nResults saved to: {output_dir}")
-    
-    return {"metrics": all_metrics_with_aggregates, "output_dir": output_dir}
+    finally:
+        # Clean up temporary directory if we created one
+        if temp_dir_to_cleanup and os.path.exists(temp_dir_to_cleanup):
+            print(f"Cleaning up temporary directory: {temp_dir_to_cleanup}")
+            shutil.rmtree(temp_dir_to_cleanup)
 
 
 if __name__ == "__main__":
