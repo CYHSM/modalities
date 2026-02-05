@@ -1001,7 +1001,7 @@ model_raw:
     sequence_length: ${settings.step_profile.sequence_length}
     prediction_key: ${loss_fn.config.prediction_key}
     vocab_size: 50304
-    n_layer: 36
+    n_layer: 12
     n_head_q: 12
     n_head_kv: 12
     ffn_hidden: 3072
@@ -1039,10 +1039,14 @@ model_raw:
         normalized_shape: 768
         eps: 1.0e-05
     adaptive_config:
-      enable_adaptive: false
-      max_loops: 3
+      enable_adaptive: true
+      max_loops: 1
       halt_threshold: 0.99
       ponder_penalty_weight: 0.0
+      use_memory_bank: false
+      num_local_slots: 512
+      num_global_slots: 1024
+      scheduler_type: "constant"
 
 lr_scheduler:
   component_key: scheduler
@@ -1102,8 +1106,8 @@ evaluation_subscriber:
   variant_key: wandb
   config:
     global_rank: ${settings.cuda_env.global_rank}
-    project: loop
-    mode: OFFLINE
-    experiment_id: mf_looped_125M_3.0_3.5_65_B_tokens_mfconfig
+    project: loom
+    mode: ONLINE
+    experiment_id: loop1_without_memory
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}

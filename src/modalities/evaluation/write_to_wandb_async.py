@@ -5,10 +5,13 @@ import json
 import traceback
 import time
 import gc
-import torch 
 from pathlib import Path
+import multiprocessing as mp  # Use stdlib multiprocessing, NOT torch.multiprocessing
+import queue  # Standard library queue
 
-from olmes_evaluator import evaluate_modalities_checkpoint
+# NOTE: torch and olmes_evaluator are intentionally NOT imported here.
+# They must be imported INSIDE the worker process AFTER setting
+# CUDA_VISIBLE_DEVICES, otherwise CUDA initializes on GPU 0.
 
 # --- CONFIGURATION MATCHING YOUR CLI ---
 ENTITY = "cyhsm"
@@ -17,7 +20,7 @@ CHECKPOINTS_ROOT = "/raid/s3/opengptx/mfrey/loop/checkpoints"
 BENCHMARK_ROOT = "/raid/s3/opengptx/mfrey/loop/benchmarks_full" 
 
 # WANDB TOGGLE
-USE_WANDB = True  # Set to True to log to wandb, False to only save to disk
+USE_WANDB = False  # Set to True to log to wandb, False to only save to disk
 
 # Only import wandb if needed
 if USE_WANDB:
@@ -85,53 +88,58 @@ EXPERIMENT_MANIFEST = [
     #     "folder": "2026-01-26__13-49-58_9ffb0931b75711c2",
     # },
 
-    # # ==========================================
-    # # 3. LOOP 3 VARIANTS (Core & MVD)
-    # # ==========================================
-    # {
-    #     "name":   "loop3_buckets_mvd",
-    #     "run_id": "6kibshcj",
-    #     "folder": "2026-01-15__09-28-10_6293597212cdaed8", #fix
-    # },
-    # {
-    #     "name":   "loop3_iso_mvd",
-    #     "run_id": "90ndflhs",
-    #     "folder": "2026-01-13__16-17-05_cfb2b82b2d1f3129",
-    # },
-    # {
-    #     "name":   "loop3_L1024G512_ponder001",
-    #     "run_id": "7mzvjajg",
-    #     "folder": "2026-01-27__15-24-04_043e421a1b54accb",
-    # },
-    # {
-    #     "name":   "loop3_L1024G512_ponder-001",
-    #     "run_id": "a8wysxso",
-    #     "folder": "2026-01-27__15-23-57_938b4efba13f5ed5",
-    # },
+    # ==========================================
+    # 3. LOOP 3 VARIANTS (Core & MVD)
+    # ==========================================
+    {
+        "name":   "loop3_buckets_mvd",
+        "run_id": "6kibshcj",
+        "folder": "2026-01-15__09-28-10_6293597212cdaed8",
+    },
+    {
+        "name":   "loop3_iso_mvd",
+        "run_id": "90ndflhs",
+        "folder": "2026-01-13__16-17-05_cfb2b82b2d1f3129",
+    },
+    {
+        "name":   "loop3_L1024G512_cyclical",
+        "run_id": "b7l63bce",
+        "folder": "2026-01-27__14-04-59_c8fdbd942cf02ca0",
+    },
+    {
+        "name":   "loop3_L1024G512_ponder001",
+        "run_id": "7mzvjajg",
+        "folder": "2026-01-27__15-24-04_043e421a1b54accb",
+    },
+    {
+        "name":   "loop3_L1024G512_ponder-001",
+        "run_id": "a8wysxso",
+        "folder": "2026-01-27__15-23-57_938b4efba13f5ed5",
+    },
 
-    # # ==========================================
-    # # 4. LOOP 3 VARIANTS (Individual Memory / Init)
-    # # ==========================================
-    # {
-    #     "name":   "loop3_L1024G512_individualMemory_frozenmem",
-    #     "run_id": "t5qfh6mu",
-    #     "folder": "2026-01-25__01-09-00_6756580fe4bb252b",
-    # },
-    # {
-    #     "name":   "loop3_L1024G512_individualMemory_init0",
-    #     "run_id": "fu2lz8ci",
-    #     "folder": "2026-01-23__22-42-46_6756580fe4bb252b",
-    # },
-    # {
-    #     "name":   "loop3_L1024G512_individualMemory_init3",
-    #     "run_id": "89w112fv",
-    #     "folder": "2026-01-23__22-45-27_6756580fe4bb252b",
-    # },
-    # {
-    #     "name":   "loop3_L1024G512_individualMemory_init-3",
-    #     "run_id": "zhvqr1sl",
-    #     "folder": "2026-01-23__19-52-07_6756580fe4bb252b",
-    # },
+    # ==========================================
+    # 4. LOOP 3 VARIANTS (Individual Memory / Init)
+    # ==========================================
+    {
+        "name":   "loop3_L1024G512_individualMemory_frozenmem",
+        "run_id": "t5qfh6mu",
+        "folder": "2026-01-25__01-09-00_6756580fe4bb252b",
+    },
+    {
+        "name":   "loop3_L1024G512_individualMemory_init0",
+        "run_id": "fu2lz8ci",
+        "folder": "2026-01-23__22-42-46_6756580fe4bb252b",
+    },
+    {
+        "name":   "loop3_L1024G512_individualMemory_init3",
+        "run_id": "89w112fv",
+        "folder": "2026-01-23__22-45-27_6756580fe4bb252b",
+    },
+    {
+        "name":   "loop3_L1024G512_individualMemory_init-3",
+        "run_id": "zhvqr1sl",
+        "folder": "2026-01-23__19-52-07_6756580fe4bb252b",
+    },
 
     # ==========================================
     # 5. HIGH LOOPS (5, 7, 9)
@@ -183,7 +191,7 @@ def parse_olmes_results(results_dict):
             
         score = item.get("metrics", {}).get("primary_score")
         if score is not None:
-            metrics[f"eval_full/{task_name}"] = score
+            metrics[f"eval/{task_name}"] = score
             
     return metrics
 
@@ -195,10 +203,14 @@ def save_metrics_to_disk(metrics, output_path):
     print(f"       Saved metrics to {output_path}")
 
 def evaluate_model_folder(model_folder_path, run_id, exp_name="Unknown"):
+    """Must be called from a worker that has already set CUDA_VISIBLE_DEVICES."""
+    import torch
+    from olmes_evaluator import evaluate_modalities_checkpoint
     
     print(f"\n=== Processing Experiment: {exp_name} ===")
     print(f"    -> Folder: {model_folder_path.name}")
     print(f"    -> Run ID: {run_id}")
+    print(f"    -> GPU: CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')}")
     print(f"    -> WandB Logging: {'Enabled' if USE_WANDB else 'Disabled (disk only)'}")
 
     # 1. Config & Checkpoints
@@ -226,7 +238,7 @@ def evaluate_model_folder(model_folder_path, run_id, exp_name="Unknown"):
             print(f"    -> CONNECTED: {run.url}") 
             
             run.define_metric("seen_steps")
-            run.define_metric("eval_full/*", step_metric="seen_steps")
+            run.define_metric("eval/*", step_metric="seen_steps")
         except Exception as e:
             print(f"    !!! CRITICAL ERROR INITIALIZING WANDB: {e}")
             return
@@ -250,7 +262,6 @@ def evaluate_model_folder(model_folder_path, run_id, exp_name="Unknown"):
         
         if eval_output is None:
             print(f"    >> [COMPUTING] Running Eval on Step {step}...")
-            ASD
             try:
                 eval_output = evaluate_modalities_checkpoint(
                     checkpoint_path=str(ckpt_path),
@@ -306,36 +317,94 @@ def evaluate_model_folder(model_folder_path, run_id, exp_name="Unknown"):
     
     print(f"    -> Cleanup complete for {exp_name}.\n")
 
-if __name__ == "__main__":
-    os.makedirs(BENCHMARK_ROOT, exist_ok=True)
-    root = Path(CHECKPOINTS_ROOT)
-    
-    target_ids = RUN_IDS_TO_EVALUATE
-    
-    print(f"--- Starting Evaluation Session ---")
-    print(f"WandB Logging: {'ENABLED' if USE_WANDB else 'DISABLED'}")
-    if target_ids:
-        print(f"Targeting {len(target_ids)} specific Run IDs.")
-    else:
-        print("Targeting ALL experiments in manifest.")
-        
-    for exp_config in EXPERIMENT_MANIFEST:
-        name = exp_config["name"]
-        run_id = exp_config["run_id"]
-        folder_name = exp_config["folder"]
-        
-        if target_ids and run_id not in target_ids:
-            continue
-            
-        full_folder_path = root / folder_name
-        
-        if not full_folder_path.exists():
-            print(f"!!! WARNING: Folder for '{name}' ({run_id}) not found: {full_folder_path}")
-            continue
+def persistent_gpu_worker(gpu_id, task_queue):
+    """
+    This worker sits on a specific GPU and consumes tasks until the queue is empty.
+    CUDA_VISIBLE_DEVICES is set BEFORE importing torch so CUDA initializes on
+    the correct physical GPU.
+    """
+    # Set GPU visibility BEFORE any torch import
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
+    # Now it's safe to import torch — CUDA will only see the assigned GPU
+    import torch
+    
+    device_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "no CUDA"
+    print(f"--- Worker started on GPU {gpu_id} ({device_name}) ---")
+
+    while True:
         try:
+            # Try to get a task without blocking forever (non-blocking allows clean exit)
+            exp_config = task_queue.get_nowait()
+        except queue.Empty:
+            # No more tasks? We are done.
+            print(f"--- Worker on GPU {gpu_id} finished all tasks. ---")
+            break
+
+        # Process the task
+        try:
+            name = exp_config["name"]
+            run_id = exp_config["run_id"]
+            folder = exp_config["folder"]
+            full_folder_path = Path(CHECKPOINTS_ROOT) / folder
+
+            if not full_folder_path.exists():
+                print(f"!!! WARNING: Folder for '{name}' not found.")
+                continue
+
             evaluate_model_folder(full_folder_path, run_id, exp_name=name)
+            
         except Exception as e:
-            print(f"!!! CRITICAL FAILURE processing experiment {name}: {e}")
+            print(f"!!! CRITICAL FAILURE in {exp_config.get('name')}: {e}")
             traceback.print_exc()
-            continue
+
+if __name__ == "__main__":
+    # ==========================================
+    # 1. CONFIGURATION
+    # ==========================================
+    GPU_IDS = [4,5,6,7]  # <--- LIST YOUR GPUS HERE
+    CONCURRENT_PER_GPU = 4     # <--- WORKERS PER GPU
+    
+    # ==========================================
+    # 2. SETUP
+    # ==========================================
+    mp.set_start_method('spawn', force=True)
+    os.makedirs(BENCHMARK_ROOT, exist_ok=True)
+    
+    # Select experiments
+    if RUN_IDS_TO_EVALUATE:
+        experiments_to_run = [e for e in EXPERIMENT_MANIFEST if e["run_id"] in RUN_IDS_TO_EVALUATE]
+    else:
+        experiments_to_run = EXPERIMENT_MANIFEST
+
+    print(f"--- Starting Parallel Evaluation Session ---")
+    print(f"Tasks: {len(experiments_to_run)} experiments")
+    print(f"Workers: {len(GPU_IDS) * CONCURRENT_PER_GPU} total ({CONCURRENT_PER_GPU} per GPU)")
+
+    # ==========================================
+    # 3. FILL THE TASK QUEUE
+    # ==========================================
+    # We use a standard multiprocessing Queue
+    task_queue = mp.Queue()
+    for exp in experiments_to_run:
+        task_queue.put(exp)
+
+    # ==========================================
+    # 4. START WORKERS
+    # ==========================================
+    processes = []
+    
+    for gpu_id in GPU_IDS:
+        for _ in range(CONCURRENT_PER_GPU):
+            # Create a process for every slot
+            p = mp.Process(target=persistent_gpu_worker, args=(gpu_id, task_queue))
+            p.start()
+            processes.append(p)
+
+    # ==========================================
+    # 5. WAIT FOR COMPLETION
+    # ==========================================
+    for p in processes:
+        p.join()
+
+    print("\n=== All Parallel Evaluations Complete ===")

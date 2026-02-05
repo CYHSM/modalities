@@ -45,7 +45,7 @@ class AdaptiveComputationConfig(BaseModel):
     num_global_slots: int = 512
     scheduler_type: str = "constant"
     frozen_gate: Optional[float] = None
-
+    uses_new_names: Optional[bool] = True
 
 class LayerNorms(LookupEnum):
     rms_norm = RMSLayerNorm
@@ -568,10 +568,15 @@ class AdaptiveRecursiveBlock(nn.Module):
         self.layer_idx = layer_idx
         self.memory_registry = memory_registry
         
-        self.halt_router = AdaptiveRouter(n_embd)
+        # Fix for name change: 
+        uses_new_names = getattr(adaptive_config, "uses_new_names", True)
+        if uses_new_names:
+            self.halt_router = AdaptiveRouter(n_embd)
+        else:
+            self.router = AdaptiveRouter(n_embd)
         self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0))
         
-        if self.memory_registry is not None:
+        if self.memory_registry is not None and uses_new_names:
             self.mem_norm = nn.LayerNorm(n_embd)
             self.local_mem_gate = GatedMemoryUnit(n_embd, init_bias=-3.0, frozen_gate=adaptive_config.frozen_gate)
             self.global_mem_gate = GatedMemoryUnit(n_embd, init_bias=-3.0, frozen_gate=adaptive_config.frozen_gate)
@@ -581,6 +586,8 @@ class AdaptiveRecursiveBlock(nn.Module):
             self.global_mem_gate = None
 
     def forward(self, x: torch.Tensor) -> tuple:
+        router_module = self.halt_router if hasattr(self, "halt_router") else self.router
+
         B, T, D = x.shape
         device = x.device
         
@@ -622,7 +629,7 @@ class AdaptiveRecursiveBlock(nn.Module):
             
             # ========== 4. HALTING ==========
             cos_sim = F.cosine_similarity(h_new, h_prev, dim=-1, eps=1e-8)
-            halt_prob = self.halt_router(h_new, step / denom)
+            halt_prob = router_module(h_new, step / denom)
             halt_probs_list.append(halt_prob.detach().mean())
 
             if step == self.max_loops - 1:

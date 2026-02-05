@@ -16,35 +16,35 @@ SEEN_STEPS_KEY = "seen_steps"
 
 # Commonsense Accuracy (Higher is better)
 ACC_COMMONSENSE = {
-    "ARC-C": "eval/arc_challenge:rc::olmes:full",
-    "ARC-E": "eval/arc_easy:rc::olmes:full",
-    "HellaSwag": "eval/hellaswag:rc::olmes:full",
-    "Lambada": "eval/lambada",
-    "PIQA": "eval/piqa:rc::olmes:full",
-    "Qasper": "eval/qasper_yesno:rc::olmes",
-    "SocialIQA": "eval/socialiqa:rc::olmes:full",
-    "Winogrande": "eval/winogrande:rc::olmes:full",
+    "ARC-C": "eval_full/arc_challenge:rc::olmes:full",
+    "ARC-E": "eval_full/arc_easy:rc::olmes:full",
+    "HellaSwag": "eval_full/hellaswag:rc::olmes:full",
+    "Lambada": "eval_full/lambada",
+    "PIQA": "eval_full/piqa:rc::olmes:full",
+    "Qasper": "eval_full/qasper_yesno:rc::olmes",
+    "SocialIQA": "eval_full/socialiqa:rc::olmes:full",
+    "Winogrande": "eval_full/winogrande:rc::olmes:full",
 }
 
 # Commonsense BPB (Lower is better)
 BPB_COMMONSENSE = {
-    "ARC-C BPB": "eval/arc_challenge:rc:bpb::olmes:full",
-    "ARC-E BPB": "eval/arc_easy:rc:bpb::olmes:full",
-    "HellaSwag BPB": "eval/hellaswag:rc:bpb::olmes:full",
-    "Lambada BPB": "eval/lambada:bpb",
-    "PIQA BPB": "eval/piqa:rc:bpb::olmes:full",
-    "Qasper BPB": "eval/qasper_yesno:rc:bpb::olmes",
+    "ARC-C BPB": "eval_full/arc_challenge:rc:bpb::olmes:full",
+    "ARC-E BPB": "eval_full/arc_easy:rc:bpb::olmes:full",
+    "HellaSwag BPB": "eval_full/hellaswag:rc:bpb::olmes:full",
+    "Lambada BPB": "eval_full/lambada:bpb",
+    "PIQA BPB": "eval_full/piqa:rc:bpb::olmes:full",
+    "Qasper BPB": "eval_full/qasper_yesno:rc:bpb::olmes",
 }
 
 # Math BPB (Lower is better)
 BPB_MATH = {
-    "Algebra": "eval/minerva_math_algebra:bpb::olmes",
-    "CountProb": "eval/minerva_math_counting_and_probability:bpb::olmes",
-    "Geometry": "eval/minerva_math_geometry:bpb::olmes",
-    "IntAlg": "eval/minerva_math_intermediate_algebra:bpb::olmes",
-    "NumTheory": "eval/minerva_math_number_theory:bpb::olmes",
-    "PreAlg": "eval/minerva_math_prealgebra:bpb::olmes",
-    "PreCalc": "eval/minerva_math_precalculus:bpb::olmes",
+    "Algebra": "eval_full/minerva_math_algebra:bpb::olmes",
+    "CountProb": "eval_full/minerva_math_counting_and_probability:bpb::olmes",
+    "Geometry": "eval_full/minerva_math_geometry:bpb::olmes",
+    "IntAlg": "eval_full/minerva_math_intermediate_algebra:bpb::olmes",
+    "NumTheory": "eval_full/minerva_math_number_theory:bpb::olmes",
+    "PreAlg": "eval_full/minerva_math_prealgebra:bpb::olmes",
+    "PreCalc": "eval_full/minerva_math_precalculus:bpb::olmes",
 }
 
 # Default checkpoint steps (based on seen_steps)
@@ -1063,7 +1063,7 @@ def inspect_run(
         info["seen_steps_count"] = len(seen_steps)
     
     # Check eval columns
-    eval_cols = [c for c in df.columns if c.startswith('eval/')]
+    eval_cols = [c for c in df.columns if c.startswith('eval_full/')]
     info["eval_columns_count"] = len(eval_cols)
     info["eval_columns_sample"] = eval_cols[:10]
     
