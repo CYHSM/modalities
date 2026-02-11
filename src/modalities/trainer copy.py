@@ -445,26 +445,70 @@ class Trainer:
 
         # 3. Select Scheduler
         if scheduler_type == "constant":
-            ponder_scheduler = ConstantPonderScheduler(model=model, constant_value=config_weight)
+            ponder_scheduler = ConstantPonderScheduler(
+                model=model,
+                constant_value=config_weight,
+            )
         elif scheduler_type == "random":
-            ponder_scheduler = RandomPonderScheduler(model=model, min_weight=1, max_weight=1, seed=42 + self.global_rank)
+            ponder_scheduler = RandomPonderScheduler(
+                model=model,
+                min_weight=1, 
+                max_weight=1,
+                seed=42 + self.global_rank 
+            )
         elif scheduler_type == "linear":
-            ponder_scheduler = SimpleLinearScheduler(model=model, total_train_steps=self.num_target_steps, start_weight=-0.01, end_weight=0.01)
+            ponder_scheduler = SimpleLinearScheduler(
+                model=model,
+                total_train_steps=self.num_target_steps,
+                start_weight=-0.01,
+                end_weight=0.01
+            )
         elif scheduler_type == "negative_asymmetric":
-            ponder_scheduler = NegativeStartAsymmetricPonderScheduler(model=model, steps_per_cycle=10, base_amplitude=0.3, negative_damping=0.2)
+            ponder_scheduler = NegativeStartAsymmetricPonderScheduler(
+                model=model,
+                steps_per_cycle=10, 
+                base_amplitude=0.3, 
+                negative_damping=0.2
+            )
         elif scheduler_type == "decreasing":
-            ponder_scheduler = DecreasingFrequencyPonderScheduler(model=model, initial_steps_per_cycle=10, frequency_decay_power=0.99, base_amplitude=0.3, negative_damping=0.2)
+            ponder_scheduler = DecreasingFrequencyPonderScheduler(
+                model=model,
+                initial_steps_per_cycle=10,
+                frequency_decay_power=0.99,
+                base_amplitude=0.3,
+                negative_damping=0.2
+            )
         elif scheduler_type == "constant_cycle":
-            ponder_scheduler = CycleThenConstantPonderScheduler(model=model, steps_per_cycle=10, base_amplitude=0.3, negative_damping=0.2, cycle_steps=1000, constant_value=0.01)
+            ponder_scheduler = CycleThenConstantPonderScheduler(
+                model=model,
+                steps_per_cycle=10, 
+                base_amplitude=0.3, 
+                negative_damping=0.2,
+                cycle_steps=1000,
+                constant_value=0.01
+            )
         elif scheduler_type == "damped_oscillation":
-            ponder_scheduler = DampedOscillationPonderScheduler(model=model, steps_per_cycle=10, total_train_steps=self.num_target_steps, amplitude=0.2)
+            ponder_scheduler = DampedOscillationPonderScheduler(
+                model=model,
+                steps_per_cycle=10,
+                total_train_steps=self.num_target_steps,
+                amplitude=0.2,
+            )
         elif scheduler_type == "linear_decay":
-            ponder_scheduler = LinearDecayPonderScheduler(model=model, total_train_steps=self.num_target_steps, start_weight=0.1, end_weight=0.01)
+            ponder_scheduler = LinearDecayPonderScheduler(
+                model=model,
+                total_train_steps=self.num_target_steps,
+                start_weight=0.1,
+                end_weight=0.01
+            )
         elif scheduler_type == "asymmetric":
-            ponder_scheduler = AsymmetricPonderScheduler(model=model, steps_per_cycle=10, base_amplitude=0.3, negative_damping=config_weight)
-        else:
-            # Fallback
-            ponder_scheduler = ConstantPonderScheduler(model=model, constant_value=config_weight)
+            # Default Asymmetric Cosine
+            ponder_scheduler = AsymmetricPonderScheduler(
+                model=model,
+                steps_per_cycle=10, 
+                base_amplitude=0.3, 
+                negative_damping=config_weight,
+            )
             
         current_ponder_weight = 0.0
         # ==============================================================================
@@ -700,46 +744,39 @@ class Trainer:
                     "adaptive/ponder_weight": ResultItem(torch.tensor(current_ponder_weight), 4),
                 }
 
-                # --- 1. Average Layer Stats ---
+                # --- 1. Average Layer Stats (The Overview) ---
                 if len(synced_layer_costs) > 0:
                     metrics["adaptive/avg_layer_cost"] = ResultItem(synced_layer_costs.mean(), 2)
-                    metrics["adaptive/avg_layer_change"] = ResultItem(synced_layer_sims.mean(), 4)
+                    metrics["adaptive/avg_layer_cos_sim"] = ResultItem(synced_layer_sims.mean(), 4)
 
-                    # Detailed: Per layer
-                    for i, cost_val in enumerate(synced_layer_costs):
-                        metrics[f"layers/{i}/ponder_cost"] = ResultItem(cost_val, 2)
+                # --- 2. Detailed Layer Stats (The specific dashboard) ---
+                for i, cost_val in enumerate(synced_layer_costs):
+                    metrics[f"layers/{i}/ponder_cost"] = ResultItem(cost_val, 2)
 
-                    for i, sim_val in enumerate(synced_layer_sims):
-                        metrics[f"layers/{i}/weighted_change"] = ResultItem(sim_val, 4)
+                for i, sim_val in enumerate(synced_layer_sims):
+                    metrics[f"layers/{i}/cos_sim"] = ResultItem(sim_val, 4)
 
-                # --- 2. Retrieve complex components from Loss (Scales, Probs, Changes, Temperatures) ---
+                # --- 3. Complex Metrics (Vectors) with Averages ---
                 if hasattr(loss_fun, 'get_loss_components'):
                     components = loss_fun.get_loss_components()
                     
-                    # --- Halt Temperature (Scalar per layer) ---
-                    batch_temps = components.get("halt_temperature")
-                    if batch_temps is not None and batch_temps.numel() > 0:
-                        temps_cpu = batch_temps.float().cpu()
-                        metrics["adaptive/avg_temperature"] = ResultItem(temps_cpu.mean(), 4)
-                        for i, val in enumerate(temps_cpu):
-                            metrics[f"layers/{i}/temperature"] = ResultItem(val, 4)
-
-                    # --- Step Relative Changes (Vector per layer) ---
-                    batch_changes = components.get("per_layer_step_changes")
-                    if batch_changes is not None and batch_changes.numel() > 0:
-                        changes_cpu = batch_changes.float().cpu() # Shape [layers, loops]
+                    # --- Loop Scales ---
+                    batch_scales = components.get("loop_scales")
+                    if batch_scales is not None and batch_scales.numel() > 0:
+                        scales_cpu = batch_scales.float().cpu() # Shape: [n_layers, n_loops]
                         
-                        # Overview: Mean change at step 0 across all layers
-                        avg_change_step_0 = torch.mean(changes_cpu[:, 0])
-                        metrics["adaptive/avg_change_step_0"] = ResultItem(avg_change_step_0, 4)
-                        
-                        # Detailed:
-                        for i, layer_changes in enumerate(changes_cpu):
-                            for j, val in enumerate(layer_changes):
-                                metrics[f"layers/{i}/step_{j}_change"] = ResultItem(val, 4)
+                        # Overview: Average per step across all layers
+                        avg_scales = torch.mean(scales_cpu, dim=0) 
+                        for j, val in enumerate(avg_scales):
+                            metrics[f"adaptive/avg_loop_scale_step_{j}"] = ResultItem(val, 4)
 
-                    # --- Halt Probs (Vector per layer) ---
-                    batch_halt_probs = components.get("per_layer_step_halt_probs")
+                        # Detailed: Per layer
+                        for i, layer_scales in enumerate(scales_cpu):
+                            for j, val in enumerate(layer_scales):
+                                metrics[f"layers/{i}/loop_scale_{j}"] = ResultItem(val, 4)
+
+                    # --- Halt Probs ---
+                    batch_halt_probs = components.get("halt_probs")
                     if batch_halt_probs is not None and batch_halt_probs.numel() > 0:
                         probs_cpu = batch_halt_probs.float().cpu() # Shape: [n_layers, n_loops]
 
@@ -752,26 +789,22 @@ class Trainer:
                         for i, layer_probs in enumerate(probs_cpu):
                             for j, val in enumerate(layer_probs):
                                 metrics[f"layers/{i}/halt_prob_{j}"] = ResultItem(val, 4)
-                    
-                    # --- Loop Scales ---
-                    batch_scales = components.get("loop_scales")
-                    if batch_scales is not None and batch_scales.numel() > 0:
-                        scales_cpu = batch_scales.float().cpu() 
-                        # Detailed: Per layer
-                        for i, layer_scales in enumerate(scales_cpu):
-                            for j, val in enumerate(layer_scales):
-                                metrics[f"layers/{i}/loop_scale_{j}"] = ResultItem(val, 4)
 
-                    # --- Memory Scales ---
+                    # --- Local Mem Scales ---
                     batch_local_mem_scales = components.get("local_mem_scales")
                     if batch_local_mem_scales is not None and batch_local_mem_scales.numel() > 0:
                         scales_cpu = batch_local_mem_scales.float().cpu()
                         metrics["adaptive/avg_local_mem_scale"] = ResultItem(scales_cpu.mean(), 4)
+                        for layer_idx, val in enumerate(scales_cpu):
+                            metrics[f"layers/{layer_idx}/local_mem_scale"] = ResultItem(val, 4)
 
+                    # --- Global Mem Scales ---
                     batch_global_mem_scales = components.get("global_mem_scales")
                     if batch_global_mem_scales is not None and batch_global_mem_scales.numel() > 0:
                         scales_cpu = batch_global_mem_scales.float().cpu()
                         metrics["adaptive/avg_global_mem_scale"] = ResultItem(scales_cpu.mean(), 4)
+                        for layer_idx, val in enumerate(scales_cpu):
+                            metrics[f"layers/{layer_idx}/global_mem_scale"] = ResultItem(val, 4)
 
                 gradient_norm_scores = []
                 mfu_score = torch.tensor(-1.0)

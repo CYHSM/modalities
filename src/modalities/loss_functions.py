@@ -99,16 +99,24 @@ class CLMCrossEntropyWithPonderLoss(Loss):
         self.prediction_key = prediction_key
         self.ce_loss_fun = CrossEntropyLoss(reduction="mean")
         
-        # Initialize trackers
+        # Initialize trackers for scalar/simple metrics
         self._last_ce_loss = torch.tensor(0.0)
         self._last_ponder_loss = torch.tensor(0.0)
         self._last_ponder_cost_unweighted = torch.tensor(0.0)
         self._last_expected_steps = torch.tensor(0.0)
         self._last_normalized_steps = torch.tensor(0.0)
+        
+        # Initialize trackers for layer-wise metrics
         self._last_per_layer_ponder_costs = None
-        self._last_per_layer_cos_sims = None
+        self._last_per_layer_cos_sims = None # This now represents relative changes
         self._last_loop_scales = None
-        self._last_halt_probs = None
+        
+        # NEW: Trackers for the requested additional logging
+        self._last_halt_temperature = None
+        self._last_per_layer_step_halt_probs = None
+        self._last_per_layer_step_changes = None
+        
+        # Memory metrics
         self._last_local_mem_scales = None
         self._last_global_mem_scales = None
 
@@ -122,11 +130,17 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             expected_steps = outputs.get("expected_steps", torch.tensor(0.0, device=lm_logits.device))
             normalized_steps = outputs.get("normalized_steps", torch.tensor(0.0, device=lm_logits.device))
             
-            # Tensors / Lists
+            # Extract standard lists
             per_layer_ponder_costs = outputs.get("per_layer_ponder_costs", None)
             per_layer_cos_sims = outputs.get("per_layer_cos_sims", None)
             loop_scales = outputs.get("loop_scales", None)
-            halt_probs = outputs.get("halt_probs", None)
+            
+            # Extract NEW metrics
+            halt_temperature = outputs.get("halt_temperature", None)
+            per_layer_step_halt_probs = outputs.get("per_layer_step_halt_probs", None)
+            per_layer_step_changes = outputs.get("per_layer_step_changes", None)
+            
+            # Extract memory metrics
             local_mem_scales = outputs.get("local_mem_scales", None)
             global_mem_scales = outputs.get("global_mem_scales", None)
         else:
@@ -138,7 +152,9 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             per_layer_ponder_costs = None
             per_layer_cos_sims = None
             loop_scales = None
-            halt_probs = None
+            halt_temperature = None
+            per_layer_step_halt_probs = None
+            per_layer_step_changes = None
             local_mem_scales = None
             global_mem_scales = None
 
@@ -151,16 +167,22 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             shift_labels.view(-1)
         )
         
-        # Store for retrieval by Trainer
+        # Store detached values for retrieval by Trainer
         self._last_ce_loss = ce_loss.detach()
         self._last_ponder_loss = ponder_loss.detach()
         self._last_ponder_cost_unweighted = ponder_cost_unweighted.detach()
         self._last_expected_steps = expected_steps.detach()
         self._last_normalized_steps = normalized_steps.detach()
+        
         self._last_per_layer_ponder_costs = per_layer_ponder_costs.detach() if per_layer_ponder_costs is not None else None
         self._last_per_layer_cos_sims = per_layer_cos_sims.detach() if per_layer_cos_sims is not None else None
-        self._last_loop_scales = loop_scales if loop_scales is not None else None
-        self._last_halt_probs = halt_probs.detach() if halt_probs is not None else None
+        self._last_loop_scales = loop_scales.detach() if loop_scales is not None else None
+        
+        # Store NEW metrics
+        self._last_halt_temperature = halt_temperature.detach() if halt_temperature is not None else None
+        self._last_per_layer_step_halt_probs = per_layer_step_halt_probs.detach() if per_layer_step_halt_probs is not None else None
+        self._last_per_layer_step_changes = per_layer_step_changes.detach() if per_layer_step_changes is not None else None
+        
         self._last_local_mem_scales = local_mem_scales.detach() if local_mem_scales is not None else None
         self._last_global_mem_scales = global_mem_scales.detach() if global_mem_scales is not None else None
         
@@ -180,7 +202,9 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             "per_layer_ponder_costs": self._last_per_layer_ponder_costs,
             "per_layer_cos_sims": self._last_per_layer_cos_sims,
             "loop_scales": self._last_loop_scales,
-            "halt_probs": self._last_halt_probs,
+            "halt_temperature": self._last_halt_temperature,
+            "per_layer_step_halt_probs": self._last_per_layer_step_halt_probs,
+            "per_layer_step_changes": self._last_per_layer_step_changes,
             "local_mem_scales": self._last_local_mem_scales,
             "global_mem_scales": self._last_global_mem_scales,
         }
@@ -210,7 +234,6 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             raise TypeError("Invalid arguments for CLMCrossEntropyWithPonderLoss.__call__")
         
         return labels, outputs
-    
 
 def nce_loss(
     embedding1: torch.Tensor, embedding2: torch.Tensor, device: torch.device, is_asymmetric: bool, temperature: float

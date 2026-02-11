@@ -510,9 +510,9 @@ class AdaptiveRecursiveBlock(nn.Module):
         self.memory_registry = memory_registry
         
         # Learned scaling per step
-        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0))
+        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -3.0))
         
-        # Single learnable parameter for halt sensitivity
+        # Single learnable parameter for halt sensitivity (replaces Router)
         self.halt_temperature = nn.Parameter(torch.tensor([1.0]))
         
         if self.memory_registry is not None:
@@ -524,17 +524,6 @@ class AdaptiveRecursiveBlock(nn.Module):
             self.local_mem_gate = None
             self.global_mem_gate = None
 
-    def _pad_to_max(self, lst, device):
-        """Helper to pad lists to max_loops length."""
-        if not lst: 
-            return torch.zeros(self.max_loops, device=device)
-        stacked = torch.stack(lst)
-        if stacked.size(0) < self.max_loops:
-            pad_size = self.max_loops - stacked.size(0)
-            pad = torch.zeros(pad_size, device=device, dtype=stacked.dtype)
-            stacked = torch.cat([stacked, pad])
-        return stacked
-
     def forward(self, x: torch.Tensor) -> tuple:
         B, T, D = x.shape
         device = x.device
@@ -545,78 +534,82 @@ class AdaptiveRecursiveBlock(nn.Module):
         expected_steps = torch.zeros(B, T, device=device, dtype=x.dtype)
         total_relative_change = torch.zeros(B, T, device=device, dtype=x.dtype)
         
-        halt_probs_list = []
-        rel_changes_list = []
+        # For logging average gate opening
         local_gate_avgs = []
         global_gate_avgs = []
         
+        # Keep temperature positive
         temperature = F.softplus(self.halt_temperature)
-        actual_steps = 0  # track how many steps we actually ran
 
         for step in range(self.max_loops):
-            actual_steps = step + 1
-            
-            # ---- memory (unchanged) ----
+            # ========== 1 & 2. SMART MEMORY LOGIC ==========
             if self.memory_registry is not None:
                 query = self.mem_norm(h)
                 local_retrieved, global_retrieved = self.memory_registry(query, self.layer_idx)
+                
+                # Apply input-dependent gating
                 local_contribution, l_gate_avg = self.local_mem_gate(h, local_retrieved)
                 global_contribution, g_gate_avg = self.global_mem_gate(h, global_retrieved)
+                
                 h_enriched = h + local_contribution + global_contribution
+                
+                # Track gate stats
                 local_gate_avgs.append(l_gate_avg)
                 global_gate_avgs.append(g_gate_avg)
             else:
                 h_enriched = h
             
-            # ---- transformer block ----
+            # ========== 3. TRANSFORMER BLOCK ==========
             scale = F.softplus(self.loop_scales[step])
             h_prev = h
+            # Note: We apply the block to the enriched hidden state
             h_new = self.block(h_enriched, scale=scale)
             
-            # ---- halt probability from relative change ----
+            # ========== 4. HALTING (Relative Change Logic) ==========
+            # Calculate magnitude of change
             delta = h_new - h_prev
-            raw_change = delta.norm(dim=-1) / (h_prev.norm(dim=-1))
-            step_relative_change = torch.nan_to_num(raw_change, nan=0.0, posinf=0.0)
-            rel_changes_list.append(step_relative_change.mean())
+            relative_change = delta.norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-8)
             
-            halt_prob = torch.exp(-step_relative_change / temperature)
-            halt_probs_list.append(halt_prob.detach().mean())
-            
-            # ---- accumulate (no special-casing for last step) ----
-            p_stop = prob_remain * halt_prob
-            prob_remain = prob_remain * (1.0 - halt_prob)
-            
+            # Small change = high halt probability
+            halt_prob = torch.exp(-relative_change / temperature)
+
+            should_halt = (step == self.max_loops - 1) or \
+                        (prob_remain.max() < (1.0 - self.config.halt_threshold))
+
+            if should_halt:
+                p_stop = prob_remain
+                prob_remain = torch.zeros_like(prob_remain)
+            else:
+                p_stop = prob_remain * halt_prob
+                prob_remain = prob_remain * (1.0 - halt_prob)
+
+            # if step == self.max_loops - 1:
+            #     p_stop = prob_remain
+            #     prob_remain = torch.zeros_like(prob_remain)
+            # else:
+            #     p_stop = prob_remain * halt_prob
+            #     prob_remain = prob_remain * (1.0 - halt_prob)
+
             accumulated_output = accumulated_output + h_new * p_stop.unsqueeze(-1)
             expected_steps = expected_steps + p_stop * (step + 1)
-            total_relative_change = total_relative_change + (step_relative_change * p_stop)
+            total_relative_change = total_relative_change + (relative_change * p_stop)
             
             h = h_new
             
-            # ---- EARLY EXIT: works in BOTH training and inference ----
-            if prob_remain.max() < (1.0 - self.config.halt_threshold):
+            if should_halt:
                 break
-
-            # self.halt_quantile = 0.5 + 0.5 * (layer_idx / (n_layer - 1))
-            # should_stop = (prob_remain.quantile(self.halt_quantile)  < (1.0 - self.config.halt_threshold))
         
-        # ---- dump remaining mass onto last computed state ----
-        # This handles both early exit and max_loops exhaustion
-        if prob_remain.sum() > 0:
+        if not self.training and prob_remain.sum() > 0:
             accumulated_output = accumulated_output + h * prob_remain.unsqueeze(-1)
-            expected_steps = expected_steps + prob_remain * actual_steps
-            final_change = (h - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1))
-            final_change = torch.nan_to_num(final_change, nan=0.0, posinf=0.0)
+            final_change = (h - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-8)
             total_relative_change = total_relative_change + (prob_remain * final_change)
 
-        # ---- diagnostics (unchanged) ----
+        # Calculate mean gate opening for this batch (for logging)
         if local_gate_avgs:
             local_s = torch.stack(local_gate_avgs).mean()
             global_s = torch.stack(global_gate_avgs).mean()
         else:
             local_s, global_s = torch.tensor(0.0), torch.tensor(0.0)
-
-        halt_probs_stacked = self._pad_to_max(halt_probs_list, device)
-        rel_changes_stacked = self._pad_to_max(rel_changes_list, device)
 
         return (
             accumulated_output,
@@ -625,110 +618,9 @@ class AdaptiveRecursiveBlock(nn.Module):
             self.loop_scales.detach(),
             self.halt_temperature.detach(),
             local_s,
-            global_s,
-            halt_probs_stacked,
-            rel_changes_stacked,
+            global_s, 
         )
 
-    # def forward(self, x: torch.Tensor) -> tuple:
-    #     B, T, D = x.shape
-    #     device = x.device
-        
-    #     h = x
-    #     accumulated_output = torch.zeros_like(h)
-    #     prob_remain = torch.ones(B, T, device=device, dtype=x.dtype)
-    #     expected_steps = torch.zeros(B, T, device=device, dtype=x.dtype)
-    #     total_relative_change = torch.zeros(B, T, device=device, dtype=x.dtype)
-        
-    #     # Lists to store per-step metrics
-    #     halt_probs_list = []
-    #     rel_changes_list = []
-    #     local_gate_avgs = []
-    #     global_gate_avgs = []
-        
-    #     # Keep temperature positive
-    #     temperature = F.softplus(self.halt_temperature)
-
-    #     for step in range(self.max_loops):
-    #         # ========== 1 & 2. SMART MEMORY LOGIC ==========
-    #         if self.memory_registry is not None:
-    #             query = self.mem_norm(h)
-    #             local_retrieved, global_retrieved = self.memory_registry(query, self.layer_idx)
-                
-    #             # Apply input-dependent gating
-    #             local_contribution, l_gate_avg = self.local_mem_gate(h, local_retrieved)
-    #             global_contribution, g_gate_avg = self.global_mem_gate(h, global_retrieved)
-                
-    #             h_enriched = h + local_contribution + global_contribution
-                
-    #             # Track gate stats
-    #             local_gate_avgs.append(l_gate_avg)
-    #             global_gate_avgs.append(g_gate_avg)
-    #         else:
-    #             h_enriched = h
-            
-    #         # ========== 3. TRANSFORMER BLOCK ==========
-    #         scale = F.softplus(self.loop_scales[step])
-    #         h_prev = h
-    #         h_new = self.block(h_enriched, scale=scale)
-            
-    #         # ========== 4. HALTING (Relative Change Logic) ==========
-    #         delta = h_new - h_prev
-    #         # Calculate raw relative change for this step
-    #         raw_change = delta.norm(dim=-1) / h_prev.norm(dim=-1)
-    #         step_relative_change = torch.nan_to_num(raw_change, nan=0.0, posinf=0.0)
-
-    #         # Log the mean relative change for this step
-    #         rel_changes_list.append(step_relative_change.mean())
-            
-    #         # Small change = high halt probability
-    #         halt_prob = torch.exp(-step_relative_change / temperature)
-    #         halt_probs_list.append(halt_prob.detach().mean())
-
-    #         if step == self.max_loops - 1:
-    #             p_stop = prob_remain
-    #             prob_remain = torch.zeros_like(prob_remain)
-    #         else:
-    #             p_stop = prob_remain * halt_prob
-    #             prob_remain = prob_remain * (1.0 - halt_prob)
-
-    #         accumulated_output = accumulated_output + h_new * p_stop.unsqueeze(-1)
-    #         expected_steps = expected_steps + p_stop * (step + 1)
-    #         total_relative_change = total_relative_change + (step_relative_change * p_stop)
-            
-    #         h = h_new
-            
-    #         if not self.training and prob_remain.max() < (1.0 - self.config.halt_threshold):
-    #             break
-        
-    #     if not self.training and prob_remain.sum() > 0:
-    #         accumulated_output = accumulated_output + h * prob_remain.unsqueeze(-1)
-    #         final_change = (h - h_prev).norm(dim=-1) / h_prev.norm(dim=-1)
-    #         final_change = torch.nan_to_num(final_change, nan=0.0, posinf=0.0)
-    #         total_relative_change = total_relative_change + (prob_remain * final_change)
-
-    #     # Calculate mean gate opening for this batch
-    #     if local_gate_avgs:
-    #         local_s = torch.stack(local_gate_avgs).mean()
-    #         global_s = torch.stack(global_gate_avgs).mean()
-    #     else:
-    #         local_s, global_s = torch.tensor(0.0), torch.tensor(0.0)
-
-    #     # Pad lists to ensure consistent shape [max_loops]
-    #     halt_probs_stacked = self._pad_to_max(halt_probs_list, device)
-    #     rel_changes_stacked = self._pad_to_max(rel_changes_list, device)
-
-    #     return (
-    #         accumulated_output,
-    #         expected_steps,
-    #         total_relative_change, # This is the weighted sum (scalar per token)
-    #         self.loop_scales.detach(),
-    #         self.halt_temperature.detach(),
-    #         local_s,
-    #         global_s,
-    #         halt_probs_stacked,     # NEW: List of probabilities per step
-    #         rel_changes_stacked     # NEW: List of changes per step
-    #     )
 
 class GPT2LLM(NNModel):
     def __init__(
@@ -899,14 +791,10 @@ class GPT2LLM(NNModel):
         total_ponder_cost = torch.tensor(0.0, device=device, dtype=h.dtype)
         num_adaptive_layers = 0
         per_layer_ponder_costs = []
-        per_layer_relative_changes = [] # The weighted sum
+        per_layer_relative_changes = []
         per_layer_loop_scales = []
         per_layer_temps = []
         per_layer_mem_scales = []
-        
-        # New Lists
-        per_layer_step_halt_probs = []
-        per_layer_step_changes = []
 
         sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
         for layer_key in sorted_keys:
@@ -914,21 +802,11 @@ class GPT2LLM(NNModel):
             layer_idx = int(layer_key)
 
             if self.use_adaptive:
-                # Returns 9 values now
-                (
-                    h, 
-                    cost, 
-                    rel_change_sum, 
-                    scales, 
-                    temp, 
-                    local_mem_scale, 
-                    global_mem_scale,
-                    step_halt_probs,
-                    step_rel_changes
-                ) = layer_module(h)
+                # Returns 7 values
+                h, cost, rel_change, scales, temp, local_mem_scale, global_mem_scale = layer_module(h)
                 
                 cost_mean = cost.mean()
-                change_mean = rel_change_sum.mean()
+                change_mean = rel_change.mean()
                 
                 total_ponder_cost = total_ponder_cost + cost_mean
                 per_layer_ponder_costs.append(cost_mean)
@@ -936,10 +814,6 @@ class GPT2LLM(NNModel):
                 per_layer_loop_scales.append(scales)
                 per_layer_temps.append(temp)
                 per_layer_mem_scales.append((local_mem_scale, global_mem_scale))
-                
-                per_layer_step_halt_probs.append(step_halt_probs)
-                per_layer_step_changes.append(step_rel_changes)
-                
                 num_adaptive_layers += 1
             else:
                 lns_scale = 1.0 / (layer_idx + 1)
@@ -955,7 +829,6 @@ class GPT2LLM(NNModel):
             
             weighted_ponder_loss = (normalized_steps * self.adaptive_config.ponder_penalty_weight).to(logits.dtype)
             
-            # Prepare stacks
             layer_costs_tensor = torch.stack(per_layer_ponder_costs) if per_layer_ponder_costs else torch.tensor([], device=device)
             layer_changes_tensor = torch.stack(per_layer_relative_changes) if per_layer_relative_changes else torch.tensor([], device=device)
             local_scales = torch.stack([s[0] for s in per_layer_mem_scales])
@@ -968,14 +841,9 @@ class GPT2LLM(NNModel):
                 "expected_steps": avg_ponder_cost,
                 "normalized_steps": normalized_steps,
                 "per_layer_ponder_costs": layer_costs_tensor,
-                "per_layer_cos_sims": layer_changes_tensor, # Kept key name for compatibility
+                "per_layer_cos_sims": layer_changes_tensor,
                 "loop_scales": torch.stack(per_layer_loop_scales) if per_layer_loop_scales else torch.tensor([], device=device),
-                
-                # NEW / UPDATED EXPORTS
-                "halt_temperature": torch.stack(per_layer_temps).squeeze() if per_layer_temps else torch.tensor([], device=device),
-                "per_layer_step_halt_probs": torch.stack(per_layer_step_halt_probs) if per_layer_step_halt_probs else torch.tensor([], device=device),
-                "per_layer_step_changes": torch.stack(per_layer_step_changes) if per_layer_step_changes else torch.tensor([], device=device),
-                
+                "halt_probs": torch.stack(per_layer_temps) if per_layer_temps else torch.tensor([], device=device),
                 "local_mem_scales": local_scales,
                 "global_mem_scales": global_scales,
             }

@@ -1108,6 +1108,6 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop3
+    experiment_id: loop3_halt099
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}

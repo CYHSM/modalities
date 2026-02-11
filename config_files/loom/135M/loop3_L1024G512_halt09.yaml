@@ -1041,8 +1041,8 @@ model_raw:
     adaptive_config:
       enable_adaptive: true
       max_loops: 3
-      halt_threshold: 0.99
-      ponder_penalty_weight: 0.01
+      halt_threshold: 0.90
+      ponder_penalty_weight: 0.0
       use_memory_bank: true
       num_local_slots: 1024
       num_global_slots: 512
@@ -1108,6 +1108,6 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop3_L1024G512_ponder001
+    experiment_id: loop3_halt09
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}

@@ -1046,7 +1046,7 @@ model_raw:
       use_memory_bank: true
       num_local_slots: 1024
       num_global_slots: 512
-      scheduler_type: "asymmetric"
+      scheduler_type: "constant"
 
 lr_scheduler:
   component_key: scheduler
@@ -1108,6 +1108,6 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop3
+    experiment_id: loop3_scratchpad8
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}

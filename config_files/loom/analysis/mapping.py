@@ -121,6 +121,34 @@ EXPERIMENT_MANIFEST = [
         "run_id": "lp4f3bc5",
         "folder": "2026-01-27__18-44-29_54e21865ce16b752",
     },
+
+    
+    {
+        "name":   "loop3_L1024G512_ponder-01",
+        "run_id": "o2fgymaa",
+        "folder": "2026-02-07__09-45-04_8bb1ab9419eff367",
+    },
+    {
+        "name":   "loop3_L1024G512_ponder01",
+        "run_id": "fikjnzf5",
+        "folder": "2026-02-07__09-45-12_6a4e824085cca86c",
+    },
+    {
+        "name":   "loop3_L1024G512_ponder001",
+        "run_id": "7mzvjajg",
+        "folder": "2026-01-27__15-24-04_043e421a1b54accb",
+    },
+    {
+        "name":   "loop3_L1024G512_ponder-001",
+        "run_id": "a8wysxso",
+        "folder": "2026-01-27__15-23-57_938b4efba13f5ed5",
+    },
+    {
+        "name":   "loop1_without_memory",
+        "run_id": "ba9u14n2",
+        "folder": "2026-02-02__15-34-47_e80af3f6186d695b",
+    } 
+
 ]
 
 # Filter functions

@@ -1042,11 +1042,11 @@ model_raw:
       enable_adaptive: true
       max_loops: 3
       halt_threshold: 0.99
-      ponder_penalty_weight: -0.01
+      ponder_penalty_weight: 1.5
       use_memory_bank: true
       num_local_slots: 1024
       num_global_slots: 512
-      scheduler_type: "constant"
+      scheduler_type: "asymmetric"
 
 lr_scheduler:
   component_key: scheduler
@@ -1108,6 +1108,6 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop3_L1024G512_ponder-001
+    experiment_id: loop3_cyclical_neg15
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}
