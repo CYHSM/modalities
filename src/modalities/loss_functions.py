@@ -87,126 +87,71 @@ class CLMCrossEntropyLoss(Loss):
         return labels, lm_logits
 
 
+# =============================================================================
+# Adaptive-computation-aware loss
+# =============================================================================
+# This class is intentionally THIN. It does not know or care about individual
+# metric names inside the MetricsBag. It passes through whatever the model
+# returns so the Trainer can handle it generically.
+#
+# To add a new logged metric, change ONLY the model — not this file.
+# =============================================================================
+
+
 class CLMCrossEntropyWithPonderLoss(Loss):
     def __init__(
-        self, 
-        target_key: str, 
-        prediction_key: str, 
-        tag: str = "CLMCrossEntropyWithPonderLoss"
+        self,
+        target_key: str,
+        prediction_key: str,
+        tag: str = "CLMCrossEntropyWithPonderLoss",
     ):
         super().__init__(tag)
         self.target_key = target_key
         self.prediction_key = prediction_key
         self.ce_loss_fun = CrossEntropyLoss(reduction="mean")
-        
-        # Initialize trackers for scalar/simple metrics
+
+        # Stored after each forward for the Trainer to retrieve
         self._last_ce_loss = torch.tensor(0.0)
         self._last_ponder_loss = torch.tensor(0.0)
-        self._last_ponder_cost_unweighted = torch.tensor(0.0)
-        self._last_expected_steps = torch.tensor(0.0)
-        self._last_normalized_steps = torch.tensor(0.0)
-        
-        # Initialize trackers for layer-wise metrics
-        self._last_per_layer_ponder_costs = None
-        self._last_per_layer_cos_sims = None # This now represents relative changes
-        self._last_loop_scales = None
-        
-        # NEW: Trackers for the requested additional logging
-        self._last_halt_temperature = None
-        self._last_per_layer_step_halt_probs = None
-        self._last_per_layer_step_changes = None
-        
-        # Memory metrics
-        self._last_local_mem_scales = None
-        self._last_global_mem_scales = None
+        self._last_metrics: dict | None = None  # The full MetricsBag (or None)
 
     def __call__(self, *args, **kwargs) -> torch.Tensor:
         labels, outputs = self._parse_arguments(args, kwargs)
-        
+
         if isinstance(outputs, dict):
             lm_logits = outputs["logits"]
             ponder_loss = outputs.get("ponder_loss", torch.tensor(0.0, device=lm_logits.device))
-            ponder_cost_unweighted = outputs.get("ponder_cost_unweighted", torch.tensor(0.0, device=lm_logits.device))
-            expected_steps = outputs.get("expected_steps", torch.tensor(0.0, device=lm_logits.device))
-            normalized_steps = outputs.get("normalized_steps", torch.tensor(0.0, device=lm_logits.device))
-            
-            # Extract standard lists
-            per_layer_ponder_costs = outputs.get("per_layer_ponder_costs", None)
-            per_layer_cos_sims = outputs.get("per_layer_cos_sims", None)
-            loop_scales = outputs.get("loop_scales", None)
-            
-            # Extract NEW metrics
-            halt_temperature = outputs.get("halt_temperature", None)
-            per_layer_step_halt_probs = outputs.get("per_layer_step_halt_probs", None)
-            per_layer_step_changes = outputs.get("per_layer_step_changes", None)
-            
-            # Extract memory metrics
-            local_mem_scales = outputs.get("local_mem_scales", None)
-            global_mem_scales = outputs.get("global_mem_scales", None)
+            metrics = outputs.get("metrics", None)
         else:
             lm_logits = outputs
             ponder_loss = torch.tensor(0.0, device=lm_logits.device)
-            ponder_cost_unweighted = torch.tensor(0.0, device=lm_logits.device)
-            expected_steps = torch.tensor(0.0, device=lm_logits.device)
-            normalized_steps = torch.tensor(0.0, device=lm_logits.device)
-            per_layer_ponder_costs = None
-            per_layer_cos_sims = None
-            loop_scales = None
-            halt_temperature = None
-            per_layer_step_halt_probs = None
-            per_layer_step_changes = None
-            local_mem_scales = None
-            global_mem_scales = None
+            metrics = None
 
         labels = labels.to(lm_logits.device)
         shift_logits = lm_logits.contiguous()
         shift_labels = labels.contiguous().long()
-        
+
         ce_loss = self.ce_loss_fun(
-            shift_logits.view(-1, shift_logits.size(-1)), 
-            shift_labels.view(-1)
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1),
         )
-        
-        # Store detached values for retrieval by Trainer
+
+        # Store detached copies for retrieval
         self._last_ce_loss = ce_loss.detach()
         self._last_ponder_loss = ponder_loss.detach()
-        self._last_ponder_cost_unweighted = ponder_cost_unweighted.detach()
-        self._last_expected_steps = expected_steps.detach()
-        self._last_normalized_steps = normalized_steps.detach()
-        
-        self._last_per_layer_ponder_costs = per_layer_ponder_costs.detach() if per_layer_ponder_costs is not None else None
-        self._last_per_layer_cos_sims = per_layer_cos_sims.detach() if per_layer_cos_sims is not None else None
-        self._last_loop_scales = loop_scales.detach() if loop_scales is not None else None
-        
-        # Store NEW metrics
-        self._last_halt_temperature = halt_temperature.detach() if halt_temperature is not None else None
-        self._last_per_layer_step_halt_probs = per_layer_step_halt_probs.detach() if per_layer_step_halt_probs is not None else None
-        self._last_per_layer_step_changes = per_layer_step_changes.detach() if per_layer_step_changes is not None else None
-        
-        self._last_local_mem_scales = local_mem_scales.detach() if local_mem_scales is not None else None
-        self._last_global_mem_scales = global_mem_scales.detach() if global_mem_scales is not None else None
-        
-        total_loss = ce_loss + ponder_loss
-        return total_loss
+        self._last_metrics = _detach_metrics(metrics)
 
-    def get_loss_components(self):
+        return ce_loss + ponder_loss
+
+    def get_metrics(self) -> dict:
         """
-        Returns a dictionary of the components of the last calculated loss.
+        Returns the loss scalars + the full metrics bag from the last forward.
+        The Trainer iterates this generically — no manual per-field extraction.
         """
         return {
             "ce_loss": self._last_ce_loss,
             "ponder_loss": self._last_ponder_loss,
-            "ponder_cost_unweighted": self._last_ponder_cost_unweighted,
-            "expected_steps": self._last_expected_steps,
-            "normalized_steps": self._last_normalized_steps,
-            "per_layer_ponder_costs": self._last_per_layer_ponder_costs,
-            "per_layer_cos_sims": self._last_per_layer_cos_sims,
-            "loop_scales": self._last_loop_scales,
-            "halt_temperature": self._last_halt_temperature,
-            "per_layer_step_halt_probs": self._last_per_layer_step_halt_probs,
-            "per_layer_step_changes": self._last_per_layer_step_changes,
-            "local_mem_scales": self._last_local_mem_scales,
-            "global_mem_scales": self._last_global_mem_scales,
+            "metrics": self._last_metrics,
         }
 
     def _parse_arguments(
@@ -232,8 +177,28 @@ class CLMCrossEntropyWithPonderLoss(Loss):
             labels = kwargs["targets"]
         else:
             raise TypeError("Invalid arguments for CLMCrossEntropyWithPonderLoss.__call__")
-        
         return labels, outputs
+
+
+def _detach_metrics(metrics: dict | None) -> dict | None:
+    """Recursively detach all tensors in a nested dict."""
+    if metrics is None:
+        return None
+    result = {}
+    for key, value in metrics.items():
+        if isinstance(value, torch.Tensor):
+            result[key] = value.detach()
+        elif isinstance(value, dict):
+            result[key] = _detach_metrics(value)
+        else:
+            result[key] = value
+    return result
+
+
+# =============================================================================
+# NCE Loss (unchanged)
+# =============================================================================
+
 
 def nce_loss(
     embedding1: torch.Tensor, embedding2: torch.Tensor, device: torch.device, is_asymmetric: bool, temperature: float
@@ -254,20 +219,16 @@ def nce_loss(
     Returns:
             torch.Tensor: loss tensor.
     """
-    # calculating the similarity matrix of size (batch_size x batch_size)
     sim_matrix = torch.matmul(embedding1, embedding2.t()) / temperature
-    # numerator of loss: using similarity scores for all positive pairs (e.g., image and its caption)
     numerator = sim_matrix * torch.eye(sim_matrix.shape[0], device=device)
     numerator = numerator.sum(dim=0).view(sim_matrix.shape[0], -1)
     numerator = torch.logsumexp(numerator, dim=1)
     if is_asymmetric:
-        # denominator of loss: using all similarity scores for all pairs (positive and negative)
         denominator = torch.logsumexp(sim_matrix, dim=1)
     else:
-        # calculate bidirectional loss
         numerator *= 2
         denominator = torch.logsumexp(sim_matrix, dim=1) + torch.logsumexp(sim_matrix.t(), dim=1)
-    return torch.mean(denominator - numerator)  # calculated in log space
+    return torch.mean(denominator - numerator)
 
 
 class NCELoss(Loss):

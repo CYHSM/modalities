@@ -25,27 +25,43 @@ try:
 except ModuleNotFoundError:
     flash_attn_func = None
 
-# Logger configuration
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
 
+# =============================================================================
+# Metrics Convention
+# =============================================================================
+# The model returns a structured dict alongside logits and ponder_loss.
+# This is the ONLY place you need to touch when adding new logged metrics.
+#
+# MetricsBag = {
+#     "scalars":            dict[str, Tensor],   # shape ()    — accumulated & reduced
+#     "per_layer_scalars":  dict[str, Tensor],   # shape (L,)  — accumulated & reduced
+#     "per_layer_vectors":  dict[str, Tensor],   # shape (L,D) — last-batch snapshot only
+# }
+# =============================================================================
+
+
+# =============================================================================
+# Configs
+# =============================================================================
+
 class AdaptiveComputationConfig(BaseModel):
-    """
-    Configuration for Adaptive Computation Time (PonderNet-style).
-    """
     enable_adaptive: bool = False
     max_loops: int = 10
     halt_threshold: float = 0.99
     ponder_penalty_weight: float = 0.01
-    
-    # --- MEMORY PARAMETERS ---
+
     use_memory_bank: bool = True
     num_local_slots: int = 1024
     num_global_slots: int = 512
     scheduler_type: str = "constant"
     frozen_gate: Optional[float] = None
     uses_new_names: Optional[bool] = True
+
+    # Progressive exit: quantile increases from base_exit_quantile to 1.0 across layers
+    base_exit_quantile: float = 0.75
 
 
 class LayerNorms(LookupEnum):
@@ -64,24 +80,18 @@ class PositionTypes(str, Enum):
     NOPE = "NOPE"
 
 
+# =============================================================================
+# QKV Transforms (unchanged)
+# =============================================================================
+
 class QueryKeyValueTransform(nn.Module):
     @abstractmethod
-    def forward(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, q, k, v):
         raise NotImplementedError
 
 
 class IdentityTransform(QueryKeyValueTransform):
-    def forward(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, q, k, v):
         return q, k, v
 
 
@@ -123,9 +133,7 @@ class RotaryTransform(QueryKeyValueTransform):
         sin = sin[:, :, : x.shape[self.seq_length_dim], :]
         return (x * cos) + (self.rotate_half(x) * sin)
 
-    def forward(
-        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, q, k, v):
         self._cos_cached, self._sin_cached = self._update_cos_sin_tables(k)
         q = self.apply_rotary_pos_emb(q, self._cos_cached, self._sin_cached)
         k = self.apply_rotary_pos_emb(k, self._cos_cached, self._sin_cached)
@@ -200,24 +208,19 @@ class GPT2LLMConfig(BaseModel):
     def validate_sizes(self) -> "GPT2LLMConfig":
         for param, param_name in zip(
             [self.ffn_hidden, self.vocab_size, self.n_embd],
-            ["ffn_hidden", "vocab_size", "n_embd"]
+            ["ffn_hidden", "vocab_size", "n_embd"],
         ):
             if param % 128 != 0:
-                raise ValueError(f"{param_name} with value {param} should be divisible by 128 for efficient training.")
+                raise ValueError(f"{param_name} with value {param} should be divisible by 128.")
         return self
 
 
+# =============================================================================
+# Attention (unchanged)
+# =============================================================================
+
 class CausalSelfAttention(nn.Module):
-    def __init__(
-        self,
-        n_head_q: int,
-        n_head_kv: int,
-        n_embd: int,
-        attention_config: AttentionConfig,
-        attention_impl: AttentionImplementation,
-        bias: bool,
-        dropout: float,
-    ):
+    def __init__(self, n_head_q, n_head_kv, n_embd, attention_config, attention_impl, bias, dropout):
         super().__init__()
         assert n_embd % n_head_q == 0
         assert n_head_q % n_head_kv == 0
@@ -225,10 +228,10 @@ class CausalSelfAttention(nn.Module):
         self.n_rep = n_head_q // n_head_kv
         self.attention_impl = attention_impl
 
-        self.q_attn = nn.Linear(in_features=n_embd, out_features=n_embd, bias=bias)
-        self.k_attn = nn.Linear(in_features=n_embd, out_features=n_embd // self.n_rep, bias=bias)
-        self.v_attn = nn.Linear(in_features=n_embd, out_features=n_embd // self.n_rep, bias=bias)
-        self.c_proj = nn.Linear(in_features=n_embd, out_features=n_embd, bias=bias)
+        self.q_attn = nn.Linear(n_embd, n_embd, bias=bias)
+        self.k_attn = nn.Linear(n_embd, n_embd // self.n_rep, bias=bias)
+        self.v_attn = nn.Linear(n_embd, n_embd // self.n_rep, bias=bias)
+        self.c_proj = nn.Linear(n_embd, n_embd, bias=bias)
 
         self.n_head_q = n_head_q
         self.n_head_kv = n_head_kv
@@ -244,44 +247,35 @@ class CausalSelfAttention(nn.Module):
         )
 
         if attention_config.qk_norm_config is not None:
-            self.q_norm = attention_config.qk_norm_config.norm_type.value(
-                **dict(attention_config.qk_norm_config.config)
-            )
-            self.k_norm = attention_config.qk_norm_config.norm_type.value(
-                **dict(attention_config.qk_norm_config.config)
-            )
+            self.q_norm = attention_config.qk_norm_config.norm_type.value(**dict(attention_config.qk_norm_config.config))
+            self.k_norm = attention_config.qk_norm_config.norm_type.value(**dict(attention_config.qk_norm_config.config))
         else:
             self.q_norm = None
             self.k_norm = None
 
-    def projection(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def projection(self, x):
         return self.q_attn(x), self.k_attn(x), self.v_attn(x)
 
     @staticmethod
-    def execute_qkv_transforms(
-        q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, qkv_transforms: nn.ModuleList, n_head_q: int
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        batch_size, sequence_length, embedding_dim = q.size()
-        n_head_dim = embedding_dim // n_head_q
-
-        q = q.view(batch_size, sequence_length, n_head_q, n_head_dim).transpose(1, 2).contiguous()
-        k = k.view(batch_size, sequence_length, -1, n_head_dim).transpose(1, 2).contiguous()
-        v = v.view(batch_size, sequence_length, -1, n_head_dim).transpose(1, 2).contiguous()
-
+    def execute_qkv_transforms(q, k, v, qkv_transforms, n_head_q):
+        B, T, D = q.size()
+        n_head_dim = D // n_head_q
+        q = q.view(B, T, n_head_q, n_head_dim).transpose(1, 2).contiguous()
+        k = k.view(B, T, -1, n_head_dim).transpose(1, 2).contiguous()
+        v = v.view(B, T, -1, n_head_dim).transpose(1, 2).contiguous()
         for transform in qkv_transforms:
             q, k, v = transform(q, k, v)
-
         return q, k, v
 
     @staticmethod
-    def _repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    def _repeat_kv(x, n_rep):
         B, nh_kv, T, hs = x.shape
         if n_rep == 1:
             return x
         return x[:, :, None, :, :].expand(B, nh_kv, n_rep, T, hs).reshape(B, nh_kv * n_rep, T, hs)
 
     @classmethod
-    def repeat_kv_heads(cls, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+    def repeat_kv_heads(cls, q, k, v):
         n_head_q = q.shape[1]
         n_head_kv = k.shape[1]
         if n_head_q != n_head_kv:
@@ -291,29 +285,18 @@ class CausalSelfAttention(nn.Module):
         return k, v
 
     @classmethod
-    def execute_attention(
-        cls,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        dropout: float,
-        attention_impl: AttentionImplementation,
-    ) -> torch.Tensor:
+    def execute_attention(cls, q, k, v, dropout, attention_impl):
         if attention_impl == AttentionImplementation.MANUAL:
             k, v = cls.repeat_kv_heads(q, k, v)
-            y = manual_scaled_dot_product_attention(
-                query=q, key=k, value=v, attn_mask=None, dropout_p=dropout, is_causal=True,
-            )
+            y = manual_scaled_dot_product_attention(query=q, key=k, value=v, attn_mask=None, dropout_p=dropout, is_causal=True)
             y = y.transpose(1, 2).contiguous()
         elif attention_impl == AttentionImplementation.PYTORCH_FLASH:
             k, v = cls.repeat_kv_heads(q, k, v)
-            y = torch.nn.functional.scaled_dot_product_attention(
-                query=q, key=k, value=v, attn_mask=None, dropout_p=dropout, is_causal=True,
-            )
+            y = torch.nn.functional.scaled_dot_product_attention(query=q, key=k, value=v, attn_mask=None, dropout_p=dropout, is_causal=True)
             y = y.transpose(1, 2).contiguous()
         elif attention_impl == AttentionImplementation.DAO_FLASH:
             if flash_attn_func is None:
-                raise NotImplementedError("ERROR! Dao Flash Attention is not installed.")
+                raise NotImplementedError("Dao Flash Attention is not installed.")
             q = q.transpose(1, 2).contiguous()
             k = k.transpose(1, 2).contiguous()
             v = v.transpose(1, 2).contiguous()
@@ -322,7 +305,7 @@ class CausalSelfAttention(nn.Module):
             raise NotImplementedError(f"Attention implementation {attention_impl} not supported")
         return y
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
         B, T, _ = x.size()
         q, k, v = self.projection(x)
         q, k, v = CausalSelfAttention.execute_qkv_transforms(q, k, v, self.qkv_transforms, self.n_head_q)
@@ -335,134 +318,97 @@ class CausalSelfAttention(nn.Module):
 
 
 class TransformerMLP(nn.Module):
-    def __init__(self, n_embd: int, ffn_hidden: int, bias: bool, dropout: float):
+    def __init__(self, n_embd, ffn_hidden, bias, dropout):
         super().__init__()
-        self.c_fc = nn.Linear(in_features=n_embd, out_features=ffn_hidden, bias=bias)
+        self.c_fc = nn.Linear(n_embd, ffn_hidden, bias=bias)
         self.gelu = nn.GELU()
-        self.c_proj = nn.Linear(in_features=ffn_hidden, out_features=n_embd, bias=bias)
+        self.c_proj = nn.Linear(ffn_hidden, n_embd, bias=bias)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.c_fc(x)
-        x = self.gelu(x)
-        x = self.c_proj(x)
-        x = self.dropout(x)
-        return x
+    def forward(self, x):
+        return self.dropout(self.c_proj(self.gelu(self.c_fc(x))))
 
 
 class GPT2Block(nn.Module):
     def __init__(
-        self,
-        n_embd: int,
-        bias: bool,
-        n_head_q: int,
-        n_head_kv: int,
-        activation_type: ActivationType,
-        attention_impl: AttentionImplementation,
-        attention_config: AttentionConfig,
-        dropout: float,
-        ffn_hidden: int,
-        attention_norm: nn.Module,
-        ffn_norm: nn.Module,
-        enforce_swiglu_hidden_dim_multiple_of: int,
+        self, n_embd, bias, n_head_q, n_head_kv, activation_type, attention_impl,
+        attention_config, dropout, ffn_hidden, attention_norm, ffn_norm,
+        enforce_swiglu_hidden_dim_multiple_of,
     ):
         super().__init__()
         self.attention_norm = attention_norm
         self.ffn_norm = ffn_norm
-        self._check_ffn_hidden_dim(n_embd=n_embd, ffn_hidden=ffn_hidden)
+        self._check_ffn_hidden_dim(n_embd, ffn_hidden)
         self.attn = CausalSelfAttention(
-            n_head_q=n_head_q,
-            n_head_kv=n_head_kv,
-            n_embd=n_embd,
-            attention_config=attention_config,
-            attention_impl=attention_impl,
-            bias=bias,
-            dropout=dropout,
+            n_head_q=n_head_q, n_head_kv=n_head_kv, n_embd=n_embd,
+            attention_config=attention_config, attention_impl=attention_impl,
+            bias=bias, dropout=dropout,
         )
         if activation_type == ActivationType.GELU:
             self.mlp = TransformerMLP(n_embd=n_embd, ffn_hidden=ffn_hidden, bias=bias, dropout=dropout)
         elif activation_type == ActivationType.SWIGLU:
             self.mlp = SwiGLU(
-                n_embd=n_embd,
-                ffn_hidden=ffn_hidden,
-                bias=bias,
+                n_embd=n_embd, ffn_hidden=ffn_hidden, bias=bias,
                 enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
             )
         else:
             raise NotImplementedError("unimplemented activation")
 
-    def _check_ffn_hidden_dim(self, n_embd: int, ffn_hidden: int) -> None:
-        expected_hidden_dim = 4 * n_embd
-        if ffn_hidden != expected_hidden_dim:
-            logger.warning(
-                f"Expected `ffn_hidden` to be 4 * `n_embd` ({expected_hidden_dim}), "
-                f"but got `n_embd = {n_embd}` and `ffn_hidden = {ffn_hidden}`."
-            )
+    def _check_ffn_hidden_dim(self, n_embd, ffn_hidden):
+        expected = 4 * n_embd
+        if ffn_hidden != expected:
+            logger.warning(f"Expected ffn_hidden={expected}, got n_embd={n_embd}, ffn_hidden={ffn_hidden}.")
 
-    def forward(self, x: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
+    def forward(self, x, scale=1.0):
         x = x + scale * self.attn(self.attention_norm(x))
         x = x + scale * self.mlp(self.ffn_norm(x))
         return x
 
 
-# ==============================================================================
-# ADAPTIVE COMPUTATION COMPONENTS (With Relative Change Logic)
-# ==============================================================================
+# =============================================================================
+# Adaptive Computation Components
+# =============================================================================
 
 class MemoryBankRegistry(nn.Module):
-    """
-    Memory Bank with both local (per-layer) and global (shared) memory.
-    """
-    
-    def __init__(self, n_layer: int, n_embd: int, num_local_slots: int, num_global_slots: int):
+    def __init__(self, n_layer, n_embd, num_local_slots, num_global_slots):
         super().__init__()
         self.n_layer = n_layer
         self.n_embd = n_embd
         self.scale = n_embd ** -0.5
-        
-        # Local (per-layer) memory
+
         self.local_keys = nn.Parameter(torch.randn(n_layer, num_local_slots, n_embd) * 0.02)
         self.local_values = nn.Parameter(torch.randn(n_layer, num_local_slots, n_embd) * 0.02)
-        
-        # Global (shared across all layers) memory
         self.global_keys = nn.Parameter(torch.randn(num_global_slots, n_embd) * 0.02)
         self.global_values = nn.Parameter(torch.randn(num_global_slots, n_embd) * 0.02)
-        
-        # QK-norm for stable attention
+
         self.q_norm = nn.LayerNorm(n_embd)
         self.k_norm = nn.LayerNorm(n_embd)
 
-    def forward(self, query: torch.Tensor, layer_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Returns (local_retrieved, global_retrieved).
-        """
+    def forward(self, query, layer_idx):
         q = self.q_norm(query)
-        
-        # Local lookup (layer-specific)
+
         local_k = self.k_norm(self.local_keys[layer_idx])
         local_v = self.local_values[layer_idx]
         local_attn = F.softmax(torch.einsum('btd,sd->bts', q, local_k) * self.scale, dim=-1)
         local_out = torch.einsum('bts,sd->btd', local_attn, local_v)
-        
-        # Global lookup (shared)
+
         global_k = self.k_norm(self.global_keys)
         global_v = self.global_values
         global_attn = F.softmax(torch.einsum('btd,sd->bts', q, global_k) * self.scale, dim=-1)
         global_out = torch.einsum('bts,sd->btd', global_attn, global_v)
-        
+
         return local_out, global_out
-    
+
 
 class GatedMemoryUnit(nn.Module):
-    def __init__(self, n_embd: int, init_bias: float = -3.0, frozen_gate: Optional[float] = None):
+    def __init__(self, n_embd, init_bias=-3.0, frozen_gate=None):
         super().__init__()
         self.n_embd = n_embd
         self.init_bias = init_bias
         self.frozen_gate = frozen_gate
-        
+
         self.mem_proj = nn.Linear(n_embd, n_embd, bias=False)
         self.gate_net = nn.Linear(n_embd, n_embd, bias=True)
-        
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -470,51 +416,52 @@ class GatedMemoryUnit(nn.Module):
         nn.init.zeros_(self.gate_net.weight)
         nn.init.constant_(self.gate_net.bias, self.init_bias)
 
-    def forward(self, h: torch.Tensor, memory: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        # 1. Project memory to usable features
+    def forward(self, h, memory):
         mem_feat = self.mem_proj(memory)
-        
-        # 2. Compute or use frozen gate
         if self.frozen_gate is not None:
-            # FROZEN: Use constant gate value
             gate = torch.full_like(h, self.frozen_gate)
         else:
-            # LEARNED: Compute gate from input
-            gate_logits = self.gate_net(h)
-            gate = torch.sigmoid(gate_logits)
-        
-        # 3. Apply Gate
-        gated_memory = gate * mem_feat
-        
-        return gated_memory, gate.mean()
+            gate = torch.sigmoid(self.gate_net(h))
+        return gate * mem_feat, gate.mean()
 
 
-# ==============================================================================
-# UPDATED RECURSIVE BLOCK (Memory + Relative Change)
-# ==============================================================================
+class AdaptiveRouter(nn.Module):
+    """Halting router with initialization to force full loop usage at start."""
+    
+    def __init__(self, n_embd: int, bias: bool = True):
+        super().__init__()
+        # Input is n_embd + 1 (for the step scalar)
+        self.net = nn.Linear(n_embd + 1, 1, bias=bias)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.normal_(self.net.weight, mean=0.0, std=0.02)
+        nn.init.constant_(self.net.bias, -3.0)
+
+    def forward(self, x: torch.Tensor, step_normalized: float) -> torch.Tensor:
+        B, T, _ = x.shape
+        step_feat = torch.full((B, T, 1), step_normalized, device=x.device, dtype=x.dtype)
+        logits = self.net(torch.cat([x, step_feat], dim=-1))
+        return torch.sigmoid(logits).squeeze(-1)
+
+# =============================================================================
+# Adaptive Recursive Block
+# =============================================================================
 
 class AdaptiveRecursiveBlock(nn.Module):
-    def __init__(
-        self,
-        block: GPT2Block,
-        adaptive_config: AdaptiveComputationConfig,
-        n_embd: int,
-        layer_idx: int,
-        memory_registry: Optional[MemoryBankRegistry],
-    ):
+    def __init__(self, block, adaptive_config, n_embd, layer_idx, n_layers, memory_registry):
         super().__init__()
         self.block = block
         self.config = adaptive_config
         self.max_loops = adaptive_config.max_loops
         self.layer_idx = layer_idx
+        self.n_layers = n_layers
         self.memory_registry = memory_registry
-        
-        # Learned scaling per step
+
+        # --- CHANGED: Use Router instead of Temperature ---
+        self.router = AdaptiveRouter(n_embd)
         self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0))
-        
-        # Single learnable parameter for halt sensitivity
-        self.halt_temperature = nn.Parameter(torch.tensor([1.0]))
-        
+
         if self.memory_registry is not None:
             self.mem_norm = nn.LayerNorm(n_embd)
             self.local_mem_gate = GatedMemoryUnit(n_embd, init_bias=-3.0, frozen_gate=adaptive_config.frozen_gate)
@@ -525,38 +472,40 @@ class AdaptiveRecursiveBlock(nn.Module):
             self.global_mem_gate = None
 
     def _pad_to_max(self, lst, device):
-        """Helper to pad lists to max_loops length."""
-        if not lst: 
+        if not lst:
             return torch.zeros(self.max_loops, device=device)
         stacked = torch.stack(lst)
         if stacked.size(0) < self.max_loops:
-            pad_size = self.max_loops - stacked.size(0)
-            pad = torch.zeros(pad_size, device=device, dtype=stacked.dtype)
+            pad = torch.zeros(self.max_loops - stacked.size(0), device=device, dtype=stacked.dtype)
             stacked = torch.cat([stacked, pad])
         return stacked
 
-    def forward(self, x: torch.Tensor) -> tuple:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         B, T, D = x.shape
         device = x.device
-        
+        # Threshold to determine if we can stop (e.g. if 99% probability is used, we stop)
+        done_threshold = 1.0 - self.config.halt_threshold 
+
         h = x
         accumulated_output = torch.zeros_like(h)
         prob_remain = torch.ones(B, T, device=device, dtype=x.dtype)
         expected_steps = torch.zeros(B, T, device=device, dtype=x.dtype)
+        
+        # We still track relative change for metrics/diagnostics, but it doesn't drive halting
         total_relative_change = torch.zeros(B, T, device=device, dtype=x.dtype)
+
+        halt_probs_list, rel_changes_list = [], []
+        local_gate_avgs, global_gate_avgs = [], []
+        prob_remain_max_trace, prob_remain_mean_trace = [], []
         
-        halt_probs_list = []
-        rel_changes_list = []
-        local_gate_avgs = []
-        global_gate_avgs = []
-        
-        temperature = F.softplus(self.halt_temperature)
-        actual_steps = 0  # track how many steps we actually ran
+        # Diagnostics
+        actual_steps = 0
+        denom = max(1, self.max_loops - 1)
 
         for step in range(self.max_loops):
             actual_steps = step + 1
-            
-            # ---- memory (unchanged) ----
+
+            # 1. Memory enrichment
             if self.memory_registry is not None:
                 query = self.mem_norm(h)
                 local_retrieved, global_retrieved = self.memory_registry(query, self.layer_idx)
@@ -567,220 +516,116 @@ class AdaptiveRecursiveBlock(nn.Module):
                 global_gate_avgs.append(g_gate_avg)
             else:
                 h_enriched = h
-            
-            # ---- transformer block ----
+
+            # 2. Transformer block
             scale = F.softplus(self.loop_scales[step])
             h_prev = h
             h_new = self.block(h_enriched, scale=scale)
-            
-            # ---- halt probability from relative change ----
-            delta = h_new - h_prev
-            raw_change = delta.norm(dim=-1) / (h_prev.norm(dim=-1))
-            step_relative_change = torch.nan_to_num(raw_change, nan=0.0, posinf=0.0)
-            rel_changes_list.append(step_relative_change.mean())
-            
-            halt_prob = torch.exp(-step_relative_change / temperature)
+
+            # 3. Router Halting (MLP based)
+            # Pass normalized step (0.0 to 1.0) to the router
+            step_norm = step / denom
+            halt_prob = self.router(h_new, step_norm)
             halt_probs_list.append(halt_prob.detach().mean())
-            
-            # ---- accumulate (no special-casing for last step) ----
+
+            # Log relative change just for diagnostics (not used for halting)
+            delta = h_new - h_prev
+            raw_change = delta.norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)
+            rel_changes_list.append(raw_change.mean())
+
+            # 4. Accumulate
             p_stop = prob_remain * halt_prob
             prob_remain = prob_remain * (1.0 - halt_prob)
-            
+
+            # Trace remaining probability
+            with torch.no_grad():
+                prob_remain_max_trace.append(prob_remain.max())
+                prob_remain_mean_trace.append(prob_remain.mean())
+
             accumulated_output = accumulated_output + h_new * p_stop.unsqueeze(-1)
             expected_steps = expected_steps + p_stop * (step + 1)
-            total_relative_change = total_relative_change + (step_relative_change * p_stop)
             
+            # Track relative change weighted by stop prob (diagnostic)
+            total_relative_change = total_relative_change + (raw_change * p_stop)
+
             h = h_new
-            
-            # ---- EARLY EXIT: works in BOTH training and inference ----
-            if prob_remain.max() < (1.0 - self.config.halt_threshold):
+
+            # 5. Exit Condition (Max based, no Quantiles)
+            # If the token with the MOST remaining probability has less than done_threshold left, we stop.
+            if prob_remain.max() < done_threshold:
                 break
 
-            # self.halt_quantile = 0.5 + 0.5 * (layer_idx / (n_layer - 1))
-            # should_stop = (prob_remain.quantile(self.halt_quantile)  < (1.0 - self.config.halt_threshold))
-        
-        # ---- dump remaining mass onto last computed state ----
-        # This handles both early exit and max_loops exhaustion
+        # Dump remaining mass if we hit max_loops or exited early
         if prob_remain.sum() > 0:
             accumulated_output = accumulated_output + h * prob_remain.unsqueeze(-1)
             expected_steps = expected_steps + prob_remain * actual_steps
-            final_change = (h - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1))
-            final_change = torch.nan_to_num(final_change, nan=0.0, posinf=0.0)
+            
+            final_change = (h - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)
             total_relative_change = total_relative_change + (prob_remain * final_change)
 
-        # ---- diagnostics (unchanged) ----
-        if local_gate_avgs:
-            local_s = torch.stack(local_gate_avgs).mean()
-            global_s = torch.stack(global_gate_avgs).mean()
-        else:
-            local_s, global_s = torch.tensor(0.0), torch.tensor(0.0)
+        # Memory gate stats
+        local_s = torch.stack(local_gate_avgs).mean() if local_gate_avgs else torch.tensor(0.0, device=device)
+        global_s = torch.stack(global_gate_avgs).mean() if global_gate_avgs else torch.tensor(0.0, device=device)
 
-        halt_probs_stacked = self._pad_to_max(halt_probs_list, device)
-        rel_changes_stacked = self._pad_to_max(rel_changes_list, device)
-
-        return (
-            accumulated_output,
-            expected_steps,
-            total_relative_change,
-            self.loop_scales.detach(),
-            self.halt_temperature.detach(),
-            local_s,
-            global_s,
-            halt_probs_stacked,
-            rel_changes_stacked,
-        )
-
-    # def forward(self, x: torch.Tensor) -> tuple:
-    #     B, T, D = x.shape
-    #     device = x.device
-        
-    #     h = x
-    #     accumulated_output = torch.zeros_like(h)
-    #     prob_remain = torch.ones(B, T, device=device, dtype=x.dtype)
-    #     expected_steps = torch.zeros(B, T, device=device, dtype=x.dtype)
-    #     total_relative_change = torch.zeros(B, T, device=device, dtype=x.dtype)
-        
-    #     # Lists to store per-step metrics
-    #     halt_probs_list = []
-    #     rel_changes_list = []
-    #     local_gate_avgs = []
-    #     global_gate_avgs = []
-        
-    #     # Keep temperature positive
-    #     temperature = F.softplus(self.halt_temperature)
-
-    #     for step in range(self.max_loops):
-    #         # ========== 1 & 2. SMART MEMORY LOGIC ==========
-    #         if self.memory_registry is not None:
-    #             query = self.mem_norm(h)
-    #             local_retrieved, global_retrieved = self.memory_registry(query, self.layer_idx)
-                
-    #             # Apply input-dependent gating
-    #             local_contribution, l_gate_avg = self.local_mem_gate(h, local_retrieved)
-    #             global_contribution, g_gate_avg = self.global_mem_gate(h, global_retrieved)
-                
-    #             h_enriched = h + local_contribution + global_contribution
-                
-    #             # Track gate stats
-    #             local_gate_avgs.append(l_gate_avg)
-    #             global_gate_avgs.append(g_gate_avg)
-    #         else:
-    #             h_enriched = h
+        # =====================================================================
+        # LAYER METRICS
+        # =====================================================================
+        layer_metrics = {
+            "expected_steps": expected_steps,                       # (B, T)
+            "total_relative_change": total_relative_change,         # (B, T)
+            "loop_scales": self.loop_scales.detach(),               # (max_loops,)
+            # Replaced temperature with a dummy or router bias for logging consistency if needed
+            "halt_temperature": torch.zeros(1, device=device),      
+            "local_mem_scale": local_s,                             # scalar
+            "global_mem_scale": global_s,                           # scalar
+            "step_halt_probs": self._pad_to_max(halt_probs_list, device),   # (max_loops,)
+            "step_changes": self._pad_to_max(rel_changes_list, device),     # (max_loops,)
+            "prob_remain_max": self._pad_to_max(prob_remain_max_trace, device),
+            "prob_remain_mean": self._pad_to_max(prob_remain_mean_trace, device),
             
-    #         # ========== 3. TRANSFORMER BLOCK ==========
-    #         scale = F.softplus(self.loop_scales[step])
-    #         h_prev = h
-    #         h_new = self.block(h_enriched, scale=scale)
-            
-    #         # ========== 4. HALTING (Relative Change Logic) ==========
-    #         delta = h_new - h_prev
-    #         # Calculate raw relative change for this step
-    #         raw_change = delta.norm(dim=-1) / h_prev.norm(dim=-1)
-    #         step_relative_change = torch.nan_to_num(raw_change, nan=0.0, posinf=0.0)
+            # Fill other new-code specific keys with dummies to prevent KeyErrors in GPT2LLM
+            "acceleration": torch.zeros(self.max_loops, device=device),
+            "cosine_sim": torch.zeros(self.max_loops, device=device),
+            "done_frac": torch.zeros(self.max_loops, device=device),
+            "actual_steps": torch.tensor(float(actual_steps), device=device),
+            "exit_quantile": torch.tensor(0.0, device=device),
+            "done_frac_at_exit": torch.tensor(1.0, device=device),
+            "residual_mass": prob_remain.mean(),
+            "hard_token_frac": (prob_remain > 0.1).float().mean(),
+            "truncated_mass": prob_remain.sum() / max(prob_remain.numel(), 1),
+        }
 
-    #         # Log the mean relative change for this step
-    #         rel_changes_list.append(step_relative_change.mean())
-            
-    #         # Small change = high halt probability
-    #         halt_prob = torch.exp(-step_relative_change / temperature)
-    #         halt_probs_list.append(halt_prob.detach().mean())
+        return accumulated_output, layer_metrics
 
-    #         if step == self.max_loops - 1:
-    #             p_stop = prob_remain
-    #             prob_remain = torch.zeros_like(prob_remain)
-    #         else:
-    #             p_stop = prob_remain * halt_prob
-    #             prob_remain = prob_remain * (1.0 - halt_prob)
 
-    #         accumulated_output = accumulated_output + h_new * p_stop.unsqueeze(-1)
-    #         expected_steps = expected_steps + p_stop * (step + 1)
-    #         total_relative_change = total_relative_change + (step_relative_change * p_stop)
-            
-    #         h = h_new
-            
-    #         if not self.training and prob_remain.max() < (1.0 - self.config.halt_threshold):
-    #             break
-        
-    #     if not self.training and prob_remain.sum() > 0:
-    #         accumulated_output = accumulated_output + h * prob_remain.unsqueeze(-1)
-    #         final_change = (h - h_prev).norm(dim=-1) / h_prev.norm(dim=-1)
-    #         final_change = torch.nan_to_num(final_change, nan=0.0, posinf=0.0)
-    #         total_relative_change = total_relative_change + (prob_remain * final_change)
-
-    #     # Calculate mean gate opening for this batch
-    #     if local_gate_avgs:
-    #         local_s = torch.stack(local_gate_avgs).mean()
-    #         global_s = torch.stack(global_gate_avgs).mean()
-    #     else:
-    #         local_s, global_s = torch.tensor(0.0), torch.tensor(0.0)
-
-    #     # Pad lists to ensure consistent shape [max_loops]
-    #     halt_probs_stacked = self._pad_to_max(halt_probs_list, device)
-    #     rel_changes_stacked = self._pad_to_max(rel_changes_list, device)
-
-    #     return (
-    #         accumulated_output,
-    #         expected_steps,
-    #         total_relative_change, # This is the weighted sum (scalar per token)
-    #         self.loop_scales.detach(),
-    #         self.halt_temperature.detach(),
-    #         local_s,
-    #         global_s,
-    #         halt_probs_stacked,     # NEW: List of probabilities per step
-    #         rel_changes_stacked     # NEW: List of changes per step
-    #     )
+# =============================================================================
+# GPT2LLM — Main Model
+# =============================================================================
 
 class GPT2LLM(NNModel):
     def __init__(
-        self,
-        sample_key: str,
-        prediction_key: str,
-        poe_type: PositionTypes,
-        sequence_length: int,
-        vocab_size: int,
-        n_layer: int,
-        n_head_q: int,
-        n_head_kv: int,
-        n_embd: int,
-        ffn_hidden: int,
-        dropout: float,
-        bias: bool,
-        activation_type: ActivationType,
-        attention_implementation: AttentionImplementation,
-        attention_config: AttentionConfig,
-        attention_norm_config: LayerNormWrapperConfig,
-        ffn_norm_config: LayerNormWrapperConfig,
-        lm_head_norm_config: LayerNormWrapperConfig,
-        use_weight_tying: bool,
-        seed: Optional[int] = None,
-        enforce_swiglu_hidden_dim_multiple_of: int = 256,
-        adaptive_config: Optional[AdaptiveComputationConfig] = None,
+        self, sample_key, prediction_key, poe_type, sequence_length, vocab_size,
+        n_layer, n_head_q, n_head_kv, n_embd, ffn_hidden, dropout, bias,
+        activation_type, attention_implementation, attention_config,
+        attention_norm_config, ffn_norm_config, lm_head_norm_config,
+        use_weight_tying, seed=None, enforce_swiglu_hidden_dim_multiple_of=256,
+        adaptive_config=None,
     ):
         weight_decay_groups = {
             "linear": [
-                ".attn",
-                ".mlp",
-                ".lm_head.weight",
-                ".mem_proj.weight",   # New projection
-                ".gate_net.weight",   # New gating network
+                ".attn", ".mlp", ".lm_head.weight",
+                ".mem_proj.weight", ".gate_net.weight", ".router.net.weight",
             ],
-            "embedding": [
-                ".wte",
-                ".wpe",
-            ],
+            "embedding": [".wte", ".wpe"],
             "layernorm": [
-                ".attention_norm",
-                ".ffn_norm",
-                ".lm_head_norm",
-                ".mem_norm",
-                ".loop_scales",
-                ".halt_temperature",  # Replaced router bias with temperature
-                ".gate_net.bias",     # Gate bias (very important to not decay this!)
-                "memory_registry",    # All memory registry params
+                ".attention_norm", ".ffn_norm", ".lm_head_norm", ".mem_norm",
+                ".loop_scales", ".halt_temperature", ".gate_net.bias",
+                "memory_registry",
+                ".router.net.bias", 
             ],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
-        
+
         self.sample_key = sample_key
         self.prediction_key = prediction_key
         self.sequence_length = sequence_length
@@ -792,94 +637,74 @@ class GPT2LLM(NNModel):
         assert sequence_length is not None
 
         if poe_type is PositionTypes.ABSOLUTE:
-            wpe = nn.Embedding(num_embeddings=sequence_length, embedding_dim=n_embd)
+            wpe = nn.Embedding(sequence_length, n_embd)
         elif poe_type is PositionTypes.NOPE:
             wpe = nn.Identity()
         else:
             raise TypeError(f"{poe_type} not supported")
 
         if poe_type is not PositionTypes.NOPE and RotaryTransform in [
-            config.type_hint.value for config in attention_config.qkv_transforms
+            c.type_hint.value for c in attention_config.qkv_transforms
         ]:
-            raise ValueError('It is expected to use "RotaryTransform" together with "NOPE".')
+            raise ValueError('Use "RotaryTransform" together with "NOPE".')
 
         self.use_adaptive = adaptive_config is not None and adaptive_config.enable_adaptive
         self.adaptive_config = adaptive_config
-        
+
         def create_block():
             return GPT2Block(
-                n_embd=n_embd,
-                bias=bias,
-                n_head_q=n_head_q,
-                n_head_kv=n_head_kv,
-                activation_type=activation_type,
-                attention_impl=attention_implementation,
-                attention_config=attention_config,
-                dropout=dropout,
-                ffn_hidden=ffn_hidden,
+                n_embd=n_embd, bias=bias, n_head_q=n_head_q, n_head_kv=n_head_kv,
+                activation_type=activation_type, attention_impl=attention_implementation,
+                attention_config=attention_config, dropout=dropout, ffn_hidden=ffn_hidden,
                 attention_norm=attention_norm_config.norm_type.value(**dict(attention_norm_config.config)),
                 ffn_norm=ffn_norm_config.norm_type.value(**dict(ffn_norm_config.config)),
                 enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
             )
 
-        # Create memory registry if adaptive mode is enabled AND memory is requested
         if adaptive_config and adaptive_config.enable_adaptive and adaptive_config.use_memory_bank:
             self.memory_registry = MemoryBankRegistry(
-                n_layer=n_layer,
-                n_embd=n_embd,
+                n_layer=n_layer, n_embd=n_embd,
                 num_local_slots=adaptive_config.num_local_slots,
                 num_global_slots=adaptive_config.num_global_slots,
             )
         else:
             self.memory_registry = None
 
-        # Build layers
         layers = {}
         for layer_idx in range(n_layer):
             block = create_block()
-            
             if self.use_adaptive:
                 layers[str(layer_idx)] = AdaptiveRecursiveBlock(
-                    block=block,
-                    adaptive_config=adaptive_config,
-                    n_embd=n_embd,
-                    layer_idx=layer_idx,
+                    block=block, adaptive_config=adaptive_config,
+                    n_embd=n_embd, layer_idx=layer_idx,
+                    n_layers=n_layer,
                     memory_registry=self.memory_registry,
                 )
             else:
                 layers[str(layer_idx)] = block
 
-        self.transformer = nn.ModuleDict(
-            dict(
-                wte=nn.Embedding(num_embeddings=vocab_size, embedding_dim=n_embd),
-                wpe=wpe,
-                drop=nn.Dropout(dropout),
-                h=nn.ModuleDict(layers),
-                lm_head_norm=lm_head_norm_config.norm_type.value(**dict(lm_head_norm_config.config)),
-                lm_head=nn.Linear(in_features=n_embd, out_features=vocab_size, bias=False),
-            )
-        )
-        
+        self.transformer = nn.ModuleDict(dict(
+            wte=nn.Embedding(vocab_size, n_embd),
+            wpe=wpe,
+            drop=nn.Dropout(dropout),
+            h=nn.ModuleDict(layers),
+            lm_head_norm=lm_head_norm_config.norm_type.value(**dict(lm_head_norm_config.config)),
+            lm_head=nn.Linear(n_embd, vocab_size, bias=False),
+        ))
+
         if use_weight_tying:
             self.transformer.wte.weight = self.transformer.lm_head.weight
 
     @overload
-    def forward(self, inputs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        ...
-
+    def forward(self, inputs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]: ...
     @overload
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        ...
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor: ...
 
-    def forward(self, inputs: dict[str, torch.Tensor] | torch.Tensor) -> dict[str, torch.Tensor] | torch.Tensor:
+    def forward(self, inputs):
         if isinstance(inputs, dict):
             result = self.forward_impl(inputs[self.sample_key])
-            if isinstance(result, dict):
-                return {self.prediction_key: result}
-            else:
-                return {self.prediction_key: result}
-        else:
-            return self.forward_impl(inputs)
+            return {self.prediction_key: result} if isinstance(result, dict) else {self.prediction_key: result}
+        return self.forward_impl(inputs)
 
     def forward_impl(self, inputs: torch.Tensor) -> dict[str, torch.Tensor] | torch.Tensor:
         device = inputs.device
@@ -890,102 +715,108 @@ class GPT2LLM(NNModel):
 
         if self.poe_type is PositionTypes.ABSOLUTE and hasattr(self.transformer, "wpe"):
             pos = torch.arange(0, seq_len, dtype=torch.long, device=device)
-            pos_emb = self.transformer.wpe(pos)
-            h = h + pos_emb
+            h = h + self.transformer.wpe(pos)
 
         h = self.transformer.drop(h) if hasattr(self.transformer, "drop") else h
 
-        # Tracking
+        # ------------------------------------------------------------------
+        # Collect per-layer metrics during forward pass
+        # ------------------------------------------------------------------
+        all_layer_metrics: list[dict[str, torch.Tensor]] = []
         total_ponder_cost = torch.tensor(0.0, device=device, dtype=h.dtype)
-        num_adaptive_layers = 0
-        per_layer_ponder_costs = []
-        per_layer_relative_changes = [] # The weighted sum
-        per_layer_loop_scales = []
-        per_layer_temps = []
-        per_layer_mem_scales = []
-        
-        # New Lists
-        per_layer_step_halt_probs = []
-        per_layer_step_changes = []
 
         sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
         for layer_key in sorted_keys:
             layer_module = self.transformer.h[layer_key]
-            layer_idx = int(layer_key)
 
             if self.use_adaptive:
-                # Returns 9 values now
-                (
-                    h, 
-                    cost, 
-                    rel_change_sum, 
-                    scales, 
-                    temp, 
-                    local_mem_scale, 
-                    global_mem_scale,
-                    step_halt_probs,
-                    step_rel_changes
-                ) = layer_module(h)
-                
-                cost_mean = cost.mean()
-                change_mean = rel_change_sum.mean()
-                
+                h, layer_metrics = layer_module(h)
+                cost_mean = layer_metrics["expected_steps"].mean()
                 total_ponder_cost = total_ponder_cost + cost_mean
-                per_layer_ponder_costs.append(cost_mean)
-                per_layer_relative_changes.append(change_mean)
-                per_layer_loop_scales.append(scales)
-                per_layer_temps.append(temp)
-                per_layer_mem_scales.append((local_mem_scale, global_mem_scale))
-                
-                per_layer_step_halt_probs.append(step_halt_probs)
-                per_layer_step_changes.append(step_rel_changes)
-                
-                num_adaptive_layers += 1
+                all_layer_metrics.append(layer_metrics)
             else:
-                lns_scale = 1.0 / (layer_idx + 1)
-                h = layer_module(h, scale=lns_scale)
+                h = layer_module(h, scale=1.0 / (int(layer_key) + 1))
 
-        h = self.transformer.lm_head_norm(h) if hasattr(self.transformer, "lm_head_norm") else h
-        logits = self.transformer.lm_head(h) if hasattr(self.transformer, "lm_head") else h
+        h = self.transformer.lm_head_norm(h)
+        logits = self.transformer.lm_head(h)
 
-        if self.use_adaptive:
-            avg_ponder_cost = total_ponder_cost / num_adaptive_layers if num_adaptive_layers > 0 else torch.tensor(0.0, dtype=h.dtype, device=device)
-            
-            normalized_steps = (avg_ponder_cost - 1.0) / (self.adaptive_config.max_loops - 1.0) if self.adaptive_config.max_loops > 1 else torch.tensor(0.0, dtype=h.dtype, device=device)
-            
-            weighted_ponder_loss = (normalized_steps * self.adaptive_config.ponder_penalty_weight).to(logits.dtype)
-            
-            # Prepare stacks
-            layer_costs_tensor = torch.stack(per_layer_ponder_costs) if per_layer_ponder_costs else torch.tensor([], device=device)
-            layer_changes_tensor = torch.stack(per_layer_relative_changes) if per_layer_relative_changes else torch.tensor([], device=device)
-            local_scales = torch.stack([s[0] for s in per_layer_mem_scales])
-            global_scales = torch.stack([s[1] for s in per_layer_mem_scales])
+        if not self.use_adaptive:
+            return logits
 
-            return {
-                "logits": logits,
-                "ponder_loss": weighted_ponder_loss,
-                "ponder_cost_unweighted": total_ponder_cost,
-                "expected_steps": avg_ponder_cost,
-                "normalized_steps": normalized_steps,
-                "per_layer_ponder_costs": layer_costs_tensor,
-                "per_layer_cos_sims": layer_changes_tensor, # Kept key name for compatibility
-                "loop_scales": torch.stack(per_layer_loop_scales) if per_layer_loop_scales else torch.tensor([], device=device),
-                
-                # NEW / UPDATED EXPORTS
-                "halt_temperature": torch.stack(per_layer_temps).squeeze() if per_layer_temps else torch.tensor([], device=device),
-                "per_layer_step_halt_probs": torch.stack(per_layer_step_halt_probs) if per_layer_step_halt_probs else torch.tensor([], device=device),
-                "per_layer_step_changes": torch.stack(per_layer_step_changes) if per_layer_step_changes else torch.tensor([], device=device),
-                
-                "local_mem_scales": local_scales,
-                "global_mem_scales": global_scales,
-            }
-        
-        return logits
+        # ==================================================================
+        # BUILD METRICS BAG
+        # ==================================================================
+        n_layers = len(all_layer_metrics)
+        max_loops = self.adaptive_config.max_loops
 
+        avg_ponder_cost = total_ponder_cost / n_layers
+        normalized_steps = (
+            (avg_ponder_cost - 1.0) / (max_loops - 1.0)
+            if max_loops > 1
+            else torch.tensor(0.0, dtype=h.dtype, device=device)
+        )
+        weighted_ponder_loss = (normalized_steps * self.adaptive_config.ponder_penalty_weight).to(logits.dtype)
+
+        # --- Helper: stack a key from all layer metrics ---
+        def stack_key(key: str) -> torch.Tensor:
+            return torch.stack([m[key] for m in all_layer_metrics])
+
+        # --- Scalars: accumulated across microbatches, then all-reduced ---
+        scalars = {
+            "ponder_cost_unweighted": total_ponder_cost,
+            "expected_steps": avg_ponder_cost,
+            "normalized_steps": normalized_steps,
+        }
+
+        # --- Per-layer scalars: shape (n_layer,), accumulated & reduced ---
+        per_layer_scalars = {
+            "ponder_cost": torch.stack([m["expected_steps"].mean() for m in all_layer_metrics]),
+            "weighted_change": torch.stack([m["total_relative_change"].mean() for m in all_layer_metrics]),
+            "temperature": stack_key("halt_temperature").squeeze(-1),
+            "local_mem_scale": stack_key("local_mem_scale"),
+            "global_mem_scale": stack_key("global_mem_scale"),
+            # NEW: exit diagnostics per layer
+            "actual_steps": stack_key("actual_steps"),
+            "exit_quantile": stack_key("exit_quantile"),
+            "done_frac_at_exit": stack_key("done_frac_at_exit"),
+            "residual_mass": stack_key("residual_mass"),
+            "hard_token_frac": stack_key("hard_token_frac"),
+            "truncated_mass": stack_key("truncated_mass"),
+        }
+
+        # --- Per-layer vectors: shape (n_layer, max_loops), last-batch snapshot ---
+        per_layer_vectors = {
+            "step_halt_prob": stack_key("step_halt_probs"),    # (n_layer, max_loops)
+            "step_change": stack_key("step_changes"),          # (n_layer, max_loops)
+            "loop_scale": stack_key("loop_scales"),            # (n_layer, max_loops)
+            # prob_remain decay curve
+            "prob_remain_max": stack_key("prob_remain_max"),       # (n_layer, max_loops)
+            "prob_remain_mean": stack_key("prob_remain_mean"),     # (n_layer, max_loops)
+            # Second-order effects
+            "acceleration": stack_key("acceleration"),             # (n_layer, max_loops)
+            "cosine_sim": stack_key("cosine_sim"),                 # (n_layer, max_loops)
+            # NEW: done_frac per step per layer (how fast tokens converge)
+            "done_frac": stack_key("done_frac"),                   # (n_layer, max_loops)
+        }
+
+        return {
+            "logits": logits,
+            "ponder_loss": weighted_ponder_loss,
+            "metrics": {
+                "scalars": scalars,
+                "per_layer_scalars": per_layer_scalars,
+                "per_layer_vectors": per_layer_vectors,
+            },
+        }
+
+
+# =============================================================================
+# Manual attention fallback (unchanged)
+# =============================================================================
 
 def manual_scaled_dot_product_attention(
     query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None
-) -> torch.Tensor:
+):
     L, S = query.size(-2), key.size(-2)
     scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
     attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
@@ -994,7 +825,6 @@ def manual_scaled_dot_product_attention(
         temp_mask = torch.ones(L, S, dtype=torch.bool, device=query.device).tril(diagonal=0)
         attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
         attn_bias.to(query.dtype)
-
     if attn_mask is not None:
         if attn_mask.dtype == torch.bool:
             attn_bias.masked_fill_(attn_mask.logical_not(), float("-inf"))

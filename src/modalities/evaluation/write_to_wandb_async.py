@@ -17,7 +17,7 @@ import queue  # Standard library queue
 ENTITY = "cyhsm"
 PROJECT = "loom"
 CHECKPOINTS_ROOT = "/raid/s3/opengptx/mfrey/loop/checkpoints"
-BENCHMARK_ROOT = "/raid/s3/opengptx/mfrey/loop/benchmarks_128"
+BENCHMARK_ROOT = "/raid/s3/opengptx/mfrey/loop/benchmarks_128_allloops"
 
 # WANDB TOGGLE
 USE_WANDB = True  # Set to True to log to wandb, False to only save to disk
@@ -42,27 +42,36 @@ RUN_IDS_TO_EVALUATE = None
 # 5. MAPPING (MANIFEST)
 EXPERIMENT_MANIFEST = [
     {
-        "name":   "loop3_relativechange_norouter_tempinit-7_noeps",
-        "run_id": "hs5705nb",
-        "folder": "2026-02-10__12-57-16_30ffe0ada1f11d0b",
+        "name":   "loop3_nomemory_temp0_mean",
+        "run_id": "bx9gmms7",
+        "folder": "2026-02-11__22-55-25_033b9c0d894522b0",
     },
     {
-        "name":   "loop3_relativechange_norouter_tempinit-7",
-        "run_id": "bwth8sfo",
-        "folder": "2026-02-10__12-48-20_30ffe0ada1f11d0b",
+        "name":   "loop3_nomemory_temp1_mean",
+        "run_id": "7ta40akf",
+        "folder": "2026-02-11__22-40-17_06e47e342dd1cab7",
     },
     {
-        "name":   "loop3_relativechange_norouter_tempinit-3",
-        "run_id": "lw7oajlj",
-        "folder": "2026-02-10__12-24-52_30ffe0ada1f11d0b",
+        "name":   "loop3_nomemory_temp0",
+        "run_id": "e0sgv22x",
+        "folder": "2026-02-11__19-40-09_06e47e342dd1cab7",
     },
     {
-        "name":   "loop3_relativechange_norouter_tempinit1",
-        "run_id": "n32ouria",
-        "folder": "2026-02-10__11-29-06_30ffe0ada1f11d0b",
+        "name":   "loop3_nomemory_temp1",
+        "run_id": "dkxxncod",
+        "folder": "2026-02-11__19-31-15_06e47e342dd1cab7",
+    },
+    {
+        "name":   "loop7_nomemory_temp0_mean",
+        "run_id": "spzbw9pn",
+        "folder": "2026-02-12__09-24-38_b644e4efbff99110",
+    },
+    {
+        "name":   "loop7_nomemory_temp0_quantile",
+        "run_id": "2en0fyqx",
+        "folder": "2026-02-12__14-05-46_b644e4efbff99110",
     },
 ]
-
 
 # =====================================================================
 # HELPERS
@@ -325,8 +334,8 @@ if __name__ == "__main__":
     # ==========================================
     # 1. CONFIGURATION
     # ==========================================
-    GPU_IDS = [5, 7]              # <--- LIST YOUR GPUS HERE
-    CONCURRENT_PER_GPU = 4        # <--- WORKERS PER GPU
+    GPU_IDS = [6]              # <--- LIST YOUR GPUS HERE
+    CONCURRENT_PER_GPU = 9      # <--- WORKERS PER GPU
 
     # ==========================================
     # 2. SETUP
