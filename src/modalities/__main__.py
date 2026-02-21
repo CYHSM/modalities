@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-
+# import torch._dynamo
+# torch._dynamo.config.capture_dynamic_output_shape_ops = True
 import json
 import os
 import socket
