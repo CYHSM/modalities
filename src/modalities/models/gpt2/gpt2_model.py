@@ -50,7 +50,7 @@ class AdaptiveComputationConfig(BaseModel):
     enable_adaptive: bool = False
     max_loops: int = 10
     halt_threshold: float = 0.99
-    ponder_penalty_weight: float = 0.01
+    ponder_penalty_weight: float = 0.00
     wide_ffn_hidden: int = 0
     wide_ffn_gate_init_bias: float = 0.0
     scheduler_type: str = "constant"
@@ -505,6 +505,7 @@ class AdaptiveRecursiveBlock(nn.Module):
 
             # Per-step diagnostics (all detached)
             rel_change = (h_loop - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)  # (B, T)
+
             metrics.log("halt_prob_mean", halt_prob.detach().mean())
             metrics.log("halt_prob_std", halt_prob.detach().std())
             metrics.log("halt_prob_min", halt_prob.detach().min())
@@ -515,6 +516,7 @@ class AdaptiveRecursiveBlock(nn.Module):
 
         state.finalize(h_loop, actual_steps)
         h_deep = state.output
+        frac_alive = (state.prob_remain.detach() > 0.01).float().mean()
 
         # =================================================================
         # 2) Capacity path: wide block, single pass
@@ -555,6 +557,7 @@ class AdaptiveRecursiveBlock(nn.Module):
             # Scalars
             "actual_steps": torch.tensor(float(actual_steps), device=device),
             "residual_mass": state.prob_remain.mean().detach(),
+            "frac_alive": frac_alive,
             "wide_scale": wide_scale_val.squeeze().detach(),
             # Expected steps distribution across tokens
             "expected_steps_mean": es.mean(),
@@ -572,7 +575,6 @@ class AdaptiveRecursiveBlock(nn.Module):
                 h_wide.detach().norm(dim=-1).mean()
                 if self.has_wide_path else torch.tensor(0.0, device=device)
             ),
-            # Per-step vectors (max_loops,)
             "step_halt_probs": step_metrics.get("halt_prob_mean", torch.zeros(self.max_loops, device=device)),
             "step_halt_prob_std": step_metrics.get("halt_prob_std", torch.zeros(self.max_loops, device=device)),
             "step_halt_prob_min": step_metrics.get("halt_prob_min", torch.zeros(self.max_loops, device=device)),
@@ -700,7 +702,7 @@ class GPT2LLM(NNModel):
 
     # Keys that are per-layer scalars (stacked to (n_layers,))
     _PER_LAYER_SCALAR_KEYS = [
-        "actual_steps", "residual_mass", "wide_scale",
+        "actual_steps", "residual_mass", "frac_alive", "wide_scale",
         "expected_steps_mean", "expected_steps_std", "expected_steps_min", "expected_steps_max",
         "dual_gate_mean", "dual_gate_std", "dual_gate_min", "dual_gate_max",
         "deep_block_norm", "wide_block_norm",
