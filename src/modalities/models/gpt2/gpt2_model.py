@@ -19,60 +19,42 @@ from modalities.models.components.layer_norms import (
     RMSLayerNormConfig,
 )
 from modalities.models.model import ActivationType, NNModel, SwiGLU
-
 from modalities.util import parse_enum_by_name
-
 
 try:
     from flash_attn import flash_attn_func
 except ModuleNotFoundError:
     flash_attn_func = None
 
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
+
+
+# =============================================================================
+# Metrics Convention
+# =============================================================================
+#
+# MetricsBag = {
+#     "scalars":            dict[str, Tensor],   # shape ()    — accumulated & reduced
+#     "per_layer_scalars":  dict[str, Tensor],   # shape (L,)  — accumulated & reduced
+#     "per_layer_vectors":  dict[str, Tensor],   # shape (L,M) — last-batch snapshot only
+# }
+# =============================================================================
 
 
 # =============================================================================
 # Configs
 # =============================================================================
 
-
-def default_heterogeneous_experts() -> list["ExpertDefinition"]:
-    return [
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-        ExpertDefinition(ffn_hidden=3072, max_loops=1),
-    ]
-
-class ExpertDefinition(BaseModel):
-    """Defines a single expert: just an MLP width + loop count."""
-    ffn_hidden: Annotated[int, Field(strict=True, ge=1)]
-    max_loops: Annotated[int, Field(strict=True, ge=1)] = 1
-
 class AdaptiveComputationConfig(BaseModel):
-    """Configuration for the shared-expert Mixture-of-Experts system."""
-    experts: list[ExpertDefinition] = Field(default_factory=default_heterogeneous_experts)
-    top_k: Annotated[int, Field(strict=True, ge=1)] = 1
-    capacity_factor: Annotated[float, Field(ge=1.0)] = 1.25
-    load_balance_weight: Annotated[float, Field(ge=0.0)] = 0.01
+    enable_adaptive: bool = False
+    max_loops: int = 10
+    halt_threshold: float = 0.99
     ponder_penalty_weight: float = 0.01
+    wide_ffn_hidden: int = 0
+    wide_ffn_gate_init_bias: float = 0.0
     scheduler_type: str = "constant"
 
-    @model_validator(mode="after")
-    def check_top_k(self) -> "AdaptiveComputationConfig":
-        if self.top_k > len(self.experts):
-            raise ValueError(f"top_k ({self.top_k}) > num experts ({len(self.experts)})")
-        return self
 
 class LayerNorms(LookupEnum):
     rms_norm = RMSLayerNorm
@@ -91,9 +73,8 @@ class PositionTypes(str, Enum):
 
 
 # =============================================================================
-# QKV Transforms (unchanged)
+# QKV Transforms
 # =============================================================================
-
 
 class QueryKeyValueTransform(nn.Module):
     @abstractmethod
@@ -227,9 +208,8 @@ class GPT2LLMConfig(BaseModel):
 
 
 # =============================================================================
-# Attention (unchanged)
+# Attention
 # =============================================================================
-
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, n_head_q, n_head_kv, n_embd, attention_config, attention_impl, bias, dropout):
@@ -329,11 +309,6 @@ class CausalSelfAttention(nn.Module):
         return self.resid_dropout(self.c_proj(y))
 
 
-# =============================================================================
-# MLP Building Blocks (unchanged, reused by both GPT2Block and Expert)
-# =============================================================================
-
-
 class TransformerMLP(nn.Module):
     def __init__(self, n_embd, ffn_hidden, bias, dropout):
         super().__init__()
@@ -346,11 +321,6 @@ class TransformerMLP(nn.Module):
         return self.dropout(self.c_proj(self.gelu(self.c_fc(x))))
 
 
-# =============================================================================
-# GPT2Block — used only in the non-MoE fallback path
-# =============================================================================
-
-
 class GPT2Block(nn.Module):
     def __init__(
         self, n_embd, bias, n_head_q, n_head_kv, activation_type, attention_impl,
@@ -360,6 +330,7 @@ class GPT2Block(nn.Module):
         super().__init__()
         self.attention_norm = attention_norm
         self.ffn_norm = ffn_norm
+        self._check_ffn_hidden_dim(n_embd, ffn_hidden)
         self.attn = CausalSelfAttention(
             n_head_q=n_head_q, n_head_kv=n_head_kv, n_embd=n_embd,
             attention_config=attention_config, attention_impl=attention_impl,
@@ -375,294 +346,249 @@ class GPT2Block(nn.Module):
         else:
             raise NotImplementedError("unimplemented activation")
 
-    def forward(self, x):
-        x = x + self.attn(self.attention_norm(x))
-        x = x + self.mlp(self.ffn_norm(x))
+    def _check_ffn_hidden_dim(self, n_embd, ffn_hidden):
+        expected = 4 * n_embd
+        if ffn_hidden != expected:
+            logger.warning(f"Expected ffn_hidden={expected}, got n_embd={n_embd}, ffn_hidden={ffn_hidden}.")
+
+    def forward(self, x, scale=1.0):
+        x = x + scale * self.attn(self.attention_norm(x))
+        x = x + scale * self.mlp(self.ffn_norm(x))
         return x
 
 
 # =============================================================================
-# Shared Expert MoE Components
+# Adaptive Computation Components
 # =============================================================================
 
+@dataclass
+class HaltingState:
+    """Tracks ACT halting: prob_remain, weighted output, and expected steps."""
+    prob_remain: torch.Tensor       # (B, T)
+    output: torch.Tensor            # (B, T, D)
+    expected_steps: torch.Tensor    # (B, T)
 
-class Expert(nn.Module):
-    def __init__(
-        self,
-        n_embd: int,
-        ffn_hidden: int,
-        max_loops: int,
-        bias: bool,
-        dropout: float,
-        activation_type: ActivationType,
-        enforce_swiglu_hidden_dim_multiple_of: int = 256,
-    ):
-        super().__init__()
-        self.max_loops = max_loops
-        self.expert_norm = nn.RMSNorm(n_embd)
-        self.output_norm = nn.RMSNorm(n_embd)
-
-        if activation_type == ActivationType.GELU:
-            self.mlp = TransformerMLP(n_embd=n_embd, ffn_hidden=ffn_hidden, bias=bias, dropout=dropout)
-        elif activation_type == ActivationType.SWIGLU:
-            self.mlp = SwiGLU(
-                n_embd=n_embd, ffn_hidden=ffn_hidden, bias=bias,
-                enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
-            )
-        else:
-            raise NotImplementedError(f"Unsupported activation: {activation_type}")
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = x
-        for _ in range(self.max_loops):
-            h = h + self.mlp(self.expert_norm(h))
-        delta = h - x
-        return self.output_norm(delta)
-
-
-class SharedExpertPool(nn.Module):
-    """Pool of experts shared across all layers. Instantiated once, referenced by all."""
-
-    def __init__(
-        self,
-        expert_configs: list[ExpertDefinition],
-        n_embd: int,
-        bias: bool,
-        dropout: float,
-        activation_type: ActivationType,
-        enforce_swiglu_hidden_dim_multiple_of: int = 256,
-    ):
-        super().__init__()
-        self.experts = nn.ModuleList([
-            Expert(
-                n_embd=n_embd,
-                ffn_hidden=cfg.ffn_hidden,
-                max_loops=cfg.max_loops,
-                bias=bias,
-                dropout=dropout,
-                activation_type=activation_type,
-                enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
-            )
-            for cfg in expert_configs
-        ])
-
-    @property
-    def num_experts(self) -> int:
-        return len(self.experts)
-
-    def forward(self, expert_idx: int, x: torch.Tensor) -> torch.Tensor:
-        return self.experts[expert_idx](x)
-
-
-class ExpertRouter(nn.Module):
-    """Per-layer lightweight router. Maps each token to expert logits."""
-
-    def __init__(self, n_embd: int, num_experts: int):
-        super().__init__()
-        self.gate = nn.Linear(n_embd, num_experts, bias=False)
-        self.reset_parameters()
-    
-    def reset_parameters(self):
-        nn.init.zeros_(self.gate.weight)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: (B, T, D) — normalized hidden states.
-        Returns:
-            logits: (B, T, num_experts) — raw routing scores.
-        """
-        return self.gate(x)
-
-
-def moe_dispatch(
-    x: torch.Tensor,
-    router_logits: torch.Tensor,
-    expert_pool: SharedExpertPool,
-    top_k: int = 1,
-    capacity_factor: float = 1.25,
-) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
-    """Route tokens to experts via top-k gating with fixed-capacity buffers.
-
-    torch.compile compatible — ALL tensor shapes are static. Each expert
-    processes a fixed-size buffer of `capacity` tokens (padded with zeros).
-    Tokens beyond capacity are dropped (standard MoE behaviour).
-
-    Compute cost: ~capacity_factor × N total expert FLOPs (vs N ideal,
-    vs E×N for the naive "run all tokens through all experts" approach).
-
-    Args:
-        x:               (B, T, D) — hidden states.
-        router_logits:   (B, T, E) — raw logits from router.
-        expert_pool:     shared expert pool.
-        top_k:           experts per token.
-        capacity_factor: headroom multiplier for per-expert buffer size.
-                         1.0 = no headroom (tokens dropped if load uneven).
-                         1.25 = 25% buffer (recommended).
-
-    Returns:
-        output:   (B, T, D) — weighted expert deltas.
-        aux_loss: scalar — load-balancing loss.
-        metrics:  dict with routing diagnostics.
-    """
-    B, T, D = x.shape
-    E = expert_pool.num_experts
-    N = B * T
-
-    x_flat = x.reshape(N, D)                                       # (N, D)
-    logits_flat = router_logits.reshape(N, E)                       # (N, E)
-
-    # ---- Gating ----
-    gates = F.softmax(logits_flat, dim=-1)                          # (N, E)
-    top_values, top_indices = gates.topk(top_k, dim=-1)             # (N, k)
-    top_values = top_values / top_values.sum(dim=-1, keepdim=True)
-
-    # Fixed capacity per expert — static shape for torch.compile
-    # With perfect balance each expert gets N*top_k/E tokens.
-    capacity = max(1, int(math.ceil(N * top_k / E * capacity_factor)))
-
-    output_flat = torch.zeros_like(x_flat)                          # (N, D)
-    total_dropped = torch.zeros(1, device=x.device, dtype=x.dtype)
-
-    for k_idx in range(top_k):
-        indices_k = top_indices[:, k_idx]                           # (N,)
-        weights_k = top_values[:, k_idx]                            # (N,)
-
-        for e_idx in range(E):
-            # 1) Which tokens are assigned to this expert
-            mask_bool = (indices_k == e_idx)                        # (N,) bool
-            mask = mask_bool.to(x.dtype)                            # (N,) same dtype as x
-
-            # 2) Assign buffer positions via cumsum (0-indexed)
-            #    Use float32 for cumsum precision (bfloat16 loses count > 256)
-            token_pos = (mask_bool.float().cumsum(0) - 1).long()    # (N,)
-
-            # 3) Drop tokens beyond capacity
-            within_cap = (token_pos < capacity).to(x.dtype)         # (N,)
-            active = mask * within_cap                              # (N,)
-            total_dropped = total_dropped + (mask.sum() - active.sum())
-
-            # 4) Clamp positions to valid buffer range
-            safe_pos = token_pos.clamp(0, capacity - 1)             # (N,)
-            pos_idx = safe_pos.unsqueeze(-1).expand(-1, D)          # (N, D)
-
-            # 5) Scatter input into fixed-size buffer
-            #    Non-active tokens scatter zeros → no effect via scatter_add_
-            expert_buf = torch.zeros(capacity, D, device=x.device, dtype=x.dtype)
-            expert_buf.scatter_add_(0, pos_idx, x_flat * active.unsqueeze(-1))
-
-            # 6) Run expert on fixed-shape buffer (capacity, D)
-            expert_delta = expert_pool(e_idx, expert_buf)           # (capacity, D)
-
-            # 7) Gather results back to original token positions
-            gathered = torch.gather(expert_delta, 0, pos_idx)       # (N, D)
-
-            # 8) Accumulate weighted output (inactive tokens contribute zero)
-            output_flat = output_flat + gathered * (active * weights_k).unsqueeze(-1)
-
-    output = output_flat.reshape(B, T, D)
-
-    # ---- Load-balancing auxiliary loss (Switch Transformer style) ----
-    with torch.no_grad():
-        one_hot = F.one_hot(top_indices, E).float()                 # (N, k, E)
-        expert_counts = one_hot.sum(dim=(0, 1))                     # (E,)
-        f = expert_counts / (N * top_k)
-
-    P = gates.mean(dim=0)                                           # (E,) — has grad
-    aux_loss = E * (f * P).sum()
-
-    # ---- Metrics ----
-    with torch.no_grad():
-        expert_load = f
-        router_entropy = -(gates * (gates + 1e-9).log()).sum(dim=-1).mean()
-        frac_dropped = total_dropped.squeeze() / max(N * top_k, 1)
-
-    metrics = {
-        "expert_load": expert_load,
-        "router_entropy": router_entropy,
-        "aux_loss": aux_loss.detach(),
-        "tokens_dropped_frac": frac_dropped,
-    }
-
-    return output, aux_loss, metrics
-
-
-# =============================================================================
-# MoE Transformer Layer
-# =============================================================================
-
-
-class MoETransformerLayer(nn.Module):
-    """Transformer layer: per-layer attention + routing to shared experts.
-
-    Per-layer parameters:  attention weights, attention_norm, ffn_norm, router.
-    Shared parameters:     expert pool (passed during forward, not owned).
-
-    The expert pool is NOT stored as a submodule here to avoid duplicate
-    registration in the state dict — it's owned once by GPT2LLM.
-    """
-
-    def __init__(
-        self,
-        n_embd: int,
-        bias: bool,
-        n_head_q: int,
-        n_head_kv: int,
-        n_layer: int,
-        attention_impl: AttentionImplementation,
-        attention_config: AttentionConfig,
-        dropout: float,
-        attention_norm: nn.Module,
-        ffn_norm: nn.Module,
-        num_experts: int,
-        top_k: int = 1,
-        capacity_factor: float = 1.25,
-    ):
-        super().__init__()
-        self.attention_norm = attention_norm
-        self.ffn_norm = ffn_norm
-        self.top_k = top_k
-        self.capacity_factor = capacity_factor
-
-        self.attn = CausalSelfAttention(
-            n_head_q=n_head_q, n_head_kv=n_head_kv, n_embd=n_embd,
-            attention_config=attention_config, attention_impl=attention_impl,
-            bias=bias, dropout=dropout,
+    @staticmethod
+    def init(B: int, T: int, D: int, *, device: torch.device, dtype: torch.dtype) -> "HaltingState":
+        return HaltingState(
+            prob_remain=torch.ones(B, T, device=device, dtype=dtype),
+            output=torch.zeros(B, T, D, device=device, dtype=dtype),
+            expected_steps=torch.zeros(B, T, device=device, dtype=dtype),
         )
 
-        # Lightweight per-layer router
-        self.router = ExpertRouter(n_embd, num_experts)
+    def update(self, h: torch.Tensor, halt_prob: torch.Tensor, step: int):
+        p_stop = self.prob_remain * halt_prob
+        self.prob_remain = self.prob_remain * (1.0 - halt_prob)
+        self.output = self.output + h * p_stop.unsqueeze(-1)
+        self.expected_steps = self.expected_steps + p_stop * (step + 1)
+
+    def finalize(self, h_last: torch.Tensor, last_step: int):
+        self.output = self.output + h_last * self.prob_remain.unsqueeze(-1)
+        self.expected_steps = self.expected_steps + self.prob_remain * last_step
+
+
+class StepMetrics:
+    """Collects per-step scalars, pads/stacks to (max_loops,) for logging."""
+
+    def __init__(self, max_loops: int, device: torch.device):
+        self.max_loops = max_loops
+        self.device = device
+        self._buffers: dict[str, list[torch.Tensor]] = {}
+
+    def log(self, key: str, value: torch.Tensor):
+        self._buffers.setdefault(key, []).append(value.detach())
+
+    def finalize(self) -> dict[str, torch.Tensor]:
+        out = {}
+        for key, vals in self._buffers.items():
+            stacked = torch.stack(vals)
+            if stacked.size(0) < self.max_loops:
+                pad = torch.zeros(self.max_loops - stacked.size(0), device=self.device, dtype=stacked.dtype)
+                stacked = torch.cat([stacked, pad])
+            out[key] = stacked
+        return out
+
+
+class AdaptiveRouter(nn.Module):
+    """Per-token halting: [h; t_normalized] -> sigmoid -> halt_prob."""
+
+    def __init__(self, n_embd: int, bias: bool = True):
+        super().__init__()
+        self.linear = nn.Linear(n_embd + 1, 1, bias=bias)
+
+    def forward(self, h: torch.Tensor, step_normalized: float) -> torch.Tensor:
+        B, T, _ = h.shape
+        step_feat = torch.full((B, T, 1), step_normalized, device=h.device, dtype=h.dtype)
+        logit = self.linear(torch.cat([h, step_feat], dim=-1))
+        return torch.sigmoid(logit).squeeze(-1)
+
+
+class DualPathGate(nn.Module):
+    """Per-element gate blending compute path (loop) and capacity path (wide block)."""
+
+    def __init__(self, n_embd: int, init_bias: float = 0.0):
+        super().__init__()
+        self.gate_proj = nn.Linear(n_embd, n_embd, bias=True)
+        self.init_bias = init_bias
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.zeros_(self.gate_proj.weight)
+        nn.init.constant_(self.gate_proj.bias, self.init_bias)
 
     def forward(
-        self, x: torch.Tensor, expert_pool: SharedExpertPool,
+        self, routing_input: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        gate = torch.sigmoid(self.gate_proj(routing_input))   # (B, T, D)
+        blended = gate * h_deep + (1.0 - gate) * h_wide
+        return blended, gate
+
+
+# =============================================================================
+# Adaptive Recursive Block (Dual Full-Block Paths)
+# =============================================================================
+
+class AdaptiveRecursiveBlock(nn.Module):
+    _INIT_SCALE_RAW: float = -7.0
+
+    def __init__(
+        self,
+        block: GPT2Block,
+        adaptive_config: AdaptiveComputationConfig,
+        n_embd: int,
+        layer_idx: int,
+        n_layers: int,
+        wide_block: Optional[GPT2Block] = None,
+    ):
+        super().__init__()
+        self.block = block
+        self.config = adaptive_config
+        self.max_loops = adaptive_config.max_loops
+        self.layer_idx = layer_idx
+        self.n_layers = n_layers
+
+        self.router = AdaptiveRouter(n_embd)
+        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), self._INIT_SCALE_RAW))
+
+        self.has_wide_path = wide_block is not None
+        if self.has_wide_path:
+            self.wide_block = wide_block
+            self.wide_scale = nn.Parameter(torch.tensor([self._INIT_SCALE_RAW]))
+            self.dual_gate = DualPathGate(n_embd=n_embd, init_bias=adaptive_config.wide_ffn_gate_init_bias)
+
+    def forward(
+        self, x: torch.Tensor, token_ids: torch.Tensor = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        """
-        Args:
-            x: (B, T, D)
-            expert_pool: shared expert pool (owned by GPT2LLM, passed here).
-        Returns:
-            x: (B, T, D) — updated hidden states.
-            metrics: routing diagnostics for this layer.
-        """
-        # 1) Self-attention (per-layer params)
-        x = x + self.attn(self.attention_norm(x))
+        B, T, D = x.shape
+        device = x.device
+        step_denom = max(1, self.max_loops - 1)
 
-        # 2) Route to shared experts
-        x_normed = self.ffn_norm(x)
-        router_logits = self.router(x_normed)
-        expert_delta, aux_loss, metrics = moe_dispatch(
-            x, router_logits, expert_pool, self.top_k, self.capacity_factor,
-        )
-        x = x + expert_delta
+        # =================================================================
+        # 1) Compute path: full block looped with ACT
+        # =================================================================
+        state = HaltingState.init(B, T, D, device=device, dtype=x.dtype)
+        metrics = StepMetrics(self.max_loops, device)
 
-        metrics["aux_loss_raw"] = aux_loss
-        return x, metrics
+        h_loop = x
+        actual_steps = 0
+
+        for step in range(self.max_loops):
+            actual_steps = step + 1
+
+            scale = F.softplus(self.loop_scales[step])
+            metrics.log("loop_scale", scale.detach())
+            h_prev = h_loop
+            h_loop = self.block(h_loop, scale=scale)
+
+            halt_prob = self.router(h_loop, step_normalized=step / step_denom)
+            state.update(h_loop, halt_prob, step)
+
+            # Per-step diagnostics (all detached)
+            rel_change = (h_loop - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)  # (B, T)
+            metrics.log("halt_prob_mean", halt_prob.detach().mean())
+            metrics.log("halt_prob_std", halt_prob.detach().std())
+            metrics.log("halt_prob_min", halt_prob.detach().min())
+            metrics.log("halt_prob_max", halt_prob.detach().max())
+            metrics.log("rel_change", rel_change.mean())
+            metrics.log("prob_remain_max", state.prob_remain.max().detach())
+            metrics.log("prob_remain_mean", state.prob_remain.mean().detach())
+
+        state.finalize(h_loop, actual_steps)
+        h_deep = state.output
+
+        # =================================================================
+        # 2) Capacity path: wide block, single pass
+        # =================================================================
+        if self.has_wide_path:
+            wide_scale_val = F.softplus(self.wide_scale)
+            h_wide = self.wide_block(x, scale=wide_scale_val)
+            output, gate = self.dual_gate(x, h_deep, h_wide)  # gate is (B, T, D)
+        else:
+            output = h_deep
+            gate = None
+            wide_scale_val = torch.tensor(0.0, device=device)
+
+        # =================================================================
+        # 3) Build layer metrics
+        # =================================================================
+        step_metrics = metrics.finalize()
+
+        # Expected steps stats across tokens
+        es = state.expected_steps.detach()  # (B, T)
+
+        # Gate stats
+        if gate is not None:
+            gate_d = gate.detach()
+            gate_mean = gate_d.mean()
+            gate_std = gate_d.std()
+            gate_min = gate_d.min()
+            gate_max = gate_d.max()
+        else:
+            gate_mean = torch.tensor(1.0, device=device)
+            gate_std = torch.tensor(0.0, device=device)
+            gate_min = torch.tensor(1.0, device=device)
+            gate_max = torch.tensor(1.0, device=device)
+
+        layer_metrics = {
+            # Per-token (B, T) — used for ponder cost
+            "expected_steps": state.expected_steps,
+            # Scalars
+            "actual_steps": torch.tensor(float(actual_steps), device=device),
+            "residual_mass": state.prob_remain.mean().detach(),
+            "wide_scale": wide_scale_val.squeeze().detach(),
+            # Expected steps distribution across tokens
+            "expected_steps_mean": es.mean(),
+            "expected_steps_std": es.std(),
+            "expected_steps_min": es.min(),
+            "expected_steps_max": es.max(),
+            # Dual gate distribution
+            "dual_gate_mean": gate_mean,
+            "dual_gate_std": gate_std,
+            "dual_gate_min": gate_min,
+            "dual_gate_max": gate_max,
+            # Path output magnitudes
+            "deep_block_norm": h_deep.detach().norm(dim=-1).mean(),
+            "wide_block_norm": (
+                h_wide.detach().norm(dim=-1).mean()
+                if self.has_wide_path else torch.tensor(0.0, device=device)
+            ),
+            # Per-step vectors (max_loops,)
+            "step_halt_probs": step_metrics.get("halt_prob_mean", torch.zeros(self.max_loops, device=device)),
+            "step_halt_prob_std": step_metrics.get("halt_prob_std", torch.zeros(self.max_loops, device=device)),
+            "step_halt_prob_min": step_metrics.get("halt_prob_min", torch.zeros(self.max_loops, device=device)),
+            "step_halt_prob_max": step_metrics.get("halt_prob_max", torch.zeros(self.max_loops, device=device)),
+            "step_changes": step_metrics.get("rel_change", torch.zeros(self.max_loops, device=device)),
+            "loop_scales": step_metrics.get("loop_scale", torch.zeros(self.max_loops, device=device)),
+            "prob_remain_max": step_metrics.get("prob_remain_max", torch.zeros(self.max_loops, device=device)),
+            "prob_remain_mean": step_metrics.get("prob_remain_mean", torch.zeros(self.max_loops, device=device)),
+        }
+
+        return output, layer_metrics
 
 
 # =============================================================================
 # GPT2LLM — Main Model
 # =============================================================================
-
 
 class GPT2LLM(NNModel):
     def __init__(
@@ -670,17 +596,24 @@ class GPT2LLM(NNModel):
         n_layer, n_head_q, n_head_kv, n_embd, ffn_hidden, dropout, bias,
         activation_type, attention_implementation, attention_config,
         attention_norm_config, ffn_norm_config, lm_head_norm_config,
-        use_weight_tying, seed=None, enforce_swiglu_hidden_dim_multiple_of=256,
+        use_weight_tying, seed=None, enforce_swiglu_hidden_dim_multiple_of=32,
         adaptive_config=None,
     ):
         weight_decay_groups = {
             "linear": [
-                ".attn", ".mlp", ".lm_head.weight",
-                ".router.gate.weight",
+                ".q_attn", ".k_attn", ".v_attn",
+                ".attn.c_proj",
+                ".mlp",
+                ".lm_head.weight",
+                ".router.linear.weight",
+                ".dual_gate.gate_proj.weight",
             ],
             "embedding": [".wte", ".wpe"],
             "layernorm": [
-                ".attention_norm", ".ffn_norm", ".lm_head_norm", ".expert_norm", ".output_norm",
+                ".attention_norm", ".ffn_norm", ".lm_head_norm",
+                ".q_norm", ".k_norm",
+                ".loop_scales", ".wide_scale", ".dual_gate.gate_proj.bias",
+                ".router.linear.bias",
             ],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
@@ -691,9 +624,6 @@ class GPT2LLM(NNModel):
         self.n_embd = n_embd
         self.n_layer = n_layer
         self.poe_type = poe_type
-        self.use_moe = adaptive_config is not None
-        self.adaptive_config = adaptive_config
-        print(self.adaptive_config)
 
         assert vocab_size is not None
         assert sequence_length is not None
@@ -710,61 +640,114 @@ class GPT2LLM(NNModel):
         ]:
             raise ValueError('Use "RotaryTransform" together with "NOPE".')
 
-        # ---- Build layers ----
+        self.use_adaptive = adaptive_config is not None and adaptive_config.enable_adaptive
+        self.adaptive_config = adaptive_config
 
-        def make_norm(norm_config):
-            return norm_config.norm_type.value(**dict(norm_config.config))
-
-        if self.use_moe:
-            # Shared expert pool — instantiated once
-            self.expert_pool = SharedExpertPool(
-                expert_configs=adaptive_config.experts,
-                n_embd=n_embd,
-                bias=bias,
-                dropout=dropout,
-                activation_type=activation_type,
+        def create_block(ffn_hidden_override=None):
+            return GPT2Block(
+                n_embd=n_embd, bias=bias, n_head_q=n_head_q, n_head_kv=n_head_kv,
+                activation_type=activation_type, attention_impl=attention_implementation,
+                attention_config=attention_config, dropout=dropout,
+                ffn_hidden=ffn_hidden_override if ffn_hidden_override is not None else ffn_hidden,
+                attention_norm=attention_norm_config.norm_type.value(**dict(attention_norm_config.config)),
+                ffn_norm=ffn_norm_config.norm_type.value(**dict(ffn_norm_config.config)),
                 enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
             )
 
-            layers = {}
-            for layer_idx in range(n_layer):
-                layers[str(layer_idx)] = MoETransformerLayer(
-                    n_embd=n_embd, bias=bias,
-                    n_head_q=n_head_q, n_head_kv=n_head_kv,
-                    attention_impl=attention_implementation,
-                    attention_config=attention_config,
-                    dropout=dropout,
-                    attention_norm=make_norm(attention_norm_config),
-                    ffn_norm=make_norm(ffn_norm_config),
-                    num_experts=self.expert_pool.num_experts,
-                    top_k=adaptive_config.top_k,
-                    capacity_factor=adaptive_config.capacity_factor,
-                    n_layer=n_layer,
+        has_wide = (
+            self.use_adaptive
+            and adaptive_config is not None
+            and adaptive_config.wide_ffn_hidden > 0
+        )
+
+        layers = {}
+        for layer_idx in range(n_layer):
+            if self.use_adaptive:
+                narrow_block = create_block()
+                wide_block = create_block(ffn_hidden_override=adaptive_config.wide_ffn_hidden) if has_wide else None
+                layers[str(layer_idx)] = AdaptiveRecursiveBlock(
+                    block=narrow_block,
+                    adaptive_config=adaptive_config,
+                    n_embd=n_embd,
+                    layer_idx=layer_idx,
+                    n_layers=n_layer,
+                    wide_block=wide_block,
                 )
-        else:
-            self.expert_pool = None
-            layers = {}
-            for layer_idx in range(n_layer):
-                layers[str(layer_idx)] = GPT2Block(
-                    n_embd=n_embd, bias=bias, n_head_q=n_head_q, n_head_kv=n_head_kv,
-                    activation_type=activation_type, attention_impl=attention_implementation,
-                    attention_config=attention_config, dropout=dropout, ffn_hidden=ffn_hidden,
-                    attention_norm=make_norm(attention_norm_config),
-                    ffn_norm=make_norm(ffn_norm_config),
-                    enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
-                )
+            else:
+                layers[str(layer_idx)] = create_block()
 
         self.transformer = nn.ModuleDict(dict(
             wte=nn.Embedding(vocab_size, n_embd),
             wpe=wpe,
             drop=nn.Dropout(dropout),
             h=nn.ModuleDict(layers),
-            lm_head_norm=make_norm(lm_head_norm_config),
+            lm_head_norm=lm_head_norm_config.norm_type.value(**dict(lm_head_norm_config.config)),
             lm_head=nn.Linear(n_embd, vocab_size, bias=False),
         ))
 
         if use_weight_tying:
             self.transformer.wte.weight = self.transformer.lm_head.weight
+
+    # ------------------------------------------------------------------
+    # Metrics bag construction
+    # ------------------------------------------------------------------
+
+    # Keys in layer_metrics that are per-step vectors (max_loops,)
+    _VECTOR_KEYS = [
+        "step_halt_probs", "step_halt_prob_std", "step_halt_prob_min", "step_halt_prob_max",
+        "step_changes", "loop_scales", "prob_remain_max", "prob_remain_mean",
+    ]
+
+    # Keys that are per-layer scalars (stacked to (n_layers,))
+    _PER_LAYER_SCALAR_KEYS = [
+        "actual_steps", "residual_mass", "wide_scale",
+        "expected_steps_mean", "expected_steps_std", "expected_steps_min", "expected_steps_max",
+        "dual_gate_mean", "dual_gate_std", "dual_gate_min", "dual_gate_max",
+        "deep_block_norm", "wide_block_norm",
+    ]
+
+    def _build_metrics_bag(
+        self,
+        all_layer_metrics: list[dict[str, torch.Tensor]],
+        total_ponder_cost: torch.Tensor,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> tuple[torch.Tensor, dict]:
+        n_layers = len(all_layer_metrics)
+        max_loops = self.adaptive_config.max_loops
+
+        avg_ponder_cost = total_ponder_cost / n_layers
+        normalized_steps = (
+            (avg_ponder_cost - 1.0) / (max_loops - 1.0)
+            if max_loops > 1
+            else torch.tensor(0.0, dtype=dtype, device=device)
+        )
+        weighted_ponder_loss = (normalized_steps * self.adaptive_config.ponder_penalty_weight).to(dtype)
+
+        def stack_key(key: str) -> torch.Tensor:
+            return torch.stack([m[key] for m in all_layer_metrics])
+
+        scalars = {
+            "ponder_cost_unweighted": total_ponder_cost,
+            "expected_steps": avg_ponder_cost,
+            "normalized_steps": normalized_steps,
+        }
+
+        per_layer_scalars = {
+            "ponder_cost": torch.stack([m["expected_steps"].mean() for m in all_layer_metrics]),
+        }
+        for key in self._PER_LAYER_SCALAR_KEYS:
+            per_layer_scalars[key] = stack_key(key)
+
+        per_layer_vectors = {}
+        for key in self._VECTOR_KEYS:
+            per_layer_vectors[key] = stack_key(key)
+
+        return weighted_ponder_loss, {
+            "scalars": scalars,
+            "per_layer_scalars": per_layer_scalars,
+            "per_layer_vectors": per_layer_vectors,
+        }
 
     # ------------------------------------------------------------------
     # Forward
@@ -792,61 +775,42 @@ class GPT2LLM(NNModel):
             pos = torch.arange(0, seq_len, dtype=torch.long, device=device)
             h = h + self.transformer.wpe(pos)
 
-        h = self.transformer.drop(h)
+        h = self.transformer.drop(h) if hasattr(self.transformer, "drop") else h
 
-        # ---- Layer loop ----
         all_layer_metrics: list[dict[str, torch.Tensor]] = []
-        total_aux_loss = torch.tensor(0.0, device=device, dtype=h.dtype)
+        total_ponder_cost = torch.tensor(0.0, device=device, dtype=h.dtype)
 
         sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
         for layer_key in sorted_keys:
-            layer = self.transformer.h[layer_key]
+            layer_module = self.transformer.h[layer_key]
 
-            if self.use_moe:
-                h, layer_metrics = layer(h, self.expert_pool)
-                total_aux_loss = total_aux_loss + layer_metrics["aux_loss_raw"]
+            if self.use_adaptive:
+                h, layer_metrics = layer_module(h, token_ids=inputs)
+                total_ponder_cost = total_ponder_cost + layer_metrics["expected_steps"].mean()
                 all_layer_metrics.append(layer_metrics)
             else:
-                h = layer(h)
+                h = layer_module(h, scale=1.0 / (int(layer_key) + 1))
 
         h = self.transformer.lm_head_norm(h)
         logits = self.transformer.lm_head(h)
 
-        if not self.use_moe:
+        if not self.use_adaptive:
             return logits
 
-        # ---- Aggregate MoE metrics ----
-        avg_aux_loss = total_aux_loss / self.n_layer
-        weighted_aux_loss = avg_aux_loss * self.adaptive_config.load_balance_weight
-
-        metrics_bag = {
-            "scalars": {
-                "aux_loss": avg_aux_loss.detach(),
-                "router_entropy": torch.stack(
-                    [m["router_entropy"] for m in all_layer_metrics]
-                ).mean(),
-                "tokens_dropped_frac": torch.stack(
-                    [m["tokens_dropped_frac"] for m in all_layer_metrics]
-                ).mean(),
-            },
-            "per_layer_vectors": {
-                "expert_load": torch.stack(
-                    [m["expert_load"] for m in all_layer_metrics]
-                ),  # (L, E)
-            },
-        }
+        weighted_ponder_loss, metrics_bag = self._build_metrics_bag(
+            all_layer_metrics, total_ponder_cost, device, logits.dtype,
+        )
 
         return {
             "logits": logits,
-            "ponder_loss": weighted_aux_loss,
+            "ponder_loss": weighted_ponder_loss,
             "metrics": metrics_bag,
         }
 
 
 # =============================================================================
-# Manual attention fallback (unchanged)
+# Manual attention fallback
 # =============================================================================
-
 
 def manual_scaled_dot_product_attention(
     query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None

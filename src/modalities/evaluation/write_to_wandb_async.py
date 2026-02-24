@@ -42,25 +42,40 @@ RUN_IDS_TO_EVALUATE = None
 # 5. MAPPING (MANIFEST)
 EXPERIMENT_MANIFEST = [
     {
-        "name":   "loop5_halt1_ponder0_toV",
-        "run_id": "r4d8zel7",
-        "folder": "2026-02-19__13-15-28_ff3aa7d1708e8c86",
+        "name":   "loop5_768deep_10496wide",
+        "run_id": "jk9rn4ta",
+        "folder": "2026-02-23__21-53-18_d806f62fecec73fe",
     },
     {
-        "name":   "loop5_halt075_ve600M_toV",
-        "run_id": "slw7xrqi",
-        "folder": "2026-02-18__15-05-19_de4e175fa2574b03",
+        "name":   "loop5_512deep_11776wide",
+        "run_id": "9m8n6d4w",
+        "folder": "2026-02-23__21-51-33_922bebae894b2fdd",
     },
-    # {
-    #     "name":   "loop5_halt1_L512G1024",
-    #     "run_id": "n0bmwzdj",
-    #     "folder": "2026-02-19__16-59-53_bba6f93903eb7663",
-    # },
-    # {
-    #     "name":   "loop5_halt1_L512G1024_fixinit",
-    #     "run_id": "00aj7vnd",
-    #     "folder": "2026-02-19__18-03-04_bba6f93903eb7663",
-    # },
+    {
+        "name":   "loop5_256deep_13056wide",
+        "run_id": "etgqjtc5",
+        "folder": "2026-02-23__21-51-20_a0f0e6adceb2281e",
+    },
+    {
+        "name":   "loop5_1024deep_9216wide",
+        "run_id": "9w2vnhse",
+        "folder": "2026-02-23__17-48-04_4c451e352f45d200",
+    },
+    {
+        "name":   "loop5_1536deep_6144wide",
+        "run_id": "qlu31qx2",
+        "folder": "2026-02-23__14-55-58_e8c5f45db58c21d8",
+    },
+    {
+        "name":   "loop5_1280deep_7680wide",
+        "run_id": "jlw1n0b7",
+        "folder": "2026-02-23__14-55-50_887b99efff8b1da0",
+    },
+    {
+        "name":   "loop5_2048deep_4096wide",
+        "run_id": "r69yv7jr",
+        "folder": "2026-02-23__14-51-13_9491920566c0f077",
+    },
 ]
 
 # =====================================================================
@@ -324,8 +339,8 @@ if __name__ == "__main__":
     # ==========================================
     # 1. CONFIGURATION
     # ==========================================
-    GPU_IDS = [4,5]              # <--- LIST YOUR GPUS HERE
-    CONCURRENT_PER_GPU = 1      # <--- WORKERS PER GPU
+    GPU_IDS = [1,2,3,4,5,6,7]              # <--- LIST YOUR GPUS HERE
+    CONCURRENT_PER_GPU = 1    # <--- WORKERS PER GPU
 
     # ==========================================
     # 2. SETUP
