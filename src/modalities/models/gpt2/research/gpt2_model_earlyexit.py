@@ -1,0 +1,875 @@
+import logging
+import math
+from abc import abstractmethod
+from enum import Enum
+from typing import Annotated, Optional, overload
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from pydantic import BaseModel, Field, model_validator, validator
+
+from modalities.config.lookup_enum import LookupEnum
+from modalities.config.utils import convert_base_model_config_to_dict
+from modalities.models.components.layer_norms import (
+    LayerNormConfig,
+    PytorchRMSLayerNormConfig,
+    RMSLayerNorm,
+    RMSLayerNormConfig,
+)
+from modalities.models.model import ActivationType, NNModel, SwiGLU
+from modalities.util import parse_enum_by_name
+
+try:
+    from flash_attn import flash_attn_func
+except ModuleNotFoundError:
+    flash_attn_func = None
+
+# Logger configuration
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)
+
+
+class AdaptiveComputationConfig(BaseModel):
+    """
+    Configuration for Adaptive Computation Time (PonderNet-style).
+    """
+    enable_adaptive: bool = False
+    max_loops: int = 10
+    halt_threshold: float = 0.99
+    ponder_penalty_weight: float = 0.01
+    
+    # --- MEMORY PARAMETERS ---
+    use_memory_bank: bool = True
+    num_local_slots: int = 1024
+    num_global_slots: int = 512
+    scheduler_type: str = "constant"
+    frozen_gate: Optional[float] = None
+    uses_new_names: Optional[bool] = True
+
+
+class LayerNorms(LookupEnum):
+    rms_norm = RMSLayerNorm
+    layer_norm = nn.LayerNorm
+    pytorch_rms_norm = nn.RMSNorm
+
+
+class LayerNormWrapperConfig(BaseModel):
+    norm_type: LayerNorms
+    config: PytorchRMSLayerNormConfig | RMSLayerNormConfig | LayerNormConfig
+
+
+class PositionTypes(str, Enum):
+    ABSOLUTE = "ABSOLUTE"
+    NOPE = "NOPE"
+
+
+class QueryKeyValueTransform(nn.Module):
+    @abstractmethod
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        raise NotImplementedError
+
+
+class IdentityTransform(QueryKeyValueTransform):
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return q, k, v
+
+
+class RotaryTransform(QueryKeyValueTransform):
+    def __init__(self, n_embd: int, n_head: int, seq_length_dim: int = -2, base_freq: int = 10000):
+        super().__init__()
+        self.dim_model = n_embd // n_head
+        self.seq_length_dim = seq_length_dim
+        self.base_freq = base_freq
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        device = self.inv_freq.device if hasattr(self, "inv_freq") else None
+        inv_freq = 1.0 / (
+            self.base_freq ** (torch.arange(0, self.dim_model, 2, device=device).float() / self.dim_model)
+        )
+        self.register_buffer("inv_freq", inv_freq)
+        self._seq_len_cached = None
+        self._cos_cached = None
+        self._sin_cached = None
+
+    def rotate_half(self, x):
+        x1, x2 = x.chunk(2, dim=-1)
+        return torch.cat((-x2, x1), dim=-1)
+
+    def _update_cos_sin_tables(self, x):
+        seq_len = x.shape[self.seq_length_dim]
+        if seq_len != self._seq_len_cached or self._cos_cached.device != x.device or self._cos_cached.dtype != x.dtype:
+            self._seq_len_cached = seq_len
+            t = torch.arange(x.shape[self.seq_length_dim], device=x.device, dtype=torch.float32)
+            freqs = torch.einsum("i,j->ij", t, self.inv_freq.to(x.dtype))
+            emb = torch.cat((freqs, freqs), dim=-1).to(x.device)
+            self._cos_cached = emb.cos()[None, None, :, :].to(x.dtype)
+            self._sin_cached = emb.sin()[None, None, :, :].to(x.dtype)
+        return self._cos_cached, self._sin_cached
+
+    def apply_rotary_pos_emb(self, x, cos, sin):
+        cos = cos[:, :, : x.shape[self.seq_length_dim], :]
+        sin = sin[:, :, : x.shape[self.seq_length_dim], :]
+        return (x * cos) + (self.rotate_half(x) * sin)
+
+    def forward(
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        self._cos_cached, self._sin_cached = self._update_cos_sin_tables(k)
+        q = self.apply_rotary_pos_emb(q, self._cos_cached, self._sin_cached)
+        k = self.apply_rotary_pos_emb(k, self._cos_cached, self._sin_cached)
+        return q, k, v
+
+
+class QueryKeyValueTransformType(Enum):
+    IdentityTransform = IdentityTransform
+    RotaryTransform = RotaryTransform
+
+
+class AttentionImplementation(str, Enum):
+    MANUAL = "manual"
+    PYTORCH_FLASH = "pytorch_flash"
+    DAO_FLASH = "dao_flash"
+
+
+class AttentionConfig(BaseModel):
+    class QueryKeyValueTransformConfig(BaseModel):
+        class IdentityTransformConfig(BaseModel):
+            pass
+
+        class RotaryTransformConfig(BaseModel):
+            n_embd: Annotated[int, Field(strict=True, ge=0)]
+            n_head: Annotated[int, Field(strict=True, ge=0)]
+            seq_length_dim: Annotated[int, Field(strict=True)]
+            base_freq: Annotated[int, Field(strict=True, ge=10000)]
+
+        @validator("type_hint", pre=True, always=True)
+        def parse_sharding_strategy_by_name(cls, name):
+            return parse_enum_by_name(name=name, enum_type=QueryKeyValueTransformType)
+
+        type_hint: QueryKeyValueTransformType
+        config: RotaryTransformConfig | IdentityTransformConfig
+
+    qkv_transforms: list[QueryKeyValueTransformConfig]
+    qk_norm_config: Optional[LayerNormWrapperConfig] = None
+
+
+class GPT2LLMConfig(BaseModel):
+    sample_key: str
+    prediction_key: str
+    use_meta_device: Optional[bool] = False
+    poe_type: PositionTypes
+    sequence_length: Annotated[int, Field(strict=True, ge=1)]
+    vocab_size: Annotated[int, Field(strict=True, ge=1)]
+    n_layer: Annotated[int, Field(strict=True, ge=1)]
+    n_head_q: Annotated[int, Field(strict=True, ge=1)]
+    n_head_kv: Annotated[int, Field(strict=True, ge=1)]
+    n_embd: Annotated[int, Field(strict=True, ge=1)]
+    ffn_hidden: Annotated[int, Field(strict=True, ge=1)]
+    dropout: Annotated[float, Field(strict=True, ge=0.0)]
+    bias: bool
+    attention_config: AttentionConfig
+    attention_implementation: AttentionImplementation
+    activation_type: ActivationType
+    attention_norm_config: LayerNormWrapperConfig
+    ffn_norm_config: LayerNormWrapperConfig
+    lm_head_norm_config: LayerNormWrapperConfig
+    use_weight_tying: bool
+    seed: Optional[int] = None
+    enforce_swiglu_hidden_dim_multiple_of: int = 256
+    adaptive_config: Optional[AdaptiveComputationConfig] = None
+
+    @model_validator(mode="after")
+    def check_divisibility(self) -> "GPT2LLMConfig":
+        if self.n_head_q % self.n_head_kv != 0:
+            raise ValueError("n_head_q must be divisible by n_head_kv")
+        return self
+
+    @model_validator(mode="after")
+    def validate_sizes(self) -> "GPT2LLMConfig":
+        for param, param_name in zip(
+            [self.ffn_hidden, self.vocab_size, self.n_embd],
+            ["ffn_hidden", "vocab_size", "n_embd"]
+        ):
+            if param % 128 != 0:
+                raise ValueError(f"{param_name} with value {param} should be divisible by 128 for efficient training.")
+        return self
+
+
+class CausalSelfAttention(nn.Module):
+    def __init__(
+        self,
+        n_head_q: int,
+        n_head_kv: int,
+        n_embd: int,
+        attention_config: AttentionConfig,
+        attention_impl: AttentionImplementation,
+        bias: bool,
+        dropout: float,
+    ):
+        super().__init__()
+        assert n_embd % n_head_q == 0
+        assert n_head_q % n_head_kv == 0
+
+        self.n_rep = n_head_q // n_head_kv
+        self.attention_impl = attention_impl
+
+        self.q_attn = nn.Linear(in_features=n_embd, out_features=n_embd, bias=bias)
+        self.k_attn = nn.Linear(in_features=n_embd, out_features=n_embd // self.n_rep, bias=bias)
+        self.v_attn = nn.Linear(in_features=n_embd, out_features=n_embd // self.n_rep, bias=bias)
+        self.c_proj = nn.Linear(in_features=n_embd, out_features=n_embd, bias=bias)
+
+        self.n_head_q = n_head_q
+        self.n_head_kv = n_head_kv
+        self.n_embd = n_embd
+        self.dropout = dropout
+        self.resid_dropout = nn.Dropout(self.dropout)
+
+        self.qkv_transforms = nn.ModuleList(
+            transform_config.type_hint.value(
+                **convert_base_model_config_to_dict(transform_config.config)
+            )
+            for transform_config in attention_config.qkv_transforms
+        )
+
+        if attention_config.qk_norm_config is not None:
+            self.q_norm = attention_config.qk_norm_config.norm_type.value(
+                **dict(attention_config.qk_norm_config.config)
+            )
+            self.k_norm = attention_config.qk_norm_config.norm_type.value(
+                **dict(attention_config.qk_norm_config.config)
+            )
+        else:
+            self.q_norm = None
+            self.k_norm = None
+
+    def projection(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        return self.q_attn(x), self.k_attn(x), self.v_attn(x)
+
+    @staticmethod
+    def execute_qkv_transforms(
+        q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, qkv_transforms: nn.ModuleList, n_head_q: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch_size, sequence_length, embedding_dim = q.size()
+        n_head_dim = embedding_dim // n_head_q
+
+        q = q.view(batch_size, sequence_length, n_head_q, n_head_dim).transpose(1, 2).contiguous()
+        k = k.view(batch_size, sequence_length, -1, n_head_dim).transpose(1, 2).contiguous()
+        v = v.view(batch_size, sequence_length, -1, n_head_dim).transpose(1, 2).contiguous()
+
+        for transform in qkv_transforms:
+            q, k, v = transform(q, k, v)
+
+        return q, k, v
+
+    @staticmethod
+    def _repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+        B, nh_kv, T, hs = x.shape
+        if n_rep == 1:
+            return x
+        return x[:, :, None, :, :].expand(B, nh_kv, n_rep, T, hs).reshape(B, nh_kv * n_rep, T, hs)
+
+    @classmethod
+    def repeat_kv_heads(cls, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+        n_head_q = q.shape[1]
+        n_head_kv = k.shape[1]
+        if n_head_q != n_head_kv:
+            n_rep = n_head_q // n_head_kv
+            k = cls._repeat_kv(k, n_rep)
+            v = cls._repeat_kv(v, n_rep)
+        return k, v
+
+    @classmethod
+    def execute_attention(
+        cls,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        dropout: float,
+        attention_impl: AttentionImplementation,
+    ) -> torch.Tensor:
+        if attention_impl == AttentionImplementation.MANUAL:
+            k, v = cls.repeat_kv_heads(q, k, v)
+            y = manual_scaled_dot_product_attention(
+                query=q, key=k, value=v, attn_mask=None, dropout_p=dropout, is_causal=True,
+            )
+            y = y.transpose(1, 2).contiguous()
+        elif attention_impl == AttentionImplementation.PYTORCH_FLASH:
+            k, v = cls.repeat_kv_heads(q, k, v)
+            y = torch.nn.functional.scaled_dot_product_attention(
+                query=q, key=k, value=v, attn_mask=None, dropout_p=dropout, is_causal=True,
+            )
+            y = y.transpose(1, 2).contiguous()
+        elif attention_impl == AttentionImplementation.DAO_FLASH:
+            if flash_attn_func is None:
+                raise NotImplementedError("ERROR! Dao Flash Attention is not installed.")
+            q = q.transpose(1, 2).contiguous()
+            k = k.transpose(1, 2).contiguous()
+            v = v.transpose(1, 2).contiguous()
+            y = flash_attn_func(q, k, v, dropout_p=dropout, causal=True, softmax_scale=None, window_size=(-1, -1))
+        else:
+            raise NotImplementedError(f"Attention implementation {attention_impl} not supported")
+        return y
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T, _ = x.size()
+        q, k, v = self.projection(x)
+        q, k, v = CausalSelfAttention.execute_qkv_transforms(q, k, v, self.qkv_transforms, self.n_head_q)
+        if self.q_norm is not None and self.k_norm is not None:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+        y = CausalSelfAttention.execute_attention(q, k, v, self.dropout, self.attention_impl)
+        y = y.reshape(B, T, -1)
+        return self.resid_dropout(self.c_proj(y))
+
+
+class TransformerMLP(nn.Module):
+    def __init__(self, n_embd: int, ffn_hidden: int, bias: bool, dropout: float):
+        super().__init__()
+        self.c_fc = nn.Linear(in_features=n_embd, out_features=ffn_hidden, bias=bias)
+        self.gelu = nn.GELU()
+        self.c_proj = nn.Linear(in_features=ffn_hidden, out_features=n_embd, bias=bias)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.c_fc(x)
+        x = self.gelu(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
+
+
+class GPT2Block(nn.Module):
+    def __init__(
+        self,
+        n_embd: int,
+        bias: bool,
+        n_head_q: int,
+        n_head_kv: int,
+        activation_type: ActivationType,
+        attention_impl: AttentionImplementation,
+        attention_config: AttentionConfig,
+        dropout: float,
+        ffn_hidden: int,
+        attention_norm: nn.Module,
+        ffn_norm: nn.Module,
+        enforce_swiglu_hidden_dim_multiple_of: int,
+    ):
+        super().__init__()
+        self.attention_norm = attention_norm
+        self.ffn_norm = ffn_norm
+        self._check_ffn_hidden_dim(n_embd=n_embd, ffn_hidden=ffn_hidden)
+        self.attn = CausalSelfAttention(
+            n_head_q=n_head_q,
+            n_head_kv=n_head_kv,
+            n_embd=n_embd,
+            attention_config=attention_config,
+            attention_impl=attention_impl,
+            bias=bias,
+            dropout=dropout,
+        )
+        if activation_type == ActivationType.GELU:
+            self.mlp = TransformerMLP(n_embd=n_embd, ffn_hidden=ffn_hidden, bias=bias, dropout=dropout)
+        elif activation_type == ActivationType.SWIGLU:
+            self.mlp = SwiGLU(
+                n_embd=n_embd,
+                ffn_hidden=ffn_hidden,
+                bias=bias,
+                enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
+            )
+        else:
+            raise NotImplementedError("unimplemented activation")
+
+    def _check_ffn_hidden_dim(self, n_embd: int, ffn_hidden: int) -> None:
+        expected_hidden_dim = 4 * n_embd
+        if ffn_hidden != expected_hidden_dim:
+            logger.warning(
+                f"Expected `ffn_hidden` to be 4 * `n_embd` ({expected_hidden_dim}), "
+                f"but got `n_embd = {n_embd}` and `ffn_hidden = {ffn_hidden}`."
+            )
+
+    def forward(self, x: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
+        x = x + scale * self.attn(self.attention_norm(x))
+        x = x + scale * self.mlp(self.ffn_norm(x))
+        return x
+
+
+# ==============================================================================
+# ADAPTIVE COMPUTATION COMPONENTS (With Relative Change Logic)
+# ==============================================================================
+
+class MemoryBankRegistry(nn.Module):
+    """
+    Memory Bank with both local (per-layer) and global (shared) memory.
+    """
+    
+    def __init__(self, n_layer: int, n_embd: int, num_local_slots: int, num_global_slots: int):
+        super().__init__()
+        self.n_layer = n_layer
+        self.n_embd = n_embd
+        self.scale = n_embd ** -0.5
+        
+        # Local (per-layer) memory
+        self.local_keys = nn.Parameter(torch.randn(n_layer, num_local_slots, n_embd) * 0.02)
+        self.local_values = nn.Parameter(torch.randn(n_layer, num_local_slots, n_embd) * 0.02)
+        
+        # Global (shared across all layers) memory
+        self.global_keys = nn.Parameter(torch.randn(num_global_slots, n_embd) * 0.02)
+        self.global_values = nn.Parameter(torch.randn(num_global_slots, n_embd) * 0.02)
+        
+        # QK-norm for stable attention
+        self.q_norm = nn.LayerNorm(n_embd)
+        self.k_norm = nn.LayerNorm(n_embd)
+
+    def forward(self, query: torch.Tensor, layer_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns (local_retrieved, global_retrieved).
+        """
+        q = self.q_norm(query)
+        
+        # Local lookup (layer-specific)
+        local_k = self.k_norm(self.local_keys[layer_idx])
+        local_v = self.local_values[layer_idx]
+        local_attn = F.softmax(torch.einsum('btd,sd->bts', q, local_k) * self.scale, dim=-1)
+        local_out = torch.einsum('bts,sd->btd', local_attn, local_v)
+        
+        # Global lookup (shared)
+        global_k = self.k_norm(self.global_keys)
+        global_v = self.global_values
+        global_attn = F.softmax(torch.einsum('btd,sd->bts', q, global_k) * self.scale, dim=-1)
+        global_out = torch.einsum('bts,sd->btd', global_attn, global_v)
+        
+        return local_out, global_out
+    
+
+class GatedMemoryUnit(nn.Module):
+    def __init__(self, n_embd: int, init_bias: float = -3.0, frozen_gate: Optional[float] = None):
+        super().__init__()
+        self.n_embd = n_embd
+        self.init_bias = init_bias
+        self.frozen_gate = frozen_gate
+        
+        self.mem_proj = nn.Linear(n_embd, n_embd, bias=False)
+        self.gate_net = nn.Linear(n_embd, n_embd, bias=True)
+        
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.xavier_uniform_(self.mem_proj.weight)
+        nn.init.zeros_(self.gate_net.weight)
+        nn.init.constant_(self.gate_net.bias, self.init_bias)
+
+    def forward(self, h: torch.Tensor, memory: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        # 1. Project memory to usable features
+        mem_feat = self.mem_proj(memory)
+        
+        # 2. Compute or use frozen gate
+        if self.frozen_gate is not None:
+            # FROZEN: Use constant gate value
+            gate = torch.full_like(h, self.frozen_gate)
+        else:
+            # LEARNED: Compute gate from input
+            gate_logits = self.gate_net(h)
+            gate = torch.sigmoid(gate_logits)
+        
+        # 3. Apply Gate
+        gated_memory = gate * mem_feat
+        
+        return gated_memory, gate.mean()
+
+
+# ==============================================================================
+# UPDATED RECURSIVE BLOCK (Memory + Relative Change)
+# ==============================================================================
+
+class AdaptiveRecursiveBlock(nn.Module):
+    def __init__(
+        self,
+        block: GPT2Block,
+        adaptive_config: AdaptiveComputationConfig,
+        n_embd: int,
+        layer_idx: int,
+        memory_registry: Optional[MemoryBankRegistry],
+    ):
+        super().__init__()
+        self.block = block
+        self.config = adaptive_config
+        self.max_loops = adaptive_config.max_loops
+        self.layer_idx = layer_idx
+        self.memory_registry = memory_registry
+        
+        # Learned scaling per step
+        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -3.0))
+        
+        # Single learnable parameter for halt sensitivity (replaces Router)
+        self.halt_temperature = nn.Parameter(torch.tensor([1.0]))
+        
+        if self.memory_registry is not None:
+            self.mem_norm = nn.LayerNorm(n_embd)
+            self.local_mem_gate = GatedMemoryUnit(n_embd, init_bias=-3.0, frozen_gate=adaptive_config.frozen_gate)
+            self.global_mem_gate = GatedMemoryUnit(n_embd, init_bias=-3.0, frozen_gate=adaptive_config.frozen_gate)
+        else:
+            self.mem_norm = None
+            self.local_mem_gate = None
+            self.global_mem_gate = None
+
+    def forward(self, x: torch.Tensor) -> tuple:
+        B, T, D = x.shape
+        device = x.device
+        
+        h = x
+        accumulated_output = torch.zeros_like(h)
+        prob_remain = torch.ones(B, T, device=device, dtype=x.dtype)
+        expected_steps = torch.zeros(B, T, device=device, dtype=x.dtype)
+        total_relative_change = torch.zeros(B, T, device=device, dtype=x.dtype)
+        
+        # For logging average gate opening
+        local_gate_avgs = []
+        global_gate_avgs = []
+        
+        # Keep temperature positive
+        temperature = F.softplus(self.halt_temperature)
+
+        for step in range(self.max_loops):
+            # ========== 1 & 2. SMART MEMORY LOGIC ==========
+            if self.memory_registry is not None:
+                query = self.mem_norm(h)
+                local_retrieved, global_retrieved = self.memory_registry(query, self.layer_idx)
+                
+                # Apply input-dependent gating
+                local_contribution, l_gate_avg = self.local_mem_gate(h, local_retrieved)
+                global_contribution, g_gate_avg = self.global_mem_gate(h, global_retrieved)
+                
+                h_enriched = h + local_contribution + global_contribution
+                
+                # Track gate stats
+                local_gate_avgs.append(l_gate_avg)
+                global_gate_avgs.append(g_gate_avg)
+            else:
+                h_enriched = h
+            
+            # ========== 3. TRANSFORMER BLOCK ==========
+            scale = F.softplus(self.loop_scales[step])
+            h_prev = h
+            # Note: We apply the block to the enriched hidden state
+            h_new = self.block(h_enriched, scale=scale)
+            
+            # ========== 4. HALTING (Relative Change Logic) ==========
+            # Calculate magnitude of change
+            delta = h_new - h_prev
+            relative_change = delta.norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-8)
+            
+            # Small change = high halt probability
+            halt_prob = torch.exp(-relative_change / temperature)
+
+            should_halt = (step == self.max_loops - 1) or \
+                        (prob_remain.max() < (1.0 - self.config.halt_threshold))
+
+            if should_halt:
+                p_stop = prob_remain
+                prob_remain = torch.zeros_like(prob_remain)
+            else:
+                p_stop = prob_remain * halt_prob
+                prob_remain = prob_remain * (1.0 - halt_prob)
+
+            # if step == self.max_loops - 1:
+            #     p_stop = prob_remain
+            #     prob_remain = torch.zeros_like(prob_remain)
+            # else:
+            #     p_stop = prob_remain * halt_prob
+            #     prob_remain = prob_remain * (1.0 - halt_prob)
+
+            accumulated_output = accumulated_output + h_new * p_stop.unsqueeze(-1)
+            expected_steps = expected_steps + p_stop * (step + 1)
+            total_relative_change = total_relative_change + (relative_change * p_stop)
+            
+            h = h_new
+            
+            if should_halt:
+                break
+        
+        if not self.training and prob_remain.sum() > 0:
+            accumulated_output = accumulated_output + h * prob_remain.unsqueeze(-1)
+            final_change = (h - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-8)
+            total_relative_change = total_relative_change + (prob_remain * final_change)
+
+        # Calculate mean gate opening for this batch (for logging)
+        if local_gate_avgs:
+            local_s = torch.stack(local_gate_avgs).mean()
+            global_s = torch.stack(global_gate_avgs).mean()
+        else:
+            local_s, global_s = torch.tensor(0.0), torch.tensor(0.0)
+
+        return (
+            accumulated_output,
+            expected_steps,
+            total_relative_change,
+            self.loop_scales.detach(),
+            self.halt_temperature.detach(),
+            local_s,
+            global_s, 
+        )
+
+
+class GPT2LLM(NNModel):
+    def __init__(
+        self,
+        sample_key: str,
+        prediction_key: str,
+        poe_type: PositionTypes,
+        sequence_length: int,
+        vocab_size: int,
+        n_layer: int,
+        n_head_q: int,
+        n_head_kv: int,
+        n_embd: int,
+        ffn_hidden: int,
+        dropout: float,
+        bias: bool,
+        activation_type: ActivationType,
+        attention_implementation: AttentionImplementation,
+        attention_config: AttentionConfig,
+        attention_norm_config: LayerNormWrapperConfig,
+        ffn_norm_config: LayerNormWrapperConfig,
+        lm_head_norm_config: LayerNormWrapperConfig,
+        use_weight_tying: bool,
+        seed: Optional[int] = None,
+        enforce_swiglu_hidden_dim_multiple_of: int = 256,
+        adaptive_config: Optional[AdaptiveComputationConfig] = None,
+    ):
+        weight_decay_groups = {
+            "linear": [
+                ".attn",
+                ".mlp",
+                ".lm_head.weight",
+                ".mem_proj.weight",   # New projection
+                ".gate_net.weight",   # New gating network
+            ],
+            "embedding": [
+                ".wte",
+                ".wpe",
+            ],
+            "layernorm": [
+                ".attention_norm",
+                ".ffn_norm",
+                ".lm_head_norm",
+                ".mem_norm",
+                ".loop_scales",
+                ".halt_temperature",  # Replaced router bias with temperature
+                ".gate_net.bias",     # Gate bias (very important to not decay this!)
+                "memory_registry",    # All memory registry params
+            ],
+        }
+        super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
+        
+        self.sample_key = sample_key
+        self.prediction_key = prediction_key
+        self.sequence_length = sequence_length
+        self.n_embd = n_embd
+        self.n_layer = n_layer
+        self.poe_type = poe_type
+
+        assert vocab_size is not None
+        assert sequence_length is not None
+
+        if poe_type is PositionTypes.ABSOLUTE:
+            wpe = nn.Embedding(num_embeddings=sequence_length, embedding_dim=n_embd)
+        elif poe_type is PositionTypes.NOPE:
+            wpe = nn.Identity()
+        else:
+            raise TypeError(f"{poe_type} not supported")
+
+        if poe_type is not PositionTypes.NOPE and RotaryTransform in [
+            config.type_hint.value for config in attention_config.qkv_transforms
+        ]:
+            raise ValueError('It is expected to use "RotaryTransform" together with "NOPE".')
+
+        self.use_adaptive = adaptive_config is not None and adaptive_config.enable_adaptive
+        self.adaptive_config = adaptive_config
+        
+        def create_block():
+            return GPT2Block(
+                n_embd=n_embd,
+                bias=bias,
+                n_head_q=n_head_q,
+                n_head_kv=n_head_kv,
+                activation_type=activation_type,
+                attention_impl=attention_implementation,
+                attention_config=attention_config,
+                dropout=dropout,
+                ffn_hidden=ffn_hidden,
+                attention_norm=attention_norm_config.norm_type.value(**dict(attention_norm_config.config)),
+                ffn_norm=ffn_norm_config.norm_type.value(**dict(ffn_norm_config.config)),
+                enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
+            )
+
+        # Create memory registry if adaptive mode is enabled AND memory is requested
+        if adaptive_config and adaptive_config.enable_adaptive and adaptive_config.use_memory_bank:
+            self.memory_registry = MemoryBankRegistry(
+                n_layer=n_layer,
+                n_embd=n_embd,
+                num_local_slots=adaptive_config.num_local_slots,
+                num_global_slots=adaptive_config.num_global_slots,
+            )
+        else:
+            self.memory_registry = None
+
+        # Build layers
+        layers = {}
+        for layer_idx in range(n_layer):
+            block = create_block()
+            
+            if self.use_adaptive:
+                layers[str(layer_idx)] = AdaptiveRecursiveBlock(
+                    block=block,
+                    adaptive_config=adaptive_config,
+                    n_embd=n_embd,
+                    layer_idx=layer_idx,
+                    memory_registry=self.memory_registry,
+                )
+            else:
+                layers[str(layer_idx)] = block
+
+        self.transformer = nn.ModuleDict(
+            dict(
+                wte=nn.Embedding(num_embeddings=vocab_size, embedding_dim=n_embd),
+                wpe=wpe,
+                drop=nn.Dropout(dropout),
+                h=nn.ModuleDict(layers),
+                lm_head_norm=lm_head_norm_config.norm_type.value(**dict(lm_head_norm_config.config)),
+                lm_head=nn.Linear(in_features=n_embd, out_features=vocab_size, bias=False),
+            )
+        )
+        
+        if use_weight_tying:
+            self.transformer.wte.weight = self.transformer.lm_head.weight
+
+    @overload
+    def forward(self, inputs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        ...
+
+    @overload
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        ...
+
+    def forward(self, inputs: dict[str, torch.Tensor] | torch.Tensor) -> dict[str, torch.Tensor] | torch.Tensor:
+        if isinstance(inputs, dict):
+            result = self.forward_impl(inputs[self.sample_key])
+            if isinstance(result, dict):
+                return {self.prediction_key: result}
+            else:
+                return {self.prediction_key: result}
+        else:
+            return self.forward_impl(inputs)
+
+    def forward_impl(self, inputs: torch.Tensor) -> dict[str, torch.Tensor] | torch.Tensor:
+        device = inputs.device
+        seq_len = inputs.size(1)
+        assert seq_len <= self.sequence_length
+
+        h = self.transformer.wte(inputs)
+
+        if self.poe_type is PositionTypes.ABSOLUTE and hasattr(self.transformer, "wpe"):
+            pos = torch.arange(0, seq_len, dtype=torch.long, device=device)
+            pos_emb = self.transformer.wpe(pos)
+            h = h + pos_emb
+
+        h = self.transformer.drop(h) if hasattr(self.transformer, "drop") else h
+
+        # Tracking
+        total_ponder_cost = torch.tensor(0.0, device=device, dtype=h.dtype)
+        num_adaptive_layers = 0
+        per_layer_ponder_costs = []
+        per_layer_relative_changes = []
+        per_layer_loop_scales = []
+        per_layer_temps = []
+        per_layer_mem_scales = []
+
+        sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
+        for layer_key in sorted_keys:
+            layer_module = self.transformer.h[layer_key]
+            layer_idx = int(layer_key)
+
+            if self.use_adaptive:
+                # Returns 7 values
+                h, cost, rel_change, scales, temp, local_mem_scale, global_mem_scale = layer_module(h)
+                
+                cost_mean = cost.mean()
+                change_mean = rel_change.mean()
+                
+                total_ponder_cost = total_ponder_cost + cost_mean
+                per_layer_ponder_costs.append(cost_mean)
+                per_layer_relative_changes.append(change_mean)
+                per_layer_loop_scales.append(scales)
+                per_layer_temps.append(temp)
+                per_layer_mem_scales.append((local_mem_scale, global_mem_scale))
+                num_adaptive_layers += 1
+            else:
+                lns_scale = 1.0 / (layer_idx + 1)
+                h = layer_module(h, scale=lns_scale)
+
+        h = self.transformer.lm_head_norm(h) if hasattr(self.transformer, "lm_head_norm") else h
+        logits = self.transformer.lm_head(h) if hasattr(self.transformer, "lm_head") else h
+
+        if self.use_adaptive:
+            avg_ponder_cost = total_ponder_cost / num_adaptive_layers if num_adaptive_layers > 0 else torch.tensor(0.0, dtype=h.dtype, device=device)
+            
+            normalized_steps = (avg_ponder_cost - 1.0) / (self.adaptive_config.max_loops - 1.0) if self.adaptive_config.max_loops > 1 else torch.tensor(0.0, dtype=h.dtype, device=device)
+            
+            weighted_ponder_loss = (normalized_steps * self.adaptive_config.ponder_penalty_weight).to(logits.dtype)
+            
+            layer_costs_tensor = torch.stack(per_layer_ponder_costs) if per_layer_ponder_costs else torch.tensor([], device=device)
+            layer_changes_tensor = torch.stack(per_layer_relative_changes) if per_layer_relative_changes else torch.tensor([], device=device)
+            local_scales = torch.stack([s[0] for s in per_layer_mem_scales])
+            global_scales = torch.stack([s[1] for s in per_layer_mem_scales])
+
+            return {
+                "logits": logits,
+                "ponder_loss": weighted_ponder_loss,
+                "ponder_cost_unweighted": total_ponder_cost,
+                "expected_steps": avg_ponder_cost,
+                "normalized_steps": normalized_steps,
+                "per_layer_ponder_costs": layer_costs_tensor,
+                "per_layer_cos_sims": layer_changes_tensor,
+                "loop_scales": torch.stack(per_layer_loop_scales) if per_layer_loop_scales else torch.tensor([], device=device),
+                "halt_probs": torch.stack(per_layer_temps) if per_layer_temps else torch.tensor([], device=device),
+                "local_mem_scales": local_scales,
+                "global_mem_scales": global_scales,
+            }
+        
+        return logits
+
+
+def manual_scaled_dot_product_attention(
+    query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None
+) -> torch.Tensor:
+    L, S = query.size(-2), key.size(-2)
+    scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
+    attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
+    if is_causal:
+        assert attn_mask is None
+        temp_mask = torch.ones(L, S, dtype=torch.bool, device=query.device).tril(diagonal=0)
+        attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
+        attn_bias.to(query.dtype)
+
+    if attn_mask is not None:
+        if attn_mask.dtype == torch.bool:
+            attn_bias.masked_fill_(attn_mask.logical_not(), float("-inf"))
+        else:
+            attn_bias += attn_mask
+    attn_weight = query @ key.transpose(-2, -1) * scale_factor
+    attn_weight += attn_bias
+    attn_weight = torch.softmax(attn_weight, dim=-1)
+    attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
+    return attn_weight @ value

@@ -87,6 +87,119 @@ class CLMCrossEntropyLoss(Loss):
         return labels, lm_logits
 
 
+# =============================================================================
+# Adaptive-computation-aware loss
+# =============================================================================
+# This class is intentionally THIN. It does not know or care about individual
+# metric names inside the MetricsBag. It passes through whatever the model
+# returns so the Trainer can handle it generically.
+#
+# To add a new logged metric, change ONLY the model — not this file.
+# =============================================================================
+
+
+class CLMCrossEntropyWithPonderLoss(Loss):
+    def __init__(
+        self,
+        target_key: str,
+        prediction_key: str,
+        tag: str = "CLMCrossEntropyWithPonderLoss",
+    ):
+        super().__init__(tag)
+        self.target_key = target_key
+        self.prediction_key = prediction_key
+        self.ce_loss_fun = CrossEntropyLoss(reduction="mean")
+
+        # Stored after each forward for the Trainer to retrieve
+        self._last_ce_loss = torch.tensor(0.0)
+        self._last_ponder_loss = torch.tensor(0.0)
+        self._last_metrics: dict | None = None  # The full MetricsBag (or None)
+
+    def __call__(self, *args, **kwargs) -> torch.Tensor:
+        labels, outputs = self._parse_arguments(args, kwargs)
+
+        if isinstance(outputs, dict):
+            lm_logits = outputs["logits"]
+            ponder_loss = outputs.get("ponder_loss", torch.tensor(0.0, device=lm_logits.device))
+            metrics = outputs.get("metrics", None)
+        else:
+            lm_logits = outputs
+            ponder_loss = torch.tensor(0.0, device=lm_logits.device)
+            metrics = None
+
+        labels = labels.to(lm_logits.device)
+        shift_logits = lm_logits.contiguous()
+        shift_labels = labels.contiguous().long()
+
+        ce_loss = self.ce_loss_fun(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1),
+        )
+
+        # Store detached copies for retrieval
+        self._last_ce_loss = ce_loss.detach()
+        self._last_ponder_loss = ponder_loss.detach()
+        self._last_metrics = _detach_metrics(metrics)
+
+        return ce_loss + ponder_loss
+
+    def get_metrics(self) -> dict:
+        """
+        Returns the loss scalars + the full metrics bag from the last forward.
+        The Trainer iterates this generically — no manual per-field extraction.
+        """
+        return {
+            "ce_loss": self._last_ce_loss,
+            "ponder_loss": self._last_ponder_loss,
+            "metrics": self._last_metrics,
+        }
+
+    def _parse_arguments(
+        self,
+        args: list[torch.Tensor | dict] | list[InferenceResultBatch],
+        kwargs: dict[str, torch.Tensor | dict] | dict[str, InferenceResultBatch],
+    ) -> tuple[torch.Tensor, torch.Tensor | dict]:
+        if len(args) == 1 and isinstance(args[0], InferenceResultBatch):
+            forward_batch = args[0]
+            labels = forward_batch.get_targets(self.target_key)
+            outputs = forward_batch.get_predictions(self.prediction_key)
+        elif "forward_batch" in kwargs and isinstance(kwargs["forward_batch"], InferenceResultBatch):
+            forward_batch = kwargs["forward_batch"]
+            labels = forward_batch.get_targets(self.target_key)
+            outputs = forward_batch.get_predictions(self.prediction_key)
+        elif len(args) == 2:
+            outputs, labels = args
+        elif "outputs" in kwargs and "targets" in kwargs:
+            outputs = kwargs["outputs"]
+            labels = kwargs["targets"]
+        elif len(args) == 1 and "targets" in kwargs:
+            outputs = args[0]
+            labels = kwargs["targets"]
+        else:
+            raise TypeError("Invalid arguments for CLMCrossEntropyWithPonderLoss.__call__")
+        return labels, outputs
+
+
+def _detach_metrics(metrics: dict | None) -> dict | None:
+    """Recursively detach all tensors in a nested dict."""
+    if metrics is None:
+        return None
+    result = {}
+    for key, value in metrics.items():
+        if isinstance(value, torch.Tensor):
+            result[key] = value.detach()
+        elif isinstance(value, dict):
+            result[key] = _detach_metrics(value)
+        else:
+            result[key] = value
+    return result
+
+
+# =============================================================================
+# NCE Loss (unchanged)
+# =============================================================================
+
+
 def nce_loss(
     embedding1: torch.Tensor, embedding2: torch.Tensor, device: torch.device, is_asymmetric: bool, temperature: float
 ) -> torch.Tensor:
@@ -106,20 +219,16 @@ def nce_loss(
     Returns:
             torch.Tensor: loss tensor.
     """
-    # calculating the similarity matrix of size (batch_size x batch_size)
     sim_matrix = torch.matmul(embedding1, embedding2.t()) / temperature
-    # numerator of loss: using similarity scores for all positive pairs (e.g., image and its caption)
     numerator = sim_matrix * torch.eye(sim_matrix.shape[0], device=device)
     numerator = numerator.sum(dim=0).view(sim_matrix.shape[0], -1)
     numerator = torch.logsumexp(numerator, dim=1)
     if is_asymmetric:
-        # denominator of loss: using all similarity scores for all pairs (positive and negative)
         denominator = torch.logsumexp(sim_matrix, dim=1)
     else:
-        # calculate bidirectional loss
         numerator *= 2
         denominator = torch.logsumexp(sim_matrix, dim=1) + torch.logsumexp(sim_matrix.t(), dim=1)
-    return torch.mean(denominator - numerator)  # calculated in log space
+    return torch.mean(denominator - numerator)
 
 
 class NCELoss(Loss):

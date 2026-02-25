@@ -1,7 +1,6 @@
 import logging
 import math
 from abc import abstractmethod
-from dataclasses import dataclass, field
 from enum import Enum
 from typing import Annotated, Optional, overload
 
@@ -33,11 +32,13 @@ logger.setLevel(logging.WARNING)
 # =============================================================================
 # Metrics Convention
 # =============================================================================
+# The model returns a structured dict alongside logits and ponder_loss.
+# This is the ONLY place you need to touch when adding new logged metrics.
 #
 # MetricsBag = {
 #     "scalars":            dict[str, Tensor],   # shape ()    — accumulated & reduced
 #     "per_layer_scalars":  dict[str, Tensor],   # shape (L,)  — accumulated & reduced
-#     "per_layer_vectors":  dict[str, Tensor],   # shape (L,M) — last-batch snapshot only
+#     "per_layer_vectors":  dict[str, Tensor],   # shape (L,D) — last-batch snapshot only
 # }
 # =============================================================================
 
@@ -50,10 +51,17 @@ class AdaptiveComputationConfig(BaseModel):
     enable_adaptive: bool = False
     max_loops: int = 10
     halt_threshold: float = 0.99
-    ponder_penalty_weight: float = 0.00
-    wide_ffn_hidden: int = 0
-    wide_ffn_gate_init_bias: float = 0.0
+    ponder_penalty_weight: float = 0.01
+
+    use_memory_bank: bool = True
+    num_local_slots: int = 1024
+    num_global_slots: int = 512
     scheduler_type: str = "constant"
+    frozen_gate: Optional[float] = None
+    uses_new_names: Optional[bool] = True
+
+    # Progressive exit: quantile increases from base_exit_quantile to 1.0 across layers
+    base_exit_quantile: float = 0.75
 
 
 class LayerNorms(LookupEnum):
@@ -73,7 +81,7 @@ class PositionTypes(str, Enum):
 
 
 # =============================================================================
-# QKV Transforms
+# QKV Transforms (unchanged)
 # =============================================================================
 
 class QueryKeyValueTransform(nn.Module):
@@ -208,7 +216,7 @@ class GPT2LLMConfig(BaseModel):
 
 
 # =============================================================================
-# Attention
+# Attention (unchanged)
 # =============================================================================
 
 class CausalSelfAttention(nn.Module):
@@ -361,231 +369,258 @@ class GPT2Block(nn.Module):
 # Adaptive Computation Components
 # =============================================================================
 
-@dataclass
-class HaltingState:
-    """Tracks ACT halting: prob_remain, weighted output, and expected steps."""
-    prob_remain: torch.Tensor       # (B, T)
-    output: torch.Tensor            # (B, T, D)
-    expected_steps: torch.Tensor    # (B, T)
-
-    @staticmethod
-    def init(B: int, T: int, D: int, *, device: torch.device, dtype: torch.dtype) -> "HaltingState":
-        return HaltingState(
-            prob_remain=torch.ones(B, T, device=device, dtype=dtype),
-            output=torch.zeros(B, T, D, device=device, dtype=dtype),
-            expected_steps=torch.zeros(B, T, device=device, dtype=dtype),
-        )
-
-    def update(self, h: torch.Tensor, halt_prob: torch.Tensor, step: int):
-        p_stop = self.prob_remain * halt_prob
-        self.prob_remain = self.prob_remain * (1.0 - halt_prob)
-        self.output = self.output + h * p_stop.unsqueeze(-1)
-        self.expected_steps = self.expected_steps + p_stop * (step + 1)
-
-    def finalize(self, h_last: torch.Tensor, last_step: int):
-        self.output = self.output + h_last * self.prob_remain.unsqueeze(-1)
-        self.expected_steps = self.expected_steps + self.prob_remain * last_step
-
-
-class StepMetrics:
-    """Collects per-step scalars, pads/stacks to (max_loops,) for logging."""
-
-    def __init__(self, max_loops: int, device: torch.device):
-        self.max_loops = max_loops
-        self.device = device
-        self._buffers: dict[str, list[torch.Tensor]] = {}
-
-    def log(self, key: str, value: torch.Tensor):
-        self._buffers.setdefault(key, []).append(value.detach())
-
-    def finalize(self) -> dict[str, torch.Tensor]:
-        out = {}
-        for key, vals in self._buffers.items():
-            stacked = torch.stack(vals)
-            if stacked.size(0) < self.max_loops:
-                pad = torch.zeros(self.max_loops - stacked.size(0), device=self.device, dtype=stacked.dtype)
-                stacked = torch.cat([stacked, pad])
-            out[key] = stacked
-        return out
-
-
-class AdaptiveRouter(nn.Module):
-    """Per-token halting: [h; t_normalized] -> sigmoid -> halt_prob."""
-
-    def __init__(self, n_embd: int, bias: bool = True):
+class MemoryBankRegistry(nn.Module):
+    def __init__(self, n_layer, n_embd, num_local_slots, num_global_slots):
         super().__init__()
-        self.linear = nn.Linear(n_embd + 1, 1, bias=bias)
+        self.n_layer = n_layer
+        self.n_embd = n_embd
+        self.scale = n_embd ** -0.5
 
-    def forward(self, h: torch.Tensor, step_normalized: float) -> torch.Tensor:
-        B, T, _ = h.shape
-        step_feat = torch.full((B, T, 1), step_normalized, device=h.device, dtype=h.dtype)
-        logit = self.linear(torch.cat([h, step_feat], dim=-1))
-        return torch.sigmoid(logit).squeeze(-1)
+        self.local_keys = nn.Parameter(torch.randn(n_layer, num_local_slots, n_embd) * 0.02)
+        self.local_values = nn.Parameter(torch.randn(n_layer, num_local_slots, n_embd) * 0.02)
+        self.global_keys = nn.Parameter(torch.randn(num_global_slots, n_embd) * 0.02)
+        self.global_values = nn.Parameter(torch.randn(num_global_slots, n_embd) * 0.02)
+
+        self.q_norm = nn.LayerNorm(n_embd)
+        self.k_norm = nn.LayerNorm(n_embd)
+
+    def forward(self, query, layer_idx):
+        q = self.q_norm(query)
+
+        local_k = self.k_norm(self.local_keys[layer_idx])
+        local_v = self.local_values[layer_idx]
+        local_attn = F.softmax(torch.einsum('btd,sd->bts', q, local_k) * self.scale, dim=-1)
+        local_out = torch.einsum('bts,sd->btd', local_attn, local_v)
+
+        global_k = self.k_norm(self.global_keys)
+        global_v = self.global_values
+        global_attn = F.softmax(torch.einsum('btd,sd->bts', q, global_k) * self.scale, dim=-1)
+        global_out = torch.einsum('bts,sd->btd', global_attn, global_v)
+
+        return local_out, global_out
 
 
-class DualPathGate(nn.Module):
-    """Per-element gate blending compute path (loop) and capacity path (wide block)."""
-
-    def __init__(self, n_embd: int, init_bias: float = 0.0):
+class GatedMemoryUnit(nn.Module):
+    def __init__(self, n_embd, init_bias=-3.0, frozen_gate=None):
         super().__init__()
-        self.gate_proj = nn.Linear(n_embd, n_embd, bias=True)
+        self.n_embd = n_embd
         self.init_bias = init_bias
+        self.frozen_gate = frozen_gate
+
+        self.mem_proj = nn.Linear(n_embd, n_embd, bias=False)
+        self.gate_net = nn.Linear(n_embd, n_embd, bias=True)
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.zeros_(self.gate_proj.weight)
-        nn.init.constant_(self.gate_proj.bias, self.init_bias)
+        nn.init.xavier_uniform_(self.mem_proj.weight)
+        nn.init.zeros_(self.gate_net.weight)
+        nn.init.constant_(self.gate_net.bias, self.init_bias)
 
-    def forward(
-        self, routing_input: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        gate = torch.sigmoid(self.gate_proj(routing_input))   # (B, T, D)
-        blended = gate * h_deep + (1.0 - gate) * h_wide
-        return blended, gate
+    def forward(self, h, memory):
+        mem_feat = self.mem_proj(memory)
+        if self.frozen_gate is not None:
+            gate = torch.full_like(h, self.frozen_gate)
+        else:
+            gate = torch.sigmoid(self.gate_net(h))
+        return gate * mem_feat, gate.mean()
 
 
 # =============================================================================
-# Adaptive Recursive Block (Dual Full-Block Paths)
+# Adaptive Recursive Block
 # =============================================================================
 
 class AdaptiveRecursiveBlock(nn.Module):
-    _INIT_SCALE_RAW: float = -7.0
-
-    def __init__(
-        self,
-        block: GPT2Block,
-        adaptive_config: AdaptiveComputationConfig,
-        n_embd: int,
-        layer_idx: int,
-        n_layers: int,
-        wide_block: Optional[GPT2Block] = None,
-    ):
+    def __init__(self, block, adaptive_config, n_embd, layer_idx, n_layers, memory_registry):
         super().__init__()
         self.block = block
         self.config = adaptive_config
         self.max_loops = adaptive_config.max_loops
         self.layer_idx = layer_idx
         self.n_layers = n_layers
+        self.memory_registry = memory_registry
 
-        self.router = AdaptiveRouter(n_embd)
-        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), self._INIT_SCALE_RAW))
+        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), -7.0))
+        self.halt_temperature = nn.Parameter(torch.tensor([0.0]))
 
-        self.has_wide_path = wide_block is not None
-        if self.has_wide_path:
-            self.wide_block = wide_block
-            self.wide_scale = nn.Parameter(torch.tensor([self._INIT_SCALE_RAW]))
-            self.dual_gate = DualPathGate(n_embd=n_embd, init_bias=adaptive_config.wide_ffn_gate_init_bias)
+        # Progressive exit quantile: base_quantile at layer 0 → 1.0 at last layer
+        progress = layer_idx / max(n_layers - 1, 1)
+        self.exit_quantile = adaptive_config.base_exit_quantile + (1.0 - adaptive_config.base_exit_quantile) * progress
 
-    def forward(
-        self, x: torch.Tensor, token_ids: torch.Tensor = None,
-    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        if self.memory_registry is not None:
+            self.mem_norm = nn.LayerNorm(n_embd)
+            self.local_mem_gate = GatedMemoryUnit(n_embd, init_bias=-3.0, frozen_gate=adaptive_config.frozen_gate)
+            self.global_mem_gate = GatedMemoryUnit(n_embd, init_bias=-3.0, frozen_gate=adaptive_config.frozen_gate)
+        else:
+            self.mem_norm = None
+            self.local_mem_gate = None
+            self.global_mem_gate = None
+
+    def _pad_to_max(self, lst, device):
+        if not lst:
+            return torch.zeros(self.max_loops, device=device)
+        stacked = torch.stack(lst)
+        if stacked.size(0) < self.max_loops:
+            pad = torch.zeros(self.max_loops - stacked.size(0), device=device, dtype=stacked.dtype)
+            stacked = torch.cat([stacked, pad])
+        return stacked
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         B, T, D = x.shape
         device = x.device
-        step_denom = max(1, self.max_loops - 1)
+        done_threshold = 1.0 - self.config.halt_threshold
 
-        # =================================================================
-        # 1) Compute path: full block looped with ACT
-        # =================================================================
-        state = HaltingState.init(B, T, D, device=device, dtype=x.dtype)
-        metrics = StepMetrics(self.max_loops, device)
+        h = x
+        accumulated_output = torch.zeros_like(h)
+        prob_remain = torch.ones(B, T, device=device, dtype=x.dtype)
+        expected_steps = torch.zeros(B, T, device=device, dtype=x.dtype)
+        total_relative_change = torch.zeros(B, T, device=device, dtype=x.dtype)
 
-        h_loop = x
+        halt_probs_list, rel_changes_list = [], []
+        local_gate_avgs, global_gate_avgs = [], []
+
+        # prob_remain decay curve traces
+        prob_remain_max_trace, prob_remain_mean_trace = [], []
+
+        # Second-order effect traces
+        acceleration_trace, cosine_sim_trace = [], []
+        delta_prev = None
+
+        # Exit diagnostics (detached)
+        done_frac_trace = []
+
+        temperature = F.softplus(self.halt_temperature)
         actual_steps = 0
 
         for step in range(self.max_loops):
             actual_steps = step + 1
 
+            # Memory enrichment
+            if self.memory_registry is not None:
+                query = self.mem_norm(h)
+                local_retrieved, global_retrieved = self.memory_registry(query, self.layer_idx)
+                local_contribution, l_gate_avg = self.local_mem_gate(h, local_retrieved)
+                global_contribution, g_gate_avg = self.global_mem_gate(h, global_retrieved)
+                h_enriched = h + local_contribution + global_contribution
+                local_gate_avgs.append(l_gate_avg)
+                global_gate_avgs.append(g_gate_avg)
+            else:
+                h_enriched = h
+
+            # Transformer block
             scale = F.softplus(self.loop_scales[step])
-            metrics.log("loop_scale", scale.detach())
-            h_prev = h_loop
-            h_loop = self.block(h_loop, scale=scale)
+            h_prev = h
+            h_new = self.block(h_enriched, scale=scale)
 
-            halt_prob = self.router(h_loop, step_normalized=step / step_denom)
-            state.update(h_loop, halt_prob, step)
+            # Halt from relative change
+            delta = h_new - h_prev
+            raw_change = delta.norm(dim=-1) / h_prev.norm(dim=-1)
+            step_relative_change = torch.nan_to_num(raw_change, nan=0.0, posinf=0.0)
+            rel_changes_list.append(step_relative_change.mean())
 
-            # Per-step diagnostics (all detached)
-            rel_change = (h_loop - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)  # (B, T)
+            # Second-order effects (detached — logging only)
+            with torch.no_grad():
+                if delta_prev is not None:
+                    acceleration_trace.append((delta - delta_prev).norm(dim=-1).mean())
+                    cosine_sim_trace.append(F.cosine_similarity(delta, delta_prev, dim=-1).mean())
+                else:
+                    zero = torch.tensor(0.0, device=device)
+                    acceleration_trace.append(zero)
+                    cosine_sim_trace.append(zero)
+            delta_prev = delta.detach()
 
-            metrics.log("halt_prob_mean", halt_prob.detach().mean())
-            metrics.log("halt_prob_std", halt_prob.detach().std())
-            metrics.log("halt_prob_min", halt_prob.detach().min())
-            metrics.log("halt_prob_max", halt_prob.detach().max())
-            metrics.log("rel_change", rel_change.mean())
-            metrics.log("prob_remain_max", state.prob_remain.max().detach())
-            metrics.log("prob_remain_mean", state.prob_remain.mean().detach())
+            halt_prob = torch.exp(-step_relative_change / temperature)
+            halt_probs_list.append(halt_prob.detach().mean())
 
-        state.finalize(h_loop, actual_steps)
-        h_deep = state.output
-        frac_alive = (state.prob_remain.detach() > 0.01).float().mean()
+            # Accumulate
+            p_stop = prob_remain * halt_prob
+            prob_remain = prob_remain * (1.0 - halt_prob)
 
-        # =================================================================
-        # 2) Capacity path: wide block, single pass
-        # =================================================================
-        if self.has_wide_path:
-            wide_scale_val = F.softplus(self.wide_scale)
-            h_wide = self.wide_block(x, scale=wide_scale_val)
-            output, gate = self.dual_gate(x, h_deep, h_wide)  # gate is (B, T, D)
-        else:
-            output = h_deep
-            gate = None
-            wide_scale_val = torch.tensor(0.0, device=device)
+            # prob_remain decay curve (detached — logging only)
+            with torch.no_grad():
+                prob_remain_max_trace.append(prob_remain.max())
+                prob_remain_mean_trace.append(prob_remain.mean())
 
-        # =================================================================
-        # 3) Build layer metrics
-        # =================================================================
-        step_metrics = metrics.finalize()
+            accumulated_output = accumulated_output + h_new * p_stop.unsqueeze(-1)
+            expected_steps = expected_steps + p_stop * (step + 1)
+            total_relative_change = total_relative_change + (step_relative_change * p_stop)
 
-        # Expected steps stats across tokens
-        es = state.expected_steps.detach()  # (B, T)
+            h = h_new
 
-        # Gate stats
-        if gate is not None:
-            gate_d = gate.detach()
-            gate_mean = gate_d.mean()
-            gate_std = gate_d.std()
-            gate_min = gate_d.min()
-            gate_max = gate_d.max()
-        else:
-            gate_mean = torch.tensor(1.0, device=device)
-            gate_std = torch.tensor(0.0, device=device)
-            gate_min = torch.tensor(1.0, device=device)
-            gate_max = torch.tensor(1.0, device=device)
+            # ---- Progressive done_frac exit ----
+            with torch.no_grad():
+                done_frac = (prob_remain < done_threshold).float().mean()
+                done_frac_trace.append(done_frac)
 
+            if self.training and done_frac >= self.exit_quantile:
+                break
+
+        # Dump remaining mass
+        if prob_remain.sum() > 0:
+            accumulated_output = accumulated_output + h * prob_remain.unsqueeze(-1)
+            expected_steps = expected_steps + prob_remain * actual_steps
+            final_change = (h - h_prev).norm(dim=-1) / h_prev.norm(dim=-1)
+            final_change = torch.nan_to_num(final_change, nan=0.0, posinf=0.0)
+            total_relative_change = total_relative_change + (prob_remain * final_change)
+
+        # Memory gate stats
+        local_s = torch.stack(local_gate_avgs).mean() if local_gate_avgs else torch.tensor(0.0, device=device)
+        global_s = torch.stack(global_gate_avgs).mean() if global_gate_avgs else torch.tensor(0.0, device=device)
+
+        # ---- Exit diagnostics (all detached) ----
+        with torch.no_grad():
+            # Residual mass: how much prob_remain was left when we exited
+            residual_mass = prob_remain.mean()
+
+            # Hard token fraction: tokens with significant remaining mass at exit
+            hard_token_frac = (prob_remain > 0.1).float().mean()
+
+            # Truncated mass: total prob_remain on tokens that were "done"
+            # (low mass = healthy, the dumped remainder is small)
+            done_mask = prob_remain < done_threshold
+            # Mass on NOT-done tokens that got force-dumped (the actual waste)
+            truncated_mass = prob_remain[~done_mask].sum() / max(prob_remain.numel(), 1)
+
+            # Step distribution entropy: how spread out is the exit distribution?
+            # Approximate from p_stop at each step
+            # Collect per-step total p_stop mass (averaged over B,T)
+            # We can reconstruct from halt_probs and the accumulation logic,
+            # but it's simpler to just track it:
+            _actual_steps_tensor = torch.tensor(float(actual_steps), device=device)
+            _exit_quantile_tensor = torch.tensor(self.exit_quantile, device=device)
+            _done_frac_at_exit = done_frac_trace[-1] if done_frac_trace else torch.tensor(0.0, device=device)
+
+        # =====================================================================
+        # LAYER METRICS
+        # =====================================================================
         layer_metrics = {
-            # Per-token (B, T) — used for ponder cost
-            "expected_steps": state.expected_steps,
-            # Scalars
-            "actual_steps": torch.tensor(float(actual_steps), device=device),
-            "residual_mass": state.prob_remain.mean().detach(),
-            "frac_alive": frac_alive,
-            "wide_scale": wide_scale_val.squeeze().detach(),
-            # Expected steps distribution across tokens
-            "expected_steps_mean": es.mean(),
-            "expected_steps_std": es.std(),
-            "expected_steps_min": es.min(),
-            "expected_steps_max": es.max(),
-            # Dual gate distribution
-            "dual_gate_mean": gate_mean,
-            "dual_gate_std": gate_std,
-            "dual_gate_min": gate_min,
-            "dual_gate_max": gate_max,
-            # Path output magnitudes
-            "deep_block_norm": h_deep.detach().norm(dim=-1).mean(),
-            "wide_block_norm": (
-                h_wide.detach().norm(dim=-1).mean()
-                if self.has_wide_path else torch.tensor(0.0, device=device)
-            ),
-            "step_halt_probs": step_metrics.get("halt_prob_mean", torch.zeros(self.max_loops, device=device)),
-            "step_halt_prob_std": step_metrics.get("halt_prob_std", torch.zeros(self.max_loops, device=device)),
-            "step_halt_prob_min": step_metrics.get("halt_prob_min", torch.zeros(self.max_loops, device=device)),
-            "step_halt_prob_max": step_metrics.get("halt_prob_max", torch.zeros(self.max_loops, device=device)),
-            "step_changes": step_metrics.get("rel_change", torch.zeros(self.max_loops, device=device)),
-            "loop_scales": step_metrics.get("loop_scale", torch.zeros(self.max_loops, device=device)),
-            "prob_remain_max": step_metrics.get("prob_remain_max", torch.zeros(self.max_loops, device=device)),
-            "prob_remain_mean": step_metrics.get("prob_remain_mean", torch.zeros(self.max_loops, device=device)),
+            # --- existing metrics ---
+            "expected_steps": expected_steps,                       # (B, T)
+            "total_relative_change": total_relative_change,         # (B, T)
+            "loop_scales": self.loop_scales.detach(),               # (max_loops,)
+            "halt_temperature": self.halt_temperature.detach(),     # (1,)
+            "local_mem_scale": local_s,                             # scalar
+            "global_mem_scale": global_s,                           # scalar
+            "step_halt_probs": self._pad_to_max(halt_probs_list, device),   # (max_loops,)
+            "step_changes": self._pad_to_max(rel_changes_list, device),     # (max_loops,)
+            # prob_remain decay curve
+            "prob_remain_max": self._pad_to_max(prob_remain_max_trace, device),     # (max_loops,)
+            "prob_remain_mean": self._pad_to_max(prob_remain_mean_trace, device),   # (max_loops,)
+            # Second-order effects
+            "acceleration": self._pad_to_max(acceleration_trace, device),   # (max_loops,)
+            "cosine_sim": self._pad_to_max(cosine_sim_trace, device),       # (max_loops,)
+            # done_frac per step (how fast tokens "finish" within this layer)
+            "done_frac": self._pad_to_max(done_frac_trace, device),         # (max_loops,)
+
+            # --- NEW: exit diagnostics (scalars) ---
+            "actual_steps": _actual_steps_tensor,                   # scalar: how many loops ran
+            "exit_quantile": _exit_quantile_tensor,                 # scalar: the threshold used
+            "done_frac_at_exit": _done_frac_at_exit,                # scalar: done_frac when loop broke
+            "residual_mass": residual_mass,                         # scalar: mean prob_remain at exit
+            "hard_token_frac": hard_token_frac,                     # scalar: fraction with prob_remain > 0.1
+            "truncated_mass": truncated_mass,                       # scalar: wasted mass on not-done tokens
         }
 
-        return output, layer_metrics
+        return accumulated_output, layer_metrics
 
 
 # =============================================================================
@@ -598,24 +633,19 @@ class GPT2LLM(NNModel):
         n_layer, n_head_q, n_head_kv, n_embd, ffn_hidden, dropout, bias,
         activation_type, attention_implementation, attention_config,
         attention_norm_config, ffn_norm_config, lm_head_norm_config,
-        use_weight_tying, seed=None, enforce_swiglu_hidden_dim_multiple_of=32,
+        use_weight_tying, seed=None, enforce_swiglu_hidden_dim_multiple_of=256,
         adaptive_config=None,
     ):
         weight_decay_groups = {
             "linear": [
-                ".q_attn", ".k_attn", ".v_attn",
-                ".attn.c_proj",
-                ".mlp",
-                ".lm_head.weight",
-                ".router.linear.weight",
-                ".dual_gate.gate_proj.weight",
+                ".attn", ".mlp", ".lm_head.weight",
+                ".mem_proj.weight", ".gate_net.weight",
             ],
             "embedding": [".wte", ".wpe"],
             "layernorm": [
-                ".attention_norm", ".ffn_norm", ".lm_head_norm",
-                ".q_norm", ".k_norm",
-                ".loop_scales", ".wide_scale", ".dual_gate.gate_proj.bias",
-                ".router.linear.bias",
+                ".attention_norm", ".ffn_norm", ".lm_head_norm", ".mem_norm",
+                ".loop_scales", ".halt_temperature", ".gate_net.bias",
+                "memory_registry",
             ],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
@@ -645,38 +675,37 @@ class GPT2LLM(NNModel):
         self.use_adaptive = adaptive_config is not None and adaptive_config.enable_adaptive
         self.adaptive_config = adaptive_config
 
-        def create_block(ffn_hidden_override=None):
+        def create_block():
             return GPT2Block(
                 n_embd=n_embd, bias=bias, n_head_q=n_head_q, n_head_kv=n_head_kv,
                 activation_type=activation_type, attention_impl=attention_implementation,
-                attention_config=attention_config, dropout=dropout,
-                ffn_hidden=ffn_hidden_override if ffn_hidden_override is not None else ffn_hidden,
+                attention_config=attention_config, dropout=dropout, ffn_hidden=ffn_hidden,
                 attention_norm=attention_norm_config.norm_type.value(**dict(attention_norm_config.config)),
                 ffn_norm=ffn_norm_config.norm_type.value(**dict(ffn_norm_config.config)),
                 enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
             )
 
-        has_wide = (
-            self.use_adaptive
-            and adaptive_config is not None
-            and adaptive_config.wide_ffn_hidden > 0
-        )
+        if adaptive_config and adaptive_config.enable_adaptive and adaptive_config.use_memory_bank:
+            self.memory_registry = MemoryBankRegistry(
+                n_layer=n_layer, n_embd=n_embd,
+                num_local_slots=adaptive_config.num_local_slots,
+                num_global_slots=adaptive_config.num_global_slots,
+            )
+        else:
+            self.memory_registry = None
 
         layers = {}
         for layer_idx in range(n_layer):
+            block = create_block()
             if self.use_adaptive:
-                narrow_block = create_block()
-                wide_block = create_block(ffn_hidden_override=adaptive_config.wide_ffn_hidden) if has_wide else None
                 layers[str(layer_idx)] = AdaptiveRecursiveBlock(
-                    block=narrow_block,
-                    adaptive_config=adaptive_config,
-                    n_embd=n_embd,
-                    layer_idx=layer_idx,
+                    block=block, adaptive_config=adaptive_config,
+                    n_embd=n_embd, layer_idx=layer_idx,
                     n_layers=n_layer,
-                    wide_block=wide_block,
+                    memory_registry=self.memory_registry,
                 )
             else:
-                layers[str(layer_idx)] = create_block()
+                layers[str(layer_idx)] = block
 
         self.transformer = nn.ModuleDict(dict(
             wte=nn.Embedding(vocab_size, n_embd),
@@ -689,71 +718,6 @@ class GPT2LLM(NNModel):
 
         if use_weight_tying:
             self.transformer.wte.weight = self.transformer.lm_head.weight
-
-    # ------------------------------------------------------------------
-    # Metrics bag construction
-    # ------------------------------------------------------------------
-
-    # Keys in layer_metrics that are per-step vectors (max_loops,)
-    _VECTOR_KEYS = [
-        "step_halt_probs", "step_halt_prob_std", "step_halt_prob_min", "step_halt_prob_max",
-        "step_changes", "loop_scales", "prob_remain_max", "prob_remain_mean",
-    ]
-
-    # Keys that are per-layer scalars (stacked to (n_layers,))
-    _PER_LAYER_SCALAR_KEYS = [
-        "actual_steps", "residual_mass", "frac_alive", "wide_scale",
-        "expected_steps_mean", "expected_steps_std", "expected_steps_min", "expected_steps_max",
-        "dual_gate_mean", "dual_gate_std", "dual_gate_min", "dual_gate_max",
-        "deep_block_norm", "wide_block_norm",
-    ]
-
-    def _build_metrics_bag(
-        self,
-        all_layer_metrics: list[dict[str, torch.Tensor]],
-        total_ponder_cost: torch.Tensor,
-        device: torch.device,
-        dtype: torch.dtype,
-    ) -> tuple[torch.Tensor, dict]:
-        n_layers = len(all_layer_metrics)
-        max_loops = self.adaptive_config.max_loops
-
-        avg_ponder_cost = total_ponder_cost / n_layers
-        normalized_steps = (
-            (avg_ponder_cost - 1.0) / (max_loops - 1.0)
-            if max_loops > 1
-            else torch.tensor(0.0, dtype=dtype, device=device)
-        )
-        weighted_ponder_loss = (normalized_steps * self.adaptive_config.ponder_penalty_weight).to(dtype)
-
-        def stack_key(key: str) -> torch.Tensor:
-            return torch.stack([m[key] for m in all_layer_metrics])
-
-        scalars = {
-            "ponder_cost_unweighted": total_ponder_cost,
-            "expected_steps": avg_ponder_cost,
-            "normalized_steps": normalized_steps,
-        }
-
-        per_layer_scalars = {
-            "ponder_cost": torch.stack([m["expected_steps"].mean() for m in all_layer_metrics]),
-        }
-        for key in self._PER_LAYER_SCALAR_KEYS:
-            per_layer_scalars[key] = stack_key(key)
-
-        per_layer_vectors = {}
-        for key in self._VECTOR_KEYS:
-            per_layer_vectors[key] = stack_key(key)
-
-        return weighted_ponder_loss, {
-            "scalars": scalars,
-            "per_layer_scalars": per_layer_scalars,
-            "per_layer_vectors": per_layer_vectors,
-        }
-
-    # ------------------------------------------------------------------
-    # Forward
-    # ------------------------------------------------------------------
 
     @overload
     def forward(self, inputs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]: ...
@@ -779,6 +743,9 @@ class GPT2LLM(NNModel):
 
         h = self.transformer.drop(h) if hasattr(self.transformer, "drop") else h
 
+        # ------------------------------------------------------------------
+        # Collect per-layer metrics during forward pass
+        # ------------------------------------------------------------------
         all_layer_metrics: list[dict[str, torch.Tensor]] = []
         total_ponder_cost = torch.tensor(0.0, device=device, dtype=h.dtype)
 
@@ -787,8 +754,9 @@ class GPT2LLM(NNModel):
             layer_module = self.transformer.h[layer_key]
 
             if self.use_adaptive:
-                h, layer_metrics = layer_module(h, token_ids=inputs)
-                total_ponder_cost = total_ponder_cost + layer_metrics["expected_steps"].mean()
+                h, layer_metrics = layer_module(h)
+                cost_mean = layer_metrics["expected_steps"].mean()
+                total_ponder_cost = total_ponder_cost + cost_mean
                 all_layer_metrics.append(layer_metrics)
             else:
                 h = layer_module(h, scale=1.0 / (int(layer_key) + 1))
@@ -799,19 +767,75 @@ class GPT2LLM(NNModel):
         if not self.use_adaptive:
             return logits
 
-        weighted_ponder_loss, metrics_bag = self._build_metrics_bag(
-            all_layer_metrics, total_ponder_cost, device, logits.dtype,
+        # ==================================================================
+        # BUILD METRICS BAG
+        # ==================================================================
+        n_layers = len(all_layer_metrics)
+        max_loops = self.adaptive_config.max_loops
+
+        avg_ponder_cost = total_ponder_cost / n_layers
+        normalized_steps = (
+            (avg_ponder_cost - 1.0) / (max_loops - 1.0)
+            if max_loops > 1
+            else torch.tensor(0.0, dtype=h.dtype, device=device)
         )
+        weighted_ponder_loss = (normalized_steps * self.adaptive_config.ponder_penalty_weight).to(logits.dtype)
+
+        # --- Helper: stack a key from all layer metrics ---
+        def stack_key(key: str) -> torch.Tensor:
+            return torch.stack([m[key] for m in all_layer_metrics])
+
+        # --- Scalars: accumulated across microbatches, then all-reduced ---
+        scalars = {
+            "ponder_cost_unweighted": total_ponder_cost,
+            "expected_steps": avg_ponder_cost,
+            "normalized_steps": normalized_steps,
+        }
+
+        # --- Per-layer scalars: shape (n_layer,), accumulated & reduced ---
+        per_layer_scalars = {
+            "ponder_cost": torch.stack([m["expected_steps"].mean() for m in all_layer_metrics]),
+            "weighted_change": torch.stack([m["total_relative_change"].mean() for m in all_layer_metrics]),
+            "temperature": stack_key("halt_temperature").squeeze(-1),
+            "local_mem_scale": stack_key("local_mem_scale"),
+            "global_mem_scale": stack_key("global_mem_scale"),
+            # NEW: exit diagnostics per layer
+            "actual_steps": stack_key("actual_steps"),
+            "exit_quantile": stack_key("exit_quantile"),
+            "done_frac_at_exit": stack_key("done_frac_at_exit"),
+            "residual_mass": stack_key("residual_mass"),
+            "hard_token_frac": stack_key("hard_token_frac"),
+            "truncated_mass": stack_key("truncated_mass"),
+        }
+
+        # --- Per-layer vectors: shape (n_layer, max_loops), last-batch snapshot ---
+        per_layer_vectors = {
+            "step_halt_prob": stack_key("step_halt_probs"),    # (n_layer, max_loops)
+            "step_change": stack_key("step_changes"),          # (n_layer, max_loops)
+            "loop_scale": stack_key("loop_scales"),            # (n_layer, max_loops)
+            # prob_remain decay curve
+            "prob_remain_max": stack_key("prob_remain_max"),       # (n_layer, max_loops)
+            "prob_remain_mean": stack_key("prob_remain_mean"),     # (n_layer, max_loops)
+            # Second-order effects
+            "acceleration": stack_key("acceleration"),             # (n_layer, max_loops)
+            "cosine_sim": stack_key("cosine_sim"),                 # (n_layer, max_loops)
+            # NEW: done_frac per step per layer (how fast tokens converge)
+            "done_frac": stack_key("done_frac"),                   # (n_layer, max_loops)
+        }
 
         return {
             "logits": logits,
             "ponder_loss": weighted_ponder_loss,
-            "metrics": metrics_bag,
+            "metrics": {
+                "scalars": scalars,
+                "per_layer_scalars": per_layer_scalars,
+                "per_layer_vectors": per_layer_vectors,
+            },
         }
 
 
 # =============================================================================
-# Manual attention fallback
+# Manual attention fallback (unchanged)
 # =============================================================================
 
 def manual_scaled_dot_product_attention(

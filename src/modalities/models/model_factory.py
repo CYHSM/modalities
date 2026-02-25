@@ -39,6 +39,7 @@ from modalities.models.gpt2.gpt2_model import (
     PositionTypes,
     SwiGLU,
     TransformerMLP,
+    AdaptiveComputationConfig,
 )
 from modalities.models.model import ActivationType
 from modalities.nn.model_initialization.initialization_if import ModelInitializationIF
@@ -617,6 +618,7 @@ class GPT2ModelFactory:
         use_meta_device: Optional[bool] = False,
         seed: Optional[int] = None,
         enforce_swiglu_hidden_dim_multiple_of: int = 256,
+        adaptive_config: Optional[AdaptiveComputationConfig] = None,
     ) -> GPT2LLM:
         config = dict(
             sample_key=sample_key,
@@ -640,6 +642,7 @@ class GPT2ModelFactory:
             seed=seed,
             use_weight_tying=use_weight_tying,
             enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
+            adaptive_config=adaptive_config,
         )
         if use_meta_device and use_weight_tying:
             raise ValueError(
