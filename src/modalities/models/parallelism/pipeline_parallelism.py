@@ -14,7 +14,7 @@ from torch.distributed.pipelining import PipelineStage
 from torch.distributed.pipelining.schedules import (
     PipelineScheduleMulti,
     PipelineScheduleSingle,
-    ScheduleDualPipeV,
+    #ScheduleDualPipeV,
     ScheduleZBVZeroBubble,
     get_schedule_class,
 )

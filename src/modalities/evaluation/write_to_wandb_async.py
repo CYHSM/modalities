@@ -392,6 +392,8 @@ if __name__ == "__main__":
     # ==========================================
     for p in processes:
         p.join()
+        if p.exitcode != 0:
+            print(f"!!! Worker PID {p.pid} CRASHED with exit code {p.exitcode} (GPU {GPU_IDS[processes.index(p) // CONCURRENT_PER_GPU]})")
 
     print("\n=== All Checkpoint Evaluations Complete ===\n")
 
