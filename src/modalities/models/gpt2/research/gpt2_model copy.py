@@ -984,3 +984,63 @@ def manual_scaled_dot_product_attention(
     attn_weight = torch.softmax(attn_weight, dim=-1)
     attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
     return attn_weight @ value
+
+
+# def estimate_flops(self):
+#     """
+#     Estimated FLOPs per token (forward + backward).
+#     Each matmul parameter contributes 6 FLOPs (2 fwd, 4 bwd).
+#     Attention QK matmul adds 12 * n_head * head_dim * effective_seq per layer.
+
+#     For adaptive layers the narrow block is looped max_loops times and the
+#     wide block (if present) runs once, so we multiply accordingly.
+#     """
+#     h = self.transformer.wte.weight.shape[1]  # n_embd
+#     head_dim = h // self.n_head_q if hasattr(self, "n_head_q") else h // 12
+#     n_heads = h // head_dim
+#     seq_len = self.sequence_length
+
+#     # Attention flops for one full-context layer (no sliding window in your setup)
+#     attn_flops_per_layer = 12 * n_heads * head_dim * seq_len
+
+#     def matmul_params(module):
+#         """Count parameters that participate in matmuls (exclude embeddings, scalars, norms)."""
+#         total = 0
+#         for name, p in module.named_parameters():
+#             if p.ndim < 2:
+#                 continue  # skip biases, scalars, norm weights
+#             total += p.numel()
+#         return total
+
+#     total_flops = 0
+
+#     sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
+#     for key in sorted_keys:
+#         layer = self.transformer.h[key]
+
+#         if self.use_adaptive:
+#             # Narrow block: looped max_loops times
+#             narrow_matmul = matmul_params(layer.block)
+#             narrow_flops = 6 * narrow_matmul + attn_flops_per_layer
+#             total_flops += layer.max_loops * narrow_flops
+
+#             # Wide block: single pass (if present)
+#             if layer.has_wide_path:
+#                 wide_matmul = matmul_params(layer.wide_block)
+#                 wide_flops = 6 * wide_matmul + attn_flops_per_layer
+#                 total_flops += wide_flops
+
+#             # Router + gate are negligible but count them anyway
+#             router_params = matmul_params(layer.router)
+#             gate_params = matmul_params(layer.dual_gate) if layer.has_wide_path else 0
+#             total_flops += 6 * (router_params + gate_params) * layer.max_loops
+#         else:
+#             # Standard block: single pass
+#             block_matmul = matmul_params(layer)
+#             total_flops += 6 * block_matmul + attn_flops_per_layer
+
+#     # lm_head (weight-tied or not)
+#     lm_head_params = self.transformer.lm_head.weight.numel()
+#     total_flops += 6 * lm_head_params
+
+#     return total_flops

@@ -49,19 +49,7 @@ class Evaluator:
         loss_fun: Callable[[InferenceResultBatch], torch.Tensor],
         scheduled_pipeline: Pipeline | None = None,
     ) -> torch.Tensor | None:
-        """Evaluate a single batch by forwarding it through the model and calculating the loss.
-
-        Args:
-            batch (DatasetBatch): The batch to evaluate
-            model (list[nn.Module]): The model (parts) to evaluate
-            loss_fun (Callable[[InferenceResultBatch], torch.Tensor]): The loss function to calculate the loss
-            scheduled_pipeline (Pipeline | None, optional): In case of pipeline parallelism, this is used to
-                operate the model. Defaults to None.
-
-        Returns:
-            torch.Tensor | None: The loss of the batch
-                None, if a non-last stage was processed in pipeline parallelism
-        """
+        """Evaluate a single batch by forwarding it through the model and calculating the loss."""
         with torch.no_grad():
             if scheduled_pipeline is not None:
                 pp_schedule = scheduled_pipeline.pp_schedule
@@ -93,85 +81,101 @@ class Evaluator:
         num_train_steps_done: int,
         scheduled_pipeline: Pipeline | None = None,
     ) -> dict[str, EvaluationResultBatch]:
-        """Evaluate the model on a set of datasets.
-
-        Args:
-            model (list[nn.Module] | nn.Module): The model or model parts to evaluate
-            data_loaders (list[LLMDataLoader]): List of dataloaders to evaluate the model on
-            loss_fun (Callable[[InferenceResultBatch], torch.Tensor]): The loss function to calculate the loss
-            num_train_steps_done (int): The number of training steps done so far for logging purposes
-            scheduled_pipeline (Pipeline | None, optional): In case of pipeline parallelism, this is used to
-                operate the model. Defaults to None.
-
-        Returns:
-            dict[str, EvaluationResultBatch]: A dictionary containing the evaluation results for each dataloader
-        """
+        
         result_dict: dict[str, EvaluationResultBatch] = {}
         if not isinstance(model, list):
             assert scheduled_pipeline is None, "A non-scheduled pipeline should be processed with a single model."
             model = [model]
+            
         for m in model:
             m.eval()
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        for data_loader in data_loaders:
-            local_num_seen_samples = 0
-            cumulated_loss = torch.zeros(3).to(device)
+        # --- Extract thresholds from the model config ---
+        underlying = model[0].module if hasattr(model[0], "module") else model[0]
+        thresholds = [None]  # Always include soft blend baseline
+        if hasattr(underlying, "adaptive_config") and underlying.adaptive_config and hasattr(underlying.adaptive_config, "eval_routing_thresholds"):
+            for t in underlying.adaptive_config.eval_routing_thresholds:
+                if t not in thresholds:
+                    thresholds.append(t)
 
-            Evaluator._publish_progress(
-                progress_publisher=self.progress_publisher,
-                num_eval_steps_done=0,  # Reset progress bar
-                dataloader_tag=data_loader.dataloader_tag,
-            )
-            with TimeRecorder() as forward_backward_timer_recorder:
-                for batch_id, batch in enumerate(data_loader):
-                    batch_loss = self.evaluate_batch(
-                        batch=batch,
-                        model=model,
-                        loss_fun=loss_fun,
-                        scheduled_pipeline=scheduled_pipeline,
-                    )
+        # --- Outer loop for threshold sweep ---
+        for threshold in thresholds:
+            
+            # Apply threshold to model
+            for m in model:
+                m_underlying = m.module if hasattr(m, "module") else m
+                if hasattr(m_underlying, "set_routing_threshold"):
+                    m_underlying.set_routing_threshold(threshold)
 
-                    # The batch_loss might be None if we use pipeline parallelism and are not the last stage.
-                    if batch_loss is not None:
-                        cumulated_loss[0] += batch_loss.item()  # sum up batch loss
-                        cumulated_loss[1] += 1
-                    local_num_seen_samples += torch.tensor(len(batch)).to(device)
+            threshold_tag = f"@route_{threshold}" if threshold is not None else "@soft_blend"
 
-                    Evaluator._publish_progress(
-                        progress_publisher=self.progress_publisher,
-                        num_eval_steps_done=batch_id + 1,
-                        dataloader_tag=data_loader.dataloader_tag,
-                    )
-            # TODO: insert reducer from outside so Evaluator is independent of FSDP
-            total_loss = Reducer.reduce(
-                tensor=cumulated_loss,
-                operation=dist.ReduceOp.SUM,
-                post_processing_fun=lambda t: t[0] / t[1],
-            )
+            for data_loader in data_loaders:
+                local_num_seen_samples = 0
+                cumulated_loss = torch.zeros(3).to(device)
+                
+                # Append threshold tag to dataloader tag so W&B logs them separately
+                current_tag = f"{data_loader.dataloader_tag}{threshold_tag}"
 
-            forward_backward_time = torch.tensor(forward_backward_timer_recorder.delta_t).to(device)
-            global_num_seen_samples = local_num_seen_samples * self.dp_degree
+                Evaluator._publish_progress(
+                    progress_publisher=self.progress_publisher,
+                    num_eval_steps_done=0,  # Reset progress bar
+                    dataloader_tag=data_loader.dataloader_tag,  # KEEP ORIGINAL TAG HERE
+                )
+                
+                with TimeRecorder() as forward_backward_timer_recorder:
+                    for batch_id, batch in enumerate(data_loader):
+                        batch_loss = self.evaluate_batch(
+                            batch=batch,
+                            model=model,
+                            loss_fun=loss_fun,
+                            scheduled_pipeline=scheduled_pipeline,
+                        )
 
-            num_samples_per_second = global_num_seen_samples / forward_backward_time
+                        if batch_loss is not None:
+                            cumulated_loss[0] += batch_loss.item()
+                            cumulated_loss[1] += 1
+                        local_num_seen_samples += torch.tensor(len(batch)).to(device)
 
-            evaluation_result = EvaluationResultBatch(
-                losses={loss_fun.tag: ResultItem(total_loss, decimal_places=2)},
-                # TODO: hardcoded metric key
-                throughput_metrics={
-                    "evaluation_num_samples_per_second": ResultItem(num_samples_per_second, decimal_places=1)
-                },
-                dataloader_tag=data_loader.dataloader_tag,
-                num_train_steps_done=num_train_steps_done,
-            )
-            Evaluator._publish_evaluation_result(
-                evaluation_result_publisher=self.evaluation_result_publisher,
-                evaluation_result=evaluation_result,
-            )
-            result_dict[data_loader.dataloader_tag] = evaluation_result
+                        Evaluator._publish_progress(
+                            progress_publisher=self.progress_publisher,
+                            num_eval_steps_done=batch_id + 1,
+                            dataloader_tag=data_loader.dataloader_tag,  # KEEP ORIGINAL TAG HERE
+                        )
 
+                # TODO: insert reducer from outside so Evaluator is independent of FSDP
+                total_loss = Reducer.reduce(
+                    tensor=cumulated_loss,
+                    operation=dist.ReduceOp.SUM,
+                    post_processing_fun=lambda t: t[0] / t[1],
+                )
+
+                forward_backward_time = torch.tensor(forward_backward_timer_recorder.delta_t).to(device)
+                global_num_seen_samples = local_num_seen_samples * self.dp_degree
+
+                num_samples_per_second = global_num_seen_samples / forward_backward_time
+
+                evaluation_result = EvaluationResultBatch(
+                    losses={loss_fun.tag: ResultItem(total_loss, decimal_places=2)},
+                    throughput_metrics={
+                        "evaluation_num_samples_per_second": ResultItem(num_samples_per_second, decimal_places=1)
+                    },
+                    dataloader_tag=current_tag,  # USE MODIFIED TAG HERE FOR W&B
+                    num_train_steps_done=num_train_steps_done,
+                )
+                
+                Evaluator._publish_evaluation_result(
+                    evaluation_result_publisher=self.evaluation_result_publisher,
+                    evaluation_result=evaluation_result,
+                )
+                result_dict[current_tag] = evaluation_result
+
+        # Reset threshold to default/None before going back to training
         for m in model:
+            m_underlying = m.module if hasattr(m, "module") else m
+            if hasattr(m_underlying, "set_routing_threshold"):
+                m_underlying.set_routing_threshold(None)
             m.train()
 
         return result_dict

@@ -10,7 +10,7 @@ settings:
     global_rank: ${cuda_env:RANK}
     world_size: ${cuda_env:WORLD_SIZE}
   paths:
-    checkpoint_saving_path: /raid/s3/opengptx/mfrey/loop/checkpoints
+    checkpoint_saving_path: /raid/s3/opengptx/mfrey/loop/checkpoints/loop5_512deep_11776wide_onepath
     experiments_root_path: /raid/s3/opengptx/mfrey/loop/experiments
   intervals:
     training_log_interval_in_steps: 1
@@ -1005,7 +1005,7 @@ model_raw:
     n_layer: 12
     n_head_q: 12
     n_head_kv: 12
-    ffn_hidden: 64
+    ffn_hidden: 512
     n_embd: 768
     dropout: 0.0
     bias: false
@@ -1045,8 +1045,9 @@ model_raw:
       halt_threshold: 1.00
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
-      wide_ffn_hidden: 13952
+      wide_ffn_hidden: 11776
       wide_ffn_gate_init_bias: 0.0
+      layer_types: ["loop", "loop", "loop", "loop", "loop", "dual", "dual", "dual", "wide", "wide", "wide", "wide"]
 
 lr_scheduler:
   component_key: scheduler
@@ -1108,6 +1109,6 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop5_64deep_13952wide
+    experiment_id: loop5_512deep_11776wide
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}

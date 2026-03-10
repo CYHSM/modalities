@@ -5,9 +5,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Annotated, Optional, overload
 
-import torch._dynamo
-torch._dynamo.config.cache_size_limit = 64
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -57,7 +54,16 @@ class AdaptiveComputationConfig(BaseModel):
     wide_ffn_hidden: int = 0
     wide_ffn_gate_init_bias: float = 0.0
     scheduler_type: str = "constant"
-    layer_types: Optional[list[str]] = None
+
+    # --- Path dropout (training) ---
+    p_drop_deep: float = 0.1
+    p_drop_wide: float = 0.1
+    allow_skip_layer: bool = True
+
+    # --- Inference routing ---
+    # Default threshold for eval.  None = soft blend (no routing).
+    inference_route_threshold: Optional[float] = None
+    eval_routing_thresholds: list[float] = [0.05, 0.25, 0.5, 0.75, 0.95]
 
 
 class LayerNorms(LookupEnum):
@@ -447,76 +453,106 @@ class DualPathGate(nn.Module):
         blended = gate * h_deep + (1.0 - gate) * h_wide
         return blended, gate
 
+    def compute_gate(self, routing_input: torch.Tensor) -> torch.Tensor:
+        """Compute gate values without blending. Used for inference routing."""
+        return torch.sigmoid(self.gate_proj(routing_input))
+
 
 # =============================================================================
-# Adaptive Recursive Block (Dual Full-Block Paths)
+# Adaptive Recursive Block with Path Dropout + Inference Routing
 # =============================================================================
 
 class AdaptiveRecursiveBlock(nn.Module):
+    """
+    Dual-path adaptive block.
+
+    Dispatch logic (automatic based on self.training and threshold):
+
+        training mode:
+            → path dropout forward (independently drop deep/wide)
+
+        eval mode, threshold is None:
+            → full forward: run both paths, soft-blend via gate
+              (maximum quality baseline, same cost as training)
+
+        eval mode, threshold is a float:
+            → per-sequence hard routing: gate score > threshold → deep only,
+              else → wide only.  Each sequence runs exactly one path.
+
+    The active threshold is stored in self.route_threshold and can be
+    changed at any time via set_route_threshold().
+    """
+
     _INIT_SCALE_RAW: float = -7.0
 
     def __init__(
         self,
-        block: Optional[GPT2Block],
+        block: GPT2Block,
         adaptive_config: AdaptiveComputationConfig,
         n_embd: int,
         layer_idx: int,
         n_layers: int,
         wide_block: Optional[GPT2Block] = None,
-        layer_type: str = "dual",
     ):
         super().__init__()
-        self.layer_type = layer_type
         self.block = block
         self.config = adaptive_config
         self.max_loops = adaptive_config.max_loops
         self.layer_idx = layer_idx
         self.n_layers = n_layers
 
-        self.has_loop_path = layer_type in ["loop", "dual"]
-        if self.has_loop_path:
-            self.router = AdaptiveRouter(n_embd)
-            self.loop_scales = nn.Parameter(torch.full((self.max_loops,), self._INIT_SCALE_RAW))
+        # Path dropout config
+        self.p_drop_deep = adaptive_config.p_drop_deep
+        self.p_drop_wide = adaptive_config.p_drop_wide
+        self.allow_skip_layer = adaptive_config.allow_skip_layer
 
-        self.has_wide_path = layer_type in ["wide", "dual"]
+        # Routing threshold: None = soft blend, float = hard route
+        self.route_threshold: Optional[float] = adaptive_config.inference_route_threshold
+
+        self.router = AdaptiveRouter(n_embd)
+        self.loop_scales = nn.Parameter(torch.full((self.max_loops,), self._INIT_SCALE_RAW))
+
+        self.has_wide_path = wide_block is not None
         if self.has_wide_path:
             self.wide_block = wide_block
             self.wide_scale = nn.Parameter(torch.tensor([self._INIT_SCALE_RAW]))
-
-        if layer_type == "dual":
             self.dual_gate = DualPathGate(n_embd=n_embd, init_bias=adaptive_config.wide_ffn_gate_init_bias)
 
-    def forward(
-        self, x: torch.Tensor, token_ids: torch.Tensor = None,
-    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    def set_route_threshold(self, threshold: Optional[float]):
+        """Set routing threshold. None = soft blend, float = hard route."""
+        self.route_threshold = threshold
+
+    # ------------------------------------------------------------------
+    # Path helpers
+    # ------------------------------------------------------------------
+
+    def _run_deep_path(
+        self, x: torch.Tensor, collect_metrics: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, Optional[StepMetrics]]:
+        """Run ACT loop. Returns (output, expected_steps, prob_remain, actual_steps, metrics)."""
         B, T, D = x.shape
         device = x.device
+        step_denom = max(1, self.max_loops - 1)
 
-        # =================================================================
-        # 1) Compute path: full block looped with ACT
-        # =================================================================
         state = HaltingState.init(B, T, D, device=device, dtype=x.dtype)
-        metrics = StepMetrics(self.max_loops, device)
+        metrics = StepMetrics(self.max_loops, device) if collect_metrics else None
 
-        if self.has_loop_path:
-            step_denom = max(1, self.max_loops - 1)
-            h_loop = x
-            actual_steps = 0
+        h = x
+        actual_steps = 0
 
-            for step in range(self.max_loops):
-                actual_steps = step + 1
-
-                scale = F.softplus(self.loop_scales[step])
+        for step in range(self.max_loops):
+            actual_steps = step + 1
+            scale = F.softplus(self.loop_scales[step])
+            if metrics:
                 metrics.log("loop_scale", scale.detach())
-                h_prev = h_loop
-                h_loop = self.block(h_loop, scale=scale)
+            h_prev = h
+            h = self.block(h, scale=scale)
 
-                halt_prob = self.router(h_loop, step_normalized=step / step_denom)
-                state.update(h_loop, halt_prob, step)
+            halt_prob = self.router(h, step_normalized=step / step_denom)
+            state.update(h, halt_prob, step)
 
-                # Per-step diagnostics (all detached)
-                rel_change = (h_loop - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)  # (B, T)
-
+            if metrics:
+                rel_change = (h - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)
                 metrics.log("halt_prob_mean", halt_prob.detach().mean())
                 metrics.log("halt_prob_std", halt_prob.detach().std())
                 metrics.log("halt_prob_min", halt_prob.detach().min())
@@ -525,80 +561,285 @@ class AdaptiveRecursiveBlock(nn.Module):
                 metrics.log("prob_remain_max", state.prob_remain.max().detach())
                 metrics.log("prob_remain_mean", state.prob_remain.mean().detach())
 
-            state.finalize(h_loop, actual_steps)
-            h_deep = state.output
-            frac_alive = (state.prob_remain.detach() > 0.01).float().mean()
-        else:
-            h_deep = torch.zeros_like(x)
-            actual_steps = 0
-            frac_alive = torch.tensor(0.0, device=device)
+        state.finalize(h, actual_steps)
+        return state.output, state.expected_steps, state.prob_remain, actual_steps, metrics
 
-        # =================================================================
-        # 2) Capacity path: wide block, single pass
-        # =================================================================
-        if self.has_wide_path:
-            wide_scale_val = F.softplus(self.wide_scale)
-            h_wide = self.wide_block(x, scale=wide_scale_val)
-        else:
-            h_wide = torch.zeros_like(x)
-            wide_scale_val = torch.tensor(0.0, device=device)
+    def _run_wide_path(self, x: torch.Tensor) -> torch.Tensor:
+        """Run wide block, single pass."""
+        wide_scale_val = F.softplus(self.wide_scale)
+        return self.wide_block(x, scale=wide_scale_val)
 
-        if self.layer_type == "dual":
-            output, gate = self.dual_gate(x, h_deep, h_wide)  # gate is (B, T, D)
-        elif self.layer_type == "loop":
+    # ------------------------------------------------------------------
+    # Path dropout sampling (training only)
+    # ------------------------------------------------------------------
+
+    def _sample_path_dropout(self) -> tuple[bool, bool]:
+        run_deep = torch.rand(1).item() >= self.p_drop_deep
+        run_wide = torch.rand(1).item() >= self.p_drop_wide
+        if not run_deep and not run_wide and not self.allow_skip_layer:
+            run_deep = True
+            run_wide = True
+        return run_deep, run_wide
+
+    # ------------------------------------------------------------------
+    # Main forward — auto-dispatches based on training / threshold
+    # ------------------------------------------------------------------
+
+    def forward(
+        self, x: torch.Tensor, token_ids: torch.Tensor = None,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """
+        Auto-dispatch:
+            training                        → _forward_train (path dropout)
+            eval + threshold is None        → _forward_soft  (both paths, soft blend)
+            eval + threshold is float       → _forward_routed (per-sequence hard routing)
+            no wide path (any mode)         → deep path only
+        """
+        if not self.has_wide_path:
+            return self._forward_deep_only(x)
+
+        if self.training:
+            return self._forward_train(x)
+
+        # Eval mode
+        if self.route_threshold is None:
+            return self._forward_soft(x)
+        else:
+            return self._forward_routed(x, self.route_threshold)
+
+    # ------------------------------------------------------------------
+    # Forward: deep-only (no wide path configured)
+    # ------------------------------------------------------------------
+
+    def _forward_deep_only(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        B, T, D = x.shape
+        device = x.device
+        h_deep, expected_steps, prob_remain, actual_steps, step_metrics_obj = (
+            self._run_deep_path(x, collect_metrics=True)
+        )
+        layer_metrics = self._make_layer_metrics(
+            run_deep=True, run_wide=False,
+            h_deep=h_deep, h_wide=None, gate=None,
+            expected_steps=expected_steps, prob_remain=prob_remain,
+            actual_steps=actual_steps, step_metrics_obj=step_metrics_obj,
+            device=device, B=B, T=T, D=D,
+        )
+        return h_deep, layer_metrics
+
+    # ------------------------------------------------------------------
+    # Forward: training with path dropout
+    # ------------------------------------------------------------------
+
+    def _forward_train(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        B, T, D = x.shape
+        device = x.device
+
+        run_deep, run_wide = True, True
+        if self.p_drop_deep > 0 or self.p_drop_wide > 0:
+            run_deep, run_wide = self._sample_path_dropout()
+
+        # Skip layer (stochastic depth)
+        if not run_deep and not run_wide:
+            return x, self._make_skip_metrics(B, T, device)
+
+        # Run requested paths
+        h_deep, expected_steps, prob_remain, actual_steps, step_metrics_obj = (
+            (None, None, None, 0, None)
+        )
+        if run_deep:
+            h_deep, expected_steps, prob_remain, actual_steps, step_metrics_obj = (
+                self._run_deep_path(x, collect_metrics=True)
+            )
+
+        h_wide = None
+        if run_wide:
+            h_wide = self._run_wide_path(x)
+
+        # Blend or force gate
+        if run_deep and run_wide:
+            output, gate = self.dual_gate(x, h_deep, h_wide)
+        elif run_deep:
             output = h_deep
-            gate = None
-        elif self.layer_type == "wide":
+            gate = torch.ones(B, T, D, device=device, dtype=x.dtype)
+        else:  # wide only
             output = h_wide
-            gate = None
-        else:
-            raise ValueError(f"Unknown layer type: {self.layer_type}")
+            gate = torch.zeros(B, T, D, device=device, dtype=x.dtype)
+            expected_steps = torch.ones(B, T, device=device, dtype=x.dtype)
+            prob_remain = torch.zeros(B, T, device=device, dtype=x.dtype)
+            actual_steps = 0
 
-        # =================================================================
-        # 3) Build layer metrics
-        # =================================================================
-        step_metrics = metrics.finalize()
+        layer_metrics = self._make_layer_metrics(
+            run_deep=run_deep, run_wide=run_wide,
+            h_deep=h_deep, h_wide=h_wide, gate=gate,
+            expected_steps=expected_steps, prob_remain=prob_remain,
+            actual_steps=actual_steps, step_metrics_obj=step_metrics_obj,
+            device=device, B=B, T=T, D=D,
+        )
+        return output, layer_metrics
 
-        # Expected steps stats across tokens
-        es = state.expected_steps.detach()  # (B, T)
+    # ------------------------------------------------------------------
+    # Forward: eval soft blend (threshold=None, full quality baseline)
+    # ------------------------------------------------------------------
 
-        # Gate stats
-        if gate is not None:
-            gate_d = gate.detach()
-            gate_mean = gate_d.mean()
-            gate_std = gate_d.std()
-            gate_min = gate_d.min()
-            gate_max = gate_d.max()
-        else:
-            gate_mean = torch.tensor(1.0, device=device)
-            gate_std = torch.tensor(0.0, device=device)
-            gate_min = torch.tensor(1.0, device=device)
-            gate_max = torch.tensor(1.0, device=device)
+    @torch.no_grad()
+    def _forward_soft(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Both paths, soft gate blend. Same as training BOTH regime but no dropout."""
+        B, T, D = x.shape
+        device = x.device
+
+        h_deep, expected_steps, prob_remain, actual_steps, step_metrics_obj = (
+            self._run_deep_path(x, collect_metrics=True)
+        )
+        h_wide = self._run_wide_path(x)
+        output, gate = self.dual_gate(x, h_deep, h_wide)
+
+        layer_metrics = self._make_layer_metrics(
+            run_deep=True, run_wide=True,
+            h_deep=h_deep, h_wide=h_wide, gate=gate,
+            expected_steps=expected_steps, prob_remain=prob_remain,
+            actual_steps=actual_steps, step_metrics_obj=step_metrics_obj,
+            device=device, B=B, T=T, D=D,
+        )
+        return output, layer_metrics
+
+    # ------------------------------------------------------------------
+    # Forward: eval per-sequence hard routing (threshold is float)
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def _forward_routed(
+        self, x: torch.Tensor, threshold: float,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Per-sequence hard routing: gate score decides which path runs."""
+        B, T, D = x.shape
+        device = x.device
+
+        gate_vals = self.dual_gate.compute_gate(x)       # (B, T, D)
+        seq_scores = gate_vals.mean(dim=(1, 2))           # (B,)
+        deep_mask = seq_scores > threshold
+
+        deep_idx = deep_mask.nonzero(as_tuple=True)[0]
+        wide_idx = (~deep_mask).nonzero(as_tuple=True)[0]
+
+        output = torch.empty(B, T, D, device=device, dtype=x.dtype)
+
+        if deep_idx.numel() > 0:
+            h_deep, _, _, _, _ = self._run_deep_path(x[deep_idx], collect_metrics=False)
+            output[deep_idx] = h_deep
+
+        if wide_idx.numel() > 0:
+            output[wide_idx] = self._run_wide_path(x[wide_idx])
+
+        # Approximate expected_steps
+        es = torch.ones(B, T, device=device)
+        es[deep_mask] = float(self.max_loops)
+
+        n_deep = deep_idx.numel()
+        n_wide = wide_idx.numel()
 
         layer_metrics = {
-            # Per-token (B, T) — used for ponder cost
-            "expected_steps": state.expected_steps,
-            # Scalars
-            "actual_steps": torch.tensor(float(actual_steps), device=device),
-            "residual_mass": state.prob_remain.mean().detach(),
-            "frac_alive": frac_alive,
-            "wide_scale": wide_scale_val.squeeze().detach(),
-            # Expected steps distribution across tokens
+            "expected_steps": es,
+            "actual_steps": torch.tensor(float(self.max_loops if n_deep > 0 else 1), device=device),
+            "residual_mass": torch.tensor(0.0, device=device),
+            "frac_alive": torch.tensor(0.0, device=device),
+            "wide_scale": F.softplus(self.wide_scale).squeeze().detach(),
             "expected_steps_mean": es.mean(),
-            "expected_steps_std": es.std(),
+            "expected_steps_std": es.std() if B > 1 else torch.tensor(0.0, device=device),
             "expected_steps_min": es.min(),
             "expected_steps_max": es.max(),
-            # Dual gate distribution
+            "dual_gate_mean": seq_scores.mean(),
+            "dual_gate_std": seq_scores.std() if B > 1 else torch.tensor(0.0, device=device),
+            "dual_gate_min": seq_scores.min(),
+            "dual_gate_max": seq_scores.max(),
+            "deep_block_norm": (
+                output[deep_idx].norm(dim=-1).mean() if n_deep > 0
+                else torch.tensor(0.0, device=device)
+            ),
+            "wide_block_norm": (
+                output[wide_idx].norm(dim=-1).mean() if n_wide > 0
+                else torch.tensor(0.0, device=device)
+            ),
+            "routed_deep_frac": torch.tensor(n_deep / max(B, 1), device=device),
+            "routed_wide_frac": torch.tensor(n_wide / max(B, 1), device=device),
+            **{k: torch.zeros(self.max_loops, device=device)
+               for k in ("step_halt_probs", "step_halt_prob_std",
+                          "step_halt_prob_min", "step_halt_prob_max",
+                          "step_changes", "loop_scales",
+                          "prob_remain_max", "prob_remain_mean")},
+        }
+        return output, layer_metrics
+
+    # ------------------------------------------------------------------
+    # Metrics helpers
+    # ------------------------------------------------------------------
+
+    def _make_skip_metrics(self, B, T, device) -> dict[str, torch.Tensor]:
+        zero = torch.tensor(0.0, device=device)
+        return {
+            "expected_steps": torch.zeros(B, T, device=device),
+            "actual_steps": zero,
+            "residual_mass": zero,
+            "frac_alive": zero,
+            "wide_scale": F.softplus(self.wide_scale).squeeze().detach() if self.has_wide_path else zero,
+            "expected_steps_mean": zero,
+            "expected_steps_std": zero,
+            "expected_steps_min": zero,
+            "expected_steps_max": zero,
+            "dual_gate_mean": torch.tensor(0.5, device=device),
+            "dual_gate_std": zero,
+            "dual_gate_min": torch.tensor(0.5, device=device),
+            "dual_gate_max": torch.tensor(0.5, device=device),
+            "deep_block_norm": zero,
+            "wide_block_norm": zero,
+            "layer_skipped": torch.tensor(1.0, device=device),
+            **{k: torch.zeros(self.max_loops, device=device)
+               for k in ("step_halt_probs", "step_halt_prob_std",
+                          "step_halt_prob_min", "step_halt_prob_max",
+                          "step_changes", "loop_scales",
+                          "prob_remain_max", "prob_remain_mean")},
+        }
+
+    def _make_layer_metrics(
+        self, *, run_deep, run_wide, h_deep, h_wide, gate, expected_steps,
+        prob_remain, actual_steps, step_metrics_obj, device, B, T, D,
+    ) -> dict[str, torch.Tensor]:
+        zero = torch.tensor(0.0, device=device)
+
+        step_metrics = step_metrics_obj.finalize() if step_metrics_obj is not None else {}
+        es = expected_steps.detach() if expected_steps is not None else torch.zeros(B, T, device=device)
+
+        if gate is not None:
+            gate_d = gate.detach()
+            gate_mean, gate_std = gate_d.mean(), gate_d.std()
+            gate_min, gate_max = gate_d.min(), gate_d.max()
+        else:
+            gate_mean = torch.tensor(1.0, device=device)
+            gate_std = gate_min = zero
+            gate_max = torch.tensor(1.0, device=device)
+
+        frac_alive = residual_mass = zero
+        if prob_remain is not None:
+            frac_alive = (prob_remain.detach() > 0.01).float().mean()
+            residual_mass = prob_remain.mean().detach()
+
+        return {
+            "expected_steps": expected_steps if expected_steps is not None else torch.zeros(B, T, device=device),
+            "actual_steps": torch.tensor(float(actual_steps), device=device),
+            "residual_mass": residual_mass,
+            "frac_alive": frac_alive,
+            "wide_scale": F.softplus(self.wide_scale).squeeze().detach() if self.has_wide_path else zero,
+            "expected_steps_mean": es.mean(),
+            "expected_steps_std": es.std() if es.numel() > 1 else zero,
+            "expected_steps_min": es.min(),
+            "expected_steps_max": es.max(),
             "dual_gate_mean": gate_mean,
             "dual_gate_std": gate_std,
             "dual_gate_min": gate_min,
             "dual_gate_max": gate_max,
-            # Path output magnitudes
-            "deep_block_norm": h_deep.detach().norm(dim=-1).mean(),
-            "wide_block_norm": (
-                h_wide.detach().norm(dim=-1).mean()
-                if self.has_wide_path else torch.tensor(0.0, device=device)
-            ),
+            "deep_block_norm": h_deep.detach().norm(dim=-1).mean() if h_deep is not None else zero,
+            "wide_block_norm": h_wide.detach().norm(dim=-1).mean() if h_wide is not None else zero,
+            "path_regime_deep": torch.tensor(float(run_deep), device=device),
+            "path_regime_wide": torch.tensor(float(run_wide), device=device),
             "step_halt_probs": step_metrics.get("halt_prob_mean", torch.zeros(self.max_loops, device=device)),
             "step_halt_prob_std": step_metrics.get("halt_prob_std", torch.zeros(self.max_loops, device=device)),
             "step_halt_prob_min": step_metrics.get("halt_prob_min", torch.zeros(self.max_loops, device=device)),
@@ -608,8 +849,6 @@ class AdaptiveRecursiveBlock(nn.Module):
             "prob_remain_max": step_metrics.get("prob_remain_max", torch.zeros(self.max_loops, device=device)),
             "prob_remain_mean": step_metrics.get("prob_remain_mean", torch.zeros(self.max_loops, device=device)),
         }
-
-        return output, layer_metrics
 
 
 # =============================================================================
@@ -680,23 +919,17 @@ class GPT2LLM(NNModel):
                 enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
             )
 
-        layer_types_list = []
-        if self.use_adaptive:
-            assert adaptive_config is not None, "adaptive_config must be provided if enable_adaptive is True"
-            if adaptive_config.layer_types is not None:
-                layer_types_list = adaptive_config.layer_types
-                if len(layer_types_list) != n_layer:
-                    raise ValueError(f"layer_types length {len(layer_types_list)} must match n_layer {n_layer}")
-            else:
-                has_wide = adaptive_config.wide_ffn_hidden > 0
-                layer_types_list = ["dual" if has_wide else "loop"] * n_layer
+        has_wide = (
+            self.use_adaptive
+            and adaptive_config is not None
+            and adaptive_config.wide_ffn_hidden > 0
+        )
 
         layers = {}
         for layer_idx in range(n_layer):
             if self.use_adaptive:
-                l_type = layer_types_list[layer_idx]
-                narrow_block = create_block() if l_type in ["loop", "dual"] else None
-                wide_block = create_block(ffn_hidden_override=adaptive_config.wide_ffn_hidden) if l_type in ["wide", "dual"] else None
+                narrow_block = create_block()
+                wide_block = create_block(ffn_hidden_override=adaptive_config.wide_ffn_hidden) if has_wide else None
                 layers[str(layer_idx)] = AdaptiveRecursiveBlock(
                     block=narrow_block,
                     adaptive_config=adaptive_config,
@@ -704,7 +937,6 @@ class GPT2LLM(NNModel):
                     layer_idx=layer_idx,
                     n_layers=n_layer,
                     wide_block=wide_block,
-                    layer_type=l_type,
                 )
             else:
                 layers[str(layer_idx)] = create_block()
@@ -722,16 +954,38 @@ class GPT2LLM(NNModel):
             self.transformer.wte.weight = self.transformer.lm_head.weight
 
     # ------------------------------------------------------------------
+    # Routing threshold control
+    # ------------------------------------------------------------------
+
+    def set_routing_threshold(self, threshold: Optional[float]):
+        """
+        Set routing threshold for all adaptive layers.
+
+            None  → soft blend (both paths, full quality)
+            0.0   → everything goes to wide path
+            0.5   → balanced routing
+            1.0   → everything goes to deep path
+        """
+        for module in self.modules():
+            if isinstance(module, AdaptiveRecursiveBlock):
+                module.set_route_threshold(threshold)
+
+    def get_routing_threshold(self) -> Optional[float]:
+        """Return current threshold (from first adaptive layer)."""
+        for module in self.modules():
+            if isinstance(module, AdaptiveRecursiveBlock):
+                return module.route_threshold
+        return None
+
+    # ------------------------------------------------------------------
     # Metrics bag construction
     # ------------------------------------------------------------------
 
-    # Keys in layer_metrics that are per-step vectors (max_loops,)
     _VECTOR_KEYS = [
         "step_halt_probs", "step_halt_prob_std", "step_halt_prob_min", "step_halt_prob_max",
         "step_changes", "loop_scales", "prob_remain_max", "prob_remain_mean",
     ]
 
-    # Keys that are per-layer scalars (stacked to (n_layers,))
     _PER_LAYER_SCALAR_KEYS = [
         "actual_steps", "residual_mass", "frac_alive", "wide_scale",
         "expected_steps_mean", "expected_steps_std", "expected_steps_min", "expected_steps_max",
@@ -783,7 +1037,7 @@ class GPT2LLM(NNModel):
         }
 
     # ------------------------------------------------------------------
-    # Forward
+    # Forward — no manual dispatch needed, layers auto-select
     # ------------------------------------------------------------------
 
     @overload
@@ -818,6 +1072,8 @@ class GPT2LLM(NNModel):
             layer_module = self.transformer.h[layer_key]
 
             if self.use_adaptive:
+                # Each AdaptiveRecursiveBlock auto-dispatches based on
+                # self.training and self.route_threshold
                 h, layer_metrics = layer_module(h, token_ids=inputs)
                 total_ponder_cost = total_ponder_cost + layer_metrics["expected_steps"].mean()
                 all_layer_metrics.append(layer_metrics)

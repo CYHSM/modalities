@@ -980,7 +980,7 @@ fsdp_model:
     mixed_precision_settings:
       param_dtype: BF_16
       reduce_dtype: BF_16
-    block_names: [AdaptiveRecursiveBlock]
+    block_names: [GPT2Block]
 
 compiled_model:
   component_key: model
@@ -989,7 +989,7 @@ compiled_model:
     model:
       instance_key: model_raw
       pass_type: BY_REFERENCE
-    block_names: [AdaptiveRecursiveBlock]
+    block_names: [GPT2Block]
 
 model_raw:
   component_key: model
@@ -1005,7 +1005,7 @@ model_raw:
     n_layer: 12
     n_head_q: 12
     n_head_kv: 12
-    ffn_hidden: 64
+    ffn_hidden: 512
     n_embd: 768
     dropout: 0.0
     bias: false
@@ -1045,8 +1045,11 @@ model_raw:
       halt_threshold: 1.00
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
-      wide_ffn_hidden: 13952
+      wide_ffn_hidden: 11776
       wide_ffn_gate_init_bias: 0.0
+      p_drop_deep: 0.1
+      p_drop_wide: 0.1
+      allow_skip_layer: false
 
 lr_scheduler:
   component_key: scheduler
@@ -1108,6 +1111,6 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop5_64deep_13952wide
+    experiment_id: loop5_512deep_11776wide_drop01
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}

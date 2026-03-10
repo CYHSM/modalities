@@ -11,6 +11,7 @@ settings:
     world_size: ${cuda_env:WORLD_SIZE}
   paths:
     checkpoint_saving_path: /raid/s3/opengptx/mfrey/loop/checkpoints
+    experiments_root_path: /raid/s3/opengptx/mfrey/loop/experiments
   intervals:
     training_log_interval_in_steps: 1
     checkpointing_interval_in_steps: 5000
