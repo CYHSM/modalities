@@ -486,6 +486,7 @@ class WandBEvaluationResultSubscriberConfig(BaseModel):
     mode: WandbMode
     directory: Path
     config_file_path: Path
+    tokenizer: Optional[PydanticTokenizerIFType] = None
 
 
 class RichResultSubscriberConfig(BaseModel):

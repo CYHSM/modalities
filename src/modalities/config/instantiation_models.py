@@ -189,6 +189,7 @@ class TrainingComponentsInstantiationModel(BaseModel):
     scheduled_pipeline: PydanticPipelineType | None = None
     device_mesh: PydanticDeviceMeshIFType | None = None
     model_raw: PydanticPytorchModuleType
+    tokenizer: PydanticTokenizerIFType | None = None
 
     @model_validator(mode="after")
     def _check_token_amount_in_dataset(self) -> "TrainingComponentsInstantiationModel":

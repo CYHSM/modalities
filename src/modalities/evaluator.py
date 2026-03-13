@@ -24,6 +24,7 @@ class Evaluator:
         progress_publisher: MessagePublisher[ProgressUpdate],
         evaluation_result_publisher: MessagePublisher[EvaluationResultBatch],
         device_mesh: DeviceMesh | None = None,
+        tokenizer: "PydanticTokenizerIFType | None" = None,
     ) -> None:
         """Initializes the Evaluator class.
 
@@ -41,6 +42,13 @@ class Evaluator:
         else:  # TODO: we can remove the else part once we refactored out FSDP1
             self.dp_degree = dist.get_world_size()
             self.pp_degree = 1
+            
+        self.tokenizer = tokenizer
+        
+        self.hardcoded_examples = [
+            "Janet’s ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?", # GSM8k
+            "The capital of France is Paris and the tallest mountain in the world is Mount Everest.", # Factual
+        ]
 
     def evaluate_batch(
         self,
@@ -123,6 +131,9 @@ class Evaluator:
                     num_eval_steps_done=0,  # Reset progress bar
                     dataloader_tag=data_loader.dataloader_tag,  # KEEP ORIGINAL TAG HERE
                 )
+
+                eval_tokens = None
+                eval_gate_probs = None
                 
                 with TimeRecorder() as forward_backward_timer_recorder:
                     for batch_id, batch in enumerate(data_loader):
@@ -161,15 +172,81 @@ class Evaluator:
                     throughput_metrics={
                         "evaluation_num_samples_per_second": ResultItem(num_samples_per_second, decimal_places=1)
                     },
+                    metrics={},
                     dataloader_tag=current_tag,  # USE MODIFIED TAG HERE FOR W&B
                     num_train_steps_done=num_train_steps_done,
                 )
+                if eval_tokens is not None:
+                    evaluation_result.metrics["eval_tokens"] = ResultItem(eval_tokens)
+                if eval_gate_probs is not None:
+                    evaluation_result.metrics["eval_gate_probs"] = ResultItem(eval_gate_probs)
                 
                 Evaluator._publish_evaluation_result(
                     evaluation_result_publisher=self.evaluation_result_publisher,
                     evaluation_result=evaluation_result,
                 )
                 result_dict[current_tag] = evaluation_result
+                
+            # Process hardcoded examples if tokenizer is available
+            if self.tokenizer is not None:
+                hardcoded_tag = f"hardcoded_examples{threshold_tag}"
+                
+                # Tokenize
+                encoded_examples = [self.tokenizer.tokenize(text) for text in self.hardcoded_examples]
+                
+                # Pad sequences to max length in this batch for the model
+                max_len = max(len(seq) for seq in encoded_examples)
+                padded_examples = []
+                # Assuming padding config uses a valid pad/eos token id
+                pad_token_id = self.tokenizer.eos_token_id if hasattr(self.tokenizer, "eos_token_id") else 0
+                for seq in encoded_examples:
+                    padded_seq = seq + [pad_token_id] * (max_len - len(seq))
+                    padded_examples.append(padded_seq)
+                
+                # We need input and target - for just routing analysis, input is fine, target can be shifted or same
+                input_tensor = torch.tensor(padded_examples).to(device)
+                
+                dummy_batch = DatasetBatch(
+                    samples={model[0].sample_key: input_tensor},
+                    targets={loss_fun.target_key: input_tensor} # Dummy targets
+                )
+                
+                hardcoded_loss = self.evaluate_batch(
+                    batch=dummy_batch,
+                    model=model,
+                    loss_fun=loss_fun,
+                    scheduled_pipeline=scheduled_pipeline,
+                )
+                
+                hc_eval_tokens = None
+                hc_eval_gate_probs = None
+                
+                if hasattr(loss_fun, "get_metrics"):
+                    m_bag = loss_fun.get_metrics().get("metrics")
+                    if m_bag is not None:
+                        if "eval_tokens" in m_bag:
+                            hc_eval_tokens = m_bag["eval_tokens"].detach().cpu()
+                        if "eval_gate_probs" in m_bag:
+                            hc_eval_gate_probs = m_bag["eval_gate_probs"].detach().cpu()
+                            
+                hc_evaluation_result = EvaluationResultBatch(
+                    losses={loss_fun.tag: ResultItem(hardcoded_loss if hardcoded_loss is not None else torch.zeros(1), decimal_places=2)},
+                    throughput_metrics={},
+                    metrics={},
+                    dataloader_tag=hardcoded_tag,
+                    num_train_steps_done=num_train_steps_done,
+                )
+                
+                if hc_eval_tokens is not None:
+                    hc_evaluation_result.metrics["eval_tokens"] = ResultItem(hc_eval_tokens)
+                if hc_eval_gate_probs is not None:
+                    hc_evaluation_result.metrics["eval_gate_probs"] = ResultItem(hc_eval_gate_probs)
+                    
+                Evaluator._publish_evaluation_result(
+                    evaluation_result_publisher=self.evaluation_result_publisher,
+                    evaluation_result=hc_evaluation_result,
+                )
+                result_dict[hardcoded_tag] = hc_evaluation_result
 
         # Reset threshold to default/None before going back to training
         for m in model:

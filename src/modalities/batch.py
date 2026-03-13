@@ -114,6 +114,8 @@ class EvaluationResultBatch(Batch):
         def _round_result_item_dict(result_item_dict: dict[str, ResultItem]) -> dict[str, ResultItem]:
             rounded_result_item_dict = {}
             for k, item in result_item_dict.items():
+                if k in ["eval_tokens", "eval_gate_probs"]:
+                    continue
                 if item.decimal_places is not None:
                     rounded_result_item_dict[k] = round(item.value.float().mean().item(), item.decimal_places)
                 else:

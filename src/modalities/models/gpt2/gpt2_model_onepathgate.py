@@ -483,8 +483,7 @@ class AdaptiveRecursiveBlock(nn.Module):
             self.wide_block = wide_block
             self.wide_scale = nn.Parameter(torch.tensor([self._INIT_SCALE_RAW]))
 
-        if layer_type == "dual":
-            self.dual_gate = DualPathGate(n_embd=n_embd, init_bias=adaptive_config.wide_ffn_gate_init_bias)
+        self.dual_gate = DualPathGate(n_embd=n_embd, init_bias=adaptive_config.wide_ffn_gate_init_bias)
 
     def forward(
         self, x: torch.Tensor, token_ids: torch.Tensor = None,
@@ -544,13 +543,11 @@ class AdaptiveRecursiveBlock(nn.Module):
             wide_scale_val = torch.tensor(0.0, device=device)
 
         if self.layer_type == "dual":
-            output, gate = self.dual_gate(x, h_deep, h_wide)  # gate is (B, T, D)
+            output, gate = self.dual_gate(x, h_deep, h_wide)
         elif self.layer_type == "loop":
-            output = h_deep
-            gate = None
+            output, gate = self.dual_gate(x, h_deep, x)   # gate blends loop↔skip
         elif self.layer_type == "wide":
-            output = h_wide
-            gate = None
+            output, gate = self.dual_gate(x, h_wide, x)   # gate blends wide↔skip
         else:
             raise ValueError(f"Unknown layer type: {self.layer_type}")
 

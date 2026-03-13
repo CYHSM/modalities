@@ -10,12 +10,12 @@ settings:
     global_rank: ${cuda_env:RANK}
     world_size: ${cuda_env:WORLD_SIZE}
   paths:
-    checkpoint_saving_path: /raid/s3/opengptx/mfrey/loop/checkpoints/loop5_512deep_11776wide_onepath
+    checkpoint_saving_path: /raid/s3/opengptx/mfrey/loop/checkpoints/loop5_512deep_11776wide_LOG
     experiments_root_path: /raid/s3/opengptx/mfrey/loop/experiments
   intervals:
     training_log_interval_in_steps: 1
     checkpointing_interval_in_steps: 5000
-    evaluation_interval_in_steps: 100
+    evaluation_interval_in_steps: 1000
   consistency_enforcement:
     enforce_tokens_per_step_consistency: true
     enforce_last_step_logged: false
@@ -1047,7 +1047,7 @@ model_raw:
       scheduler_type: "constant"
       wide_ffn_hidden: 11776
       wide_ffn_gate_init_bias: 0.0
-      layer_types: ["loop", "wide", "loop", "loop", "loop", "dual", "dual", "dual", "wide", "wide", "wide", "wide"]
+      path_dropout_prob: 0.001
 
 lr_scheduler:
   component_key: scheduler
@@ -1112,3 +1112,14 @@ evaluation_subscriber:
     experiment_id: loop5_512deep_11776wide
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}
+    tokenizer:
+      instance_key: tokenizer
+      pass_type: BY_REFERENCE
+
+tokenizer:
+  component_key: tokenizer
+  variant_key: pretrained_hf_tokenizer
+  config:
+    pretrained_model_name_or_path: openai-community/gpt2
+    padding: false
+    truncation: false
