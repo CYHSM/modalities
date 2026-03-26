@@ -980,7 +980,7 @@ fsdp_model:
     mixed_precision_settings:
       param_dtype: BF_16
       reduce_dtype: BF_16
-    block_names: [AdaptiveRecursiveBlock]
+    block_names: [GPT2Block]
 
 compiled_model:
   component_key: model
@@ -989,7 +989,7 @@ compiled_model:
     model:
       instance_key: model_raw
       pass_type: BY_REFERENCE
-    block_names: [AdaptiveRecursiveBlock]
+    block_names: [GPT2Block]
 
 model_raw:
   component_key: model
@@ -1002,10 +1002,10 @@ model_raw:
     sequence_length: ${settings.step_profile.sequence_length}
     prediction_key: ${loss_fn.config.prediction_key}
     vocab_size: 50304
-    n_layer: 12
+    n_layer: 60
     n_head_q: 12
     n_head_kv: 12
-    ffn_hidden: 512
+    ffn_hidden: 3072
     n_embd: 768
     dropout: 0.0
     bias: false
@@ -1040,7 +1040,7 @@ model_raw:
         normalized_shape: 768
         eps: 1.0e-05
     adaptive_config:
-      enable_adaptive: true
+      enable_adaptive: false
       max_loops: 5
       halt_threshold: 1.00
       ponder_penalty_weight: 0.0

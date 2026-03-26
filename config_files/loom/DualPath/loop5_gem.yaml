@@ -980,7 +980,7 @@ fsdp_model:
     mixed_precision_settings:
       param_dtype: BF_16
       reduce_dtype: BF_16
-    block_names: [AdaptiveRecursiveBlock]
+    block_names: [AsymmetricReadWriteBlock]
 
 compiled_model:
   component_key: model
@@ -989,7 +989,7 @@ compiled_model:
     model:
       instance_key: model_raw
       pass_type: BY_REFERENCE
-    block_names: [AdaptiveRecursiveBlock]
+    block_names: [AsymmetricReadWriteBlock]
 
 model_raw:
   component_key: model
@@ -1045,8 +1045,8 @@ model_raw:
       halt_threshold: 1.00
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
-      wide_ffn_hidden: 11776
-      wide_ffn_gate_init_bias: 0.0
+      wide_ffn_hidden: 12544
+      deep_ffn_hidden: 768
 
 lr_scheduler:
   component_key: scheduler

@@ -1,5 +1,5 @@
 settings:
-  experiment_id: ${modalities_env:experiment_id}
+  experiment_id: loop_5Lx2_ffn3072_17pct
   config_file_path: ${modalities_env:config_file_path}
   referencing_keys:
     sample_key: input_ids
@@ -29,7 +29,7 @@ settings:
       instance_key: dp_degree
       pass_type: BY_REFERENCE
   training_target:
-    num_target_tokens: 13920501760 # 54564794368 divisible by (local_micro_batch_size * dp_degree * gradient_accumulation_steps)
+    num_target_tokens: 13920501760
     num_target_steps:
       component_key: number_conversion
       variant_key: num_steps_from_num_tokens
@@ -46,14 +46,12 @@ settings:
     num_seen_steps: 0
     num_seen_samples: 0
     last_step: -1
-
 collate_fn:
   component_key: collate_fn
   variant_key: gpt_2_llm_collator
   config:
     sample_key: ${settings.referencing_keys.sample_key}
     target_key: ${settings.referencing_keys.target_key}
-
 train_dataset:
   component_key: dataset
   variant_key: combined
@@ -893,7 +891,6 @@ eval_dataloader:
 eval_dataloaders:
 - instance_key: eval_dataloader
   pass_type: BY_REFERENCE
-
 checkpoint_saving:
   component_key: checkpoint_saving
   variant_key: default
@@ -909,15 +906,13 @@ checkpoint_saving:
       config:
         checkpoint_path: ${settings.paths.checkpoint_saving_path}
         global_rank: ${settings.cuda_env.global_rank}
-        experiment_id: ${settings.experiment_id}
-
+        experiment_id: loop_5Lx2_ffn3072_17pct
 loss_fn:
   component_key: loss
   variant_key: clm_cross_entropy_with_ponder_loss
   config:
     target_key: ${settings.referencing_keys.target_key}
     prediction_key: ${settings.referencing_keys.prediction_key}
-
 device_mesh:
   component_key: device_mesh
   variant_key: default
@@ -926,7 +921,6 @@ device_mesh:
     data_parallel_replicate_degree: 1
     data_parallel_shard_degree: -1
     world_size: ${settings.cuda_env.world_size}
-
 dp_degree:
   component_key: number_conversion
   variant_key: parallel_degree
@@ -934,8 +928,9 @@ dp_degree:
     device_mesh:
       instance_key: device_mesh
       pass_type: BY_REFERENCE
-    parallelism_methods: [dp_shard, dp_replicate]
-
+    parallelism_methods:
+    - dp_shard
+    - dp_replicate
 app_state:
   component_key: app_state
   variant_key: raw
@@ -949,7 +944,6 @@ app_state:
     lr_scheduler:
       instance_key: lr_scheduler
       pass_type: BY_REFERENCE
-
 initialized_model:
   component_key: model
   variant_key: model_initialized
@@ -966,7 +960,6 @@ initialized_model:
         mean: 0.0
         std: 0.02
         num_layers: ${model_raw.config.n_layer}
-
 fsdp_model:
   component_key: model
   variant_key: fsdp2_wrapped
@@ -980,8 +973,8 @@ fsdp_model:
     mixed_precision_settings:
       param_dtype: BF_16
       reduce_dtype: BF_16
-    block_names: [AdaptiveRecursiveBlock]
-
+    block_names:
+    - AdaptiveRecursiveBlock
 compiled_model:
   component_key: model
   variant_key: compiled
@@ -989,8 +982,8 @@ compiled_model:
     model:
       instance_key: model_raw
       pass_type: BY_REFERENCE
-    block_names: [AdaptiveRecursiveBlock]
-
+    block_names:
+    - AdaptiveRecursiveBlock
 model_raw:
   component_key: model
   variant_key: gpt2
@@ -1002,25 +995,25 @@ model_raw:
     sequence_length: ${settings.step_profile.sequence_length}
     prediction_key: ${loss_fn.config.prediction_key}
     vocab_size: 50304
-    n_layer: 12
+    n_layer: 5
     n_head_q: 12
     n_head_kv: 12
-    ffn_hidden: 512
+    ffn_hidden: 3072
     n_embd: 768
     dropout: 0.0
     bias: false
     attention_config:
       qkv_transforms:
-        - type_hint: RotaryTransform
-          config:
-            n_embd: ${model_raw.config.n_embd}
-            n_head: ${model_raw.config.n_head_q}
-            seq_length_dim: -2
-            base_freq: 500000
+      - type_hint: RotaryTransform
+        config:
+          n_embd: ${model_raw.config.n_embd}
+          n_head: ${model_raw.config.n_head_q}
+          seq_length_dim: -2
+          base_freq: 500000
       qk_norm_config:
         norm_type: pytorch_rms_norm
         config:
-          normalized_shape: 64 # n_embd / n_head_q
+          normalized_shape: 64
           eps: 1.0e-05
     attention_implementation: pytorch_flash
     activation_type: swiglu
@@ -1040,14 +1033,14 @@ model_raw:
         normalized_shape: 768
         eps: 1.0e-05
     adaptive_config:
-      enable_adaptive: true
-      max_loops: 5
-      halt_threshold: 1.00
+      max_loops: 2
+      halt_threshold: 1.0
       ponder_penalty_weight: 0.0
-      scheduler_type: "constant"
-      wide_ffn_hidden: 11776
-      wide_ffn_gate_init_bias: 0.0
-
+      scheduler_type: constant
+      n_experts: 1
+      top_k: 1
+      expert_ffn_hidden: 3072
+      moe_bias_update_speed: 0.001
 lr_scheduler:
   component_key: scheduler
   variant_key: onecycle_lr
@@ -1055,27 +1048,29 @@ lr_scheduler:
     optimizer:
       instance_key: optimizer
       pass_type: BY_REFERENCE
-    max_lr: 0.002912 #2e-4
+    max_lr: 0.002912
     div_factor: 10
     final_div_factor: 1
     total_steps: ${settings.training_target.num_target_steps}
     pct_start: 0.01
     anneal_strategy: cos
     last_epoch: ${settings.training_progress.last_step}
-
 optimizer:
   component_key: optimizer
   variant_key: adam_w
   config:
     lr: 0.0001
-    betas: [0.9, 0.95]
+    betas:
+    - 0.9
+    - 0.95
     eps: 1e-8
     weight_decay: 1e-1
-    weight_decay_groups_excluded: [embedding, pytorch_rms_norm]
+    weight_decay_groups_excluded:
+    - embedding
+    - pytorch_rms_norm
     wrapped_model:
       instance_key: initialized_model
       pass_type: BY_REFERENCE
-
 gradient_clipper:
   component_key: gradient_clipper
   variant_key: fsdp2
@@ -1088,7 +1083,6 @@ gradient_clipper:
     device_mesh:
       instance_key: device_mesh
       pass_type: BY_REFERENCE
-
 progress_subscriber:
   component_key: progress_subscriber
   variant_key: rich
@@ -1100,7 +1094,6 @@ progress_subscriber:
     eval_dataloaders:
       instance_key: eval_dataloaders
       pass_type: BY_REFERENCE
-
 evaluation_subscriber:
   component_key: results_subscriber
   variant_key: wandb
@@ -1108,13 +1101,12 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop5_512deep_11776wide
+    experiment_id: loop_5Lx2_ffn3072_17pct
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}
     tokenizer:
       instance_key: tokenizer
       pass_type: BY_REFERENCE
-
 tokenizer:
   component_key: tokenizer
   variant_key: pretrained_hf_tokenizer

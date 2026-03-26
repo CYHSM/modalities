@@ -1045,8 +1045,14 @@ model_raw:
       halt_threshold: 1.00
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
-      wide_ffn_hidden: 11776
       wide_ffn_gate_init_bias: 0.0
+      # MoE — 8 experts, top-2, FLOP-matched to current dense wide
+      use_moe_wide: true
+      n_experts: 2
+      top_k: 1
+      expert_ffn_hidden: 11776
+      moe_bias_update_speed: 0.001
+      wide_ffn_hidden: 11776
 
 lr_scheduler:
   component_key: scheduler

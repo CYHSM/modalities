@@ -1,7 +1,7 @@
 import logging
 import math
 from abc import abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, Optional, overload
 
@@ -38,9 +38,9 @@ logger.setLevel(logging.WARNING)
 # =============================================================================
 #
 # MetricsBag = {
-#     "scalars":            dict[str, Tensor],   # shape ()    — accumulated & reduced
-#     "per_layer_scalars":  dict[str, Tensor],   # shape (L,)  — accumulated & reduced
-#     "per_layer_vectors":  dict[str, Tensor],   # shape (L,M) — last-batch snapshot only
+#     "scalars":            dict[str, Tensor],   # shape ()
+#     "per_layer_scalars":  dict[str, Tensor],   # shape (L,)
+#     "per_layer_vectors":  dict[str, Tensor],   # shape (L,M)
 # }
 # =============================================================================
 
@@ -54,20 +54,26 @@ class AdaptiveComputationConfig(BaseModel):
     max_loops: int = 10
     halt_threshold: float = 0.99
     ponder_penalty_weight: float = 0.00
-    wide_ffn_hidden: int = 0
+
+    # Deep/loop path
+    n_head_q_deep: Optional[int] = None    # defaults to base n_head_q
+    n_head_kv_deep: Optional[int] = None   # defaults to base n_head_kv
+    head_dim_deep: Optional[int] = None    # defaults to n_embd // n_head_q
+    ffn_deep: Optional[int] = None         # defaults to base ffn_hidden
+
+    # Wide/capacity path
+    n_head_q_wide: Optional[int] = None
+    n_head_kv_wide: Optional[int] = None
+    head_dim_wide: Optional[int] = None    # defaults to n_embd // n_head_q
+    ffn_wide: int = 0
+
+    # Gate config
     wide_ffn_gate_init_bias: float = 0.0
     deep_gate_init_bias: float = 0.0
+
+    # Scheduling and layout
     scheduler_type: str = "constant"
     layer_types: Optional[list[str]] = None
-    
-    # --- Enhancements ---
-    loop_input_injection: bool = False
-    enrich_router: bool = False
-    enrich_gate: bool = False
-    
-    # --- Gate Toggles ---
-    gate_input_norm: bool = False
-    gate_mlp_proj: bool = False
 
 
 class LayerNorms(LookupEnum):
@@ -102,9 +108,9 @@ class IdentityTransform(QueryKeyValueTransform):
 
 
 class RotaryTransform(QueryKeyValueTransform):
-    def __init__(self, n_embd: int, n_head: int, seq_length_dim: int = -2, base_freq: int = 10000):
+    def __init__(self, head_dim: int, seq_length_dim: int = -2, base_freq: int = 10000):
         super().__init__()
-        self.dim_model = n_embd // n_head
+        self.dim_model = head_dim
         self.seq_length_dim = seq_length_dim
         self.base_freq = base_freq
         self.reset_parameters()
@@ -163,8 +169,7 @@ class AttentionConfig(BaseModel):
             pass
 
         class RotaryTransformConfig(BaseModel):
-            n_embd: Annotated[int, Field(strict=True, ge=0)]
-            n_head: Annotated[int, Field(strict=True, ge=0)]
+            head_dim: Annotated[int, Field(strict=True, ge=1)]
             seq_length_dim: Annotated[int, Field(strict=True)]
             base_freq: Annotated[int, Field(strict=True, ge=10000)]
 
@@ -222,39 +227,63 @@ class GPT2LLMConfig(BaseModel):
 
 
 # =============================================================================
-# Attention
+# Attention — fully parameterised by (n_head_q, n_head_kv, head_dim)
 # =============================================================================
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, n_head_q, n_head_kv, n_embd, attention_config, attention_impl, bias, dropout):
+    """
+    Multi-head attention with decoupled head counts AND head_dim.
+
+    attn_dim = n_head_q * head_dim    (Q and O projection width)
+    kv_dim   = n_head_kv * head_dim   (K and V projection width)
+
+    Both can differ from n_embd. The linear projections bridge:
+        Q:  n_embd -> attn_dim
+        K:  n_embd -> kv_dim
+        V:  n_embd -> kv_dim
+        O:  attn_dim -> n_embd
+
+    The attention_config serves as a template. head_dim in RoPE config and
+    normalized_shape in QK norm config are overridden with the actual head_dim
+    passed to this module, so the YAML only needs one canonical value.
+    """
+
+    def __init__(self, n_head_q, n_head_kv, n_embd, head_dim, attention_config, attention_impl, bias, dropout):
         super().__init__()
-        assert n_embd % n_head_q == 0
         assert n_head_q % n_head_kv == 0
-
-        self.n_rep = n_head_q // n_head_kv
-        self.attention_impl = attention_impl
-
-        self.q_attn = nn.Linear(n_embd, n_embd, bias=bias)
-        self.k_attn = nn.Linear(n_embd, n_embd // self.n_rep, bias=bias)
-        self.v_attn = nn.Linear(n_embd, n_embd // self.n_rep, bias=bias)
-        self.c_proj = nn.Linear(n_embd, n_embd, bias=bias)
 
         self.n_head_q = n_head_q
         self.n_head_kv = n_head_kv
         self.n_embd = n_embd
+        self.head_dim = head_dim
+        self.attn_dim = n_head_q * head_dim
+        self.kv_dim = n_head_kv * head_dim
+        self.attention_impl = attention_impl
         self.dropout = dropout
-        self.resid_dropout = nn.Dropout(self.dropout)
 
-        self.qkv_transforms = nn.ModuleList(
-            transform_config.type_hint.value(
-                **convert_base_model_config_to_dict(transform_config.config)
+        # Projections bridge n_embd <-> attn_dim/kv_dim
+        self.q_attn = nn.Linear(n_embd, self.attn_dim, bias=bias)
+        self.k_attn = nn.Linear(n_embd, self.kv_dim, bias=bias)
+        self.v_attn = nn.Linear(n_embd, self.kv_dim, bias=bias)
+        self.c_proj = nn.Linear(self.attn_dim, n_embd, bias=bias)
+        self.resid_dropout = nn.Dropout(dropout)
+
+        # QKV transforms — override head_dim in config with actual path head_dim
+        self.qkv_transforms = nn.ModuleList()
+        for transform_config in attention_config.qkv_transforms:
+            cfg_dict = convert_base_model_config_to_dict(transform_config.config)
+            if "head_dim" in cfg_dict:
+                cfg_dict["head_dim"] = head_dim
+            self.qkv_transforms.append(
+                transform_config.type_hint.value(**cfg_dict)
             )
-            for transform_config in attention_config.qkv_transforms
-        )
 
+        # QK norm — override normalized_shape with actual path head_dim
         if attention_config.qk_norm_config is not None:
-            self.q_norm = attention_config.qk_norm_config.norm_type.value(**dict(attention_config.qk_norm_config.config))
-            self.k_norm = attention_config.qk_norm_config.norm_type.value(**dict(attention_config.qk_norm_config.config))
+            qk_cfg = dict(attention_config.qk_norm_config.config)
+            qk_cfg["normalized_shape"] = head_dim
+            self.q_norm = attention_config.qk_norm_config.norm_type.value(**qk_cfg)
+            self.k_norm = attention_config.qk_norm_config.norm_type.value(**qk_cfg)
         else:
             self.q_norm = None
             self.k_norm = None
@@ -263,12 +292,11 @@ class CausalSelfAttention(nn.Module):
         return self.q_attn(x), self.k_attn(x), self.v_attn(x)
 
     @staticmethod
-    def execute_qkv_transforms(q, k, v, qkv_transforms, n_head_q):
-        B, T, D = q.size()
-        n_head_dim = D // n_head_q
-        q = q.view(B, T, n_head_q, n_head_dim).transpose(1, 2).contiguous()
-        k = k.view(B, T, -1, n_head_dim).transpose(1, 2).contiguous()
-        v = v.view(B, T, -1, n_head_dim).transpose(1, 2).contiguous()
+    def execute_qkv_transforms(q, k, v, qkv_transforms, n_head_q, head_dim):
+        B, T, _ = q.size()
+        q = q.view(B, T, n_head_q, head_dim).transpose(1, 2).contiguous()
+        k = k.view(B, T, -1, head_dim).transpose(1, 2).contiguous()
+        v = v.view(B, T, -1, head_dim).transpose(1, 2).contiguous()
         for transform in qkv_transforms:
             q, k, v = transform(q, k, v)
         return q, k, v
@@ -294,11 +322,15 @@ class CausalSelfAttention(nn.Module):
     def execute_attention(cls, q, k, v, dropout, attention_impl):
         if attention_impl == AttentionImplementation.MANUAL:
             k, v = cls.repeat_kv_heads(q, k, v)
-            y = manual_scaled_dot_product_attention(query=q, key=k, value=v, attn_mask=None, dropout_p=dropout, is_causal=True)
+            y = manual_scaled_dot_product_attention(
+                query=q, key=k, value=v, attn_mask=None, dropout_p=dropout, is_causal=True,
+            )
             y = y.transpose(1, 2).contiguous()
         elif attention_impl == AttentionImplementation.PYTORCH_FLASH:
             k, v = cls.repeat_kv_heads(q, k, v)
-            y = torch.nn.functional.scaled_dot_product_attention(query=q, key=k, value=v, attn_mask=None, dropout_p=dropout, is_causal=True)
+            y = torch.nn.functional.scaled_dot_product_attention(
+                query=q, key=k, value=v, attn_mask=None, dropout_p=dropout, is_causal=True,
+            )
             y = y.transpose(1, 2).contiguous()
         elif attention_impl == AttentionImplementation.DAO_FLASH:
             if flash_attn_func is None:
@@ -314,14 +346,20 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x):
         B, T, _ = x.size()
         q, k, v = self.projection(x)
-        q, k, v = CausalSelfAttention.execute_qkv_transforms(q, k, v, self.qkv_transforms, self.n_head_q)
+        q, k, v = CausalSelfAttention.execute_qkv_transforms(
+            q, k, v, self.qkv_transforms, self.n_head_q, self.head_dim,
+        )
         if self.q_norm is not None and self.k_norm is not None:
             q = self.q_norm(q)
             k = self.k_norm(k)
         y = CausalSelfAttention.execute_attention(q, k, v, self.dropout, self.attention_impl)
-        y = y.reshape(B, T, -1)
+        y = y.reshape(B, T, -1)   # (B, T, attn_dim)
         return self.resid_dropout(self.c_proj(y))
 
+
+# =============================================================================
+# MLP
+# =============================================================================
 
 class TransformerMLP(nn.Module):
     def __init__(self, n_embd, ffn_hidden, bias, dropout):
@@ -335,20 +373,23 @@ class TransformerMLP(nn.Module):
         return self.dropout(self.c_proj(self.gelu(self.c_fc(x))))
 
 
+# =============================================================================
+# Transformer Block
+# =============================================================================
+
 class GPT2Block(nn.Module):
     def __init__(
-        self, n_embd, bias, n_head_q, n_head_kv, activation_type, attention_impl,
-        attention_config, dropout, ffn_hidden, attention_norm, ffn_norm,
-        enforce_swiglu_hidden_dim_multiple_of,
+        self, n_embd, bias, n_head_q, n_head_kv, head_dim, activation_type,
+        attention_impl, attention_config, dropout, ffn_hidden, attention_norm,
+        ffn_norm, enforce_swiglu_hidden_dim_multiple_of,
     ):
         super().__init__()
         self.attention_norm = attention_norm
         self.ffn_norm = ffn_norm
-        self._check_ffn_hidden_dim(n_embd, ffn_hidden)
         self.attn = CausalSelfAttention(
             n_head_q=n_head_q, n_head_kv=n_head_kv, n_embd=n_embd,
-            attention_config=attention_config, attention_impl=attention_impl,
-            bias=bias, dropout=dropout,
+            head_dim=head_dim, attention_config=attention_config,
+            attention_impl=attention_impl, bias=bias, dropout=dropout,
         )
         if activation_type == ActivationType.GELU:
             self.mlp = TransformerMLP(n_embd=n_embd, ffn_hidden=ffn_hidden, bias=bias, dropout=dropout)
@@ -359,11 +400,6 @@ class GPT2Block(nn.Module):
             )
         else:
             raise NotImplementedError("unimplemented activation")
-
-    def _check_ffn_hidden_dim(self, n_embd, ffn_hidden):
-        expected = 4 * n_embd
-        if ffn_hidden != expected:
-            logger.warning(f"Expected ffn_hidden={expected}, got n_embd={n_embd}, ffn_hidden={ffn_hidden}.")
 
     def forward(self, x, scale=1.0):
         x = x + scale * self.attn(self.attention_norm(x))
@@ -377,10 +413,9 @@ class GPT2Block(nn.Module):
 
 @dataclass
 class HaltingState:
-    """Tracks ACT halting: prob_remain, weighted output, and expected steps."""
-    prob_remain: torch.Tensor       # (B, T)
-    output: torch.Tensor            # (B, T, D)
-    expected_steps: torch.Tensor    # (B, T)
+    prob_remain: torch.Tensor
+    output: torch.Tensor
+    expected_steps: torch.Tensor
 
     @staticmethod
     def init(B: int, T: int, D: int, *, device: torch.device, dtype: torch.dtype) -> "HaltingState":
@@ -402,8 +437,6 @@ class HaltingState:
 
 
 class StepMetrics:
-    """Collects per-step scalars, pads/stacks to (max_loops,) for logging."""
-
     def __init__(self, max_loops: int, device: torch.device):
         self.max_loops = max_loops
         self.device = device
@@ -423,70 +456,17 @@ class StepMetrics:
         return out
 
 
-# --- Helper: compute scale-invariant summary statistics ---
-
-def _displacement_stats(
-    h: torch.Tensor, x: torch.Tensor, eps: float = 1e-6
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return (relative_norm, cosine_similarity) between h and x.
-
-    relative_norm: ||h - x|| / (||x|| + eps)   — shape (B, T)
-    cosine_sim:    cos(h, x)                    — shape (B, T)
-    """
-    diff = h - x
-    x_norm = x.norm(dim=-1).clamp(min=eps)          # (B, T)
-    rel_norm = diff.norm(dim=-1) / x_norm            # (B, T)
-
-    h_norm = h.norm(dim=-1).clamp(min=eps)           # (B, T)
-    cos_sim = (h * x).sum(dim=-1) / (h_norm * x_norm)  # (B, T)
-
-    return rel_norm, cos_sim
-
-
-# --- Original router (unchanged) ---
-
 class AdaptiveRouter(nn.Module):
-    """Per-token halting: [h; t_normalized] -> sigmoid -> halt_prob."""
-
     def __init__(self, n_embd: int, bias: bool = True):
         super().__init__()
         self.linear = nn.Linear(n_embd + 1, 1, bias=bias)
 
-    def forward(self, h: torch.Tensor, step_normalized: float, x: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, step_normalized: float) -> torch.Tensor:
         B, T, _ = h.shape
         step_feat = torch.full((B, T, 1), step_normalized, device=h.device, dtype=h.dtype)
         logit = self.linear(torch.cat([h, step_feat], dim=-1))
         return torch.sigmoid(logit).squeeze(-1)
 
-
-# --- Enriched router ---
-
-class EnrichedAdaptiveRouter(nn.Module):
-    """Per-token halting with scale-invariant displacement features."""
-
-    def __init__(self, n_embd: int, bias: bool = True):
-        super().__init__()
-        self.linear = nn.Linear(n_embd + 3, 1, bias=bias)
-
-    def forward(self, h: torch.Tensor, step_normalized: float, x: torch.Tensor = None) -> torch.Tensor:
-        assert x is not None, "EnrichedAdaptiveRouter requires x (layer input)"
-        B, T, _ = h.shape
-
-        rel_norm, cos_sim = _displacement_stats(h, x)
-
-        step_feat = torch.full((B, T, 1), step_normalized, device=h.device, dtype=h.dtype)
-        features = torch.cat([
-            h,                              
-            rel_norm.unsqueeze(-1),         
-            cos_sim.unsqueeze(-1),          
-            step_feat,                      
-        ], dim=-1)
-
-        logit = self.linear(features)
-        return torch.sigmoid(logit).squeeze(-1)
-
-
-# --- Original dual gate (unchanged) ---
 
 class DecoupledDualPathGate(nn.Module):
     def __init__(self, n_embd, init_bias_deep=0.0, init_bias_wide=0.0):
@@ -508,7 +488,7 @@ class DecoupledDualPathGate(nn.Module):
         nn.init.zeros_(self.proj_w2d.weight)
         nn.init.zeros_(self.proj_d2w.weight)
 
-    def forward(self, routing_input, h_deep, h_wide, use_cross=False):
+    def forward(self, routing_input, h_deep, h_wide, use_cross=True):
         logits = self.gate_proj(routing_input)
         gates = torch.sigmoid(logits)
         gate_deep = gates[..., 0:1]
@@ -527,102 +507,8 @@ class DecoupledDualPathGate(nn.Module):
         return blended, gate_deep, gate_wide
 
 
-# --- Enriched dual gate (UPDATED WITH TOGGLES) ---
-
-class EnrichedDecoupledDualPathGate(nn.Module):
-    """Gate that sees x + scale-invariant summaries of both path outputs."""
-
-    def __init__(self, n_embd, init_bias_deep=0.0, init_bias_wide=0.0, use_norm=False, use_mlp=False):
-        super().__init__()
-        self.use_norm = use_norm
-        self.use_mlp = use_mlp
-        self.init_bias_deep = init_bias_deep
-        self.init_bias_wide = init_bias_wide
-        
-        input_dim = n_embd + 4
-        
-        # 1. Configurable LayerNorm for Scale Mismatch
-        if self.use_norm:
-            self.gate_norm = nn.LayerNorm(input_dim)
-            
-        # 2. Configurable MLP for breaking the linear bottleneck
-        if self.use_mlp:
-            hidden_dim = max(16, n_embd // 4)
-            self.gate_proj_1 = nn.Linear(input_dim, hidden_dim, bias=True)
-            self.gate_act = nn.SiLU()
-            self.gate_proj_2 = nn.Linear(hidden_dim, 2, bias=True)
-        else:
-            self.gate_proj = nn.Linear(input_dim, 2, bias=True)
-
-        self.proj_w2d = nn.Linear(n_embd, n_embd, bias=False)
-        self.proj_d2w = nn.Linear(n_embd, n_embd, bias=False)
-        self.cross_scale_wide = nn.Parameter(torch.tensor([-7.0]))
-        self.cross_scale_deep = nn.Parameter(torch.tensor([-7.0]))
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        # Reset based on whether we are using the MLP or Linear projection
-        if self.use_mlp:
-            nn.init.zeros_(self.gate_proj_2.weight)
-            with torch.no_grad():
-                self.gate_proj_2.bias[0] = self.init_bias_deep
-                self.gate_proj_2.bias[1] = self.init_bias_wide
-        else:
-            nn.init.zeros_(self.gate_proj.weight)
-            with torch.no_grad():
-                self.gate_proj.bias[0] = self.init_bias_deep
-                self.gate_proj.bias[1] = self.init_bias_wide
-                
-        nn.init.zeros_(self.proj_w2d.weight)
-        nn.init.zeros_(self.proj_d2w.weight)
-
-    def forward(self, routing_input, h_deep, h_wide, use_cross=False):
-        x = routing_input
-
-        # Detach both paths: gate evaluates, paths learn to be useful
-        h_deep_det = h_deep.detach()
-        h_wide_det = h_wide.detach()
-
-        rel_norm_deep, cos_sim_deep = _displacement_stats(h_deep_det, x)
-        rel_norm_wide, cos_sim_wide = _displacement_stats(h_wide_det, x)
-
-        gate_input = torch.cat([
-            x,                                   
-            rel_norm_deep.unsqueeze(-1),         
-            rel_norm_wide.unsqueeze(-1),         
-            cos_sim_deep.unsqueeze(-1),          
-            cos_sim_wide.unsqueeze(-1),          
-        ], dim=-1)
-
-        # Apply enhancements if toggled on
-        if self.use_norm:
-            gate_input = self.gate_norm(gate_input)
-            
-        if self.use_mlp:
-            hidden = self.gate_act(self.gate_proj_1(gate_input))
-            logits = self.gate_proj_2(hidden)
-        else:
-            logits = self.gate_proj(gate_input)
-
-        gates = torch.sigmoid(logits)
-        gate_deep = gates[..., 0:1]
-        gate_wide = gates[..., 1:2]
-
-        if use_cross:
-            scale_deep = F.softplus(self.cross_scale_deep)
-            scale_wide = F.softplus(self.cross_scale_wide)
-            h_deep_out = h_deep + scale_deep * self.proj_w2d(h_wide)
-            h_wide_out = h_wide + scale_wide * self.proj_d2w(h_deep)
-        else:
-            h_deep_out = h_deep
-            h_wide_out = h_wide
-
-        blended = gate_deep * h_deep_out + gate_wide * h_wide_out
-        return blended, gate_deep, gate_wide
-
-
 # =============================================================================
-# Adaptive Recursive Block (Dual Full-Block Paths)
+# Adaptive Recursive Block
 # =============================================================================
 
 class AdaptiveRecursiveBlock(nn.Module):
@@ -648,15 +534,8 @@ class AdaptiveRecursiveBlock(nn.Module):
 
         self.has_loop_path = layer_type in ["loop", "dual"]
         if self.has_loop_path:
-            # Select router variant
-            if adaptive_config.enrich_router:
-                self.router = EnrichedAdaptiveRouter(n_embd)
-            else:
-                self.router = AdaptiveRouter(n_embd)
+            self.router = AdaptiveRouter(n_embd)
             self.loop_scales = nn.Parameter(torch.full((self.max_loops,), self._INIT_SCALE_RAW))
-
-            if adaptive_config.loop_input_injection:
-                self.injection_alpha_raw = nn.Parameter(torch.full((self.max_loops,), self._INIT_SCALE_RAW))
 
         self.has_wide_path = layer_type in ["wide", "dual"]
         if self.has_wide_path:
@@ -664,21 +543,11 @@ class AdaptiveRecursiveBlock(nn.Module):
             self.wide_scale = nn.Parameter(torch.tensor([self._INIT_SCALE_RAW]))
 
         if layer_type == "dual":
-            # Select gate variant
-            if adaptive_config.enrich_gate:
-                self.dual_gate = EnrichedDecoupledDualPathGate(
-                    n_embd=n_embd,
-                    init_bias_deep=adaptive_config.deep_gate_init_bias,
-                    init_bias_wide=adaptive_config.wide_ffn_gate_init_bias,
-                    use_norm=adaptive_config.gate_input_norm,
-                    use_mlp=adaptive_config.gate_mlp_proj,
-                )
-            else:
-                self.dual_gate = DecoupledDualPathGate(
-                    n_embd=n_embd,
-                    init_bias_deep=adaptive_config.deep_gate_init_bias,
-                    init_bias_wide=adaptive_config.wide_ffn_gate_init_bias,
-                )
+            self.dual_gate = DecoupledDualPathGate(
+                n_embd=n_embd,
+                init_bias_deep=adaptive_config.deep_gate_init_bias,
+                init_bias_wide=adaptive_config.wide_ffn_gate_init_bias,
+            )
 
     def forward(
         self, x: torch.Tensor, token_ids: torch.Tensor = None,
@@ -686,10 +555,7 @@ class AdaptiveRecursiveBlock(nn.Module):
         B, T, D = x.shape
         device = x.device
 
-        use_input_injection = (
-            self.has_loop_path and hasattr(self, "injection_alpha_raw")
-        )
-
+        # ---- Loop / deep path ----
         state = HaltingState.init(B, T, D, device=device, dtype=x.dtype)
         metrics = StepMetrics(self.max_loops, device)
 
@@ -700,23 +566,15 @@ class AdaptiveRecursiveBlock(nn.Module):
 
             for step in range(self.max_loops):
                 actual_steps = step + 1
-
                 scale = F.softplus(self.loop_scales[step])
                 metrics.log("loop_scale", scale.detach())
                 h_prev = h_loop
+                h_loop = self.block(h_loop, scale=scale)
 
-                if use_input_injection:
-                    step_alpha = F.softplus(self.injection_alpha_raw[step])
-                    metrics.log("injection_alpha", step_alpha.detach())
-                    h_loop = self.block(h_loop + step_alpha * x, scale=scale)
-                else:
-                    h_loop = self.block(h_loop, scale=scale)
-
-                halt_prob = self.router(h_loop, step_normalized=step / step_denom, x=x)
+                halt_prob = self.router(h_loop, step_normalized=step / step_denom)
                 state.update(h_loop, halt_prob, step)
 
                 rel_change = (h_loop - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)
-
                 metrics.log("halt_prob_mean", halt_prob.detach().mean())
                 metrics.log("halt_prob_std", halt_prob.detach().std())
                 metrics.log("halt_prob_min", halt_prob.detach().min())
@@ -733,6 +591,7 @@ class AdaptiveRecursiveBlock(nn.Module):
             actual_steps = 0
             frac_alive = torch.tensor(0.0, device=device)
 
+        # ---- Wide / capacity path ----
         if self.has_wide_path:
             wide_scale_val = F.softplus(self.wide_scale)
             h_wide = self.wide_block(x, scale=wide_scale_val)
@@ -740,6 +599,7 @@ class AdaptiveRecursiveBlock(nn.Module):
             h_wide = torch.zeros_like(x)
             wide_scale_val = torch.tensor(0.0, device=device)
 
+        # ---- Gating ----
         if self.layer_type == "dual":
             output, gate_deep, gate_wide = self.dual_gate(x, h_deep, h_wide)
         elif self.layer_type == "loop":
@@ -753,8 +613,8 @@ class AdaptiveRecursiveBlock(nn.Module):
         else:
             raise ValueError(f"Unknown layer type: {self.layer_type}")
 
+        # ---- Metrics ----
         step_metrics = metrics.finalize()
-
         es = state.expected_steps.detach()
         gate_deep_d = gate_deep.detach()
         gate_wide_d = gate_wide.detach()
@@ -793,12 +653,6 @@ class AdaptiveRecursiveBlock(nn.Module):
             "prob_remain_max": step_metrics.get("prob_remain_max", torch.zeros(self.max_loops, device=device)),
             "prob_remain_mean": step_metrics.get("prob_remain_mean", torch.zeros(self.max_loops, device=device)),
         }
-
-        if use_input_injection:
-            layer_metrics["injection_alpha"] = step_metrics.get("injection_alpha", torch.zeros(self.max_loops, device=device))
-        else:
-            layer_metrics["injection_alpha"] = torch.zeros(self.max_loops, device=device)
-
         return output, layer_metrics
 
 
@@ -823,19 +677,15 @@ class GPT2LLM(NNModel):
                 ".lm_head.weight",
                 ".router.linear.weight",
                 ".dual_gate.gate_proj.weight",
-                ".dual_gate.gate_proj_1.weight",
-                ".dual_gate.gate_proj_2.weight",
                 ".dual_gate.proj_w2d.weight",
                 ".dual_gate.proj_d2w.weight",
             ],
             "embedding": [".wte", ".wpe"],
             "layernorm": [
                 ".attention_norm", ".ffn_norm", ".lm_head_norm",
-                ".q_norm", ".k_norm", ".dual_gate.gate_norm",
+                ".q_norm", ".k_norm",
                 ".loop_scales", ".wide_scale", ".dual_gate.gate_proj.bias",
-                ".dual_gate.gate_proj_1.bias", ".dual_gate.gate_proj_2.bias",
                 ".router.linear.bias", ".dual_gate.cross_scale",
-                ".injection_alpha_raw",
             ],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
@@ -846,6 +696,10 @@ class GPT2LLM(NNModel):
         self.n_embd = n_embd
         self.n_layer = n_layer
         self.poe_type = poe_type
+
+        # Base head_dim — used for non-adaptive blocks and as default
+        assert n_embd % n_head_q == 0, f"n_embd ({n_embd}) must be divisible by n_head_q ({n_head_q})"
+        self.base_head_dim = n_embd // n_head_q
 
         assert vocab_size is not None
         assert sequence_length is not None
@@ -865,41 +719,75 @@ class GPT2LLM(NNModel):
         self.use_adaptive = adaptive_config is not None and adaptive_config.enable_adaptive
         self.adaptive_config = adaptive_config
 
-        def create_block(ffn_hidden_override=None):
+        # ----- Block factory -----
+        def create_block(n_hq=n_head_q, n_hkv=n_head_kv, hd=self.base_head_dim, ffn_h=ffn_hidden):
             return GPT2Block(
-                n_embd=n_embd, bias=bias, n_head_q=n_head_q, n_head_kv=n_head_kv,
-                activation_type=activation_type, attention_impl=attention_implementation,
-                attention_config=attention_config, dropout=dropout,
-                ffn_hidden=ffn_hidden_override if ffn_hidden_override is not None else ffn_hidden,
+                n_embd=n_embd, bias=bias, n_head_q=n_hq, n_head_kv=n_hkv,
+                head_dim=hd, activation_type=activation_type,
+                attention_impl=attention_implementation, attention_config=attention_config,
+                dropout=dropout, ffn_hidden=ffn_h,
                 attention_norm=attention_norm_config.norm_type.value(**dict(attention_norm_config.config)),
                 ffn_norm=ffn_norm_config.norm_type.value(**dict(ffn_norm_config.config)),
                 enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
             )
 
+        # ----- Resolve per-path params -----
+        if self.use_adaptive:
+            ac = adaptive_config
+            nq_deep  = ac.n_head_q_deep  if ac.n_head_q_deep  is not None else n_head_q
+            nkv_deep = ac.n_head_kv_deep if ac.n_head_kv_deep is not None else n_head_kv
+            hd_deep  = ac.head_dim_deep  if ac.head_dim_deep  is not None else self.base_head_dim
+            ffn_deep = ac.ffn_deep       if ac.ffn_deep       is not None else ffn_hidden
+
+            nq_wide  = ac.n_head_q_wide  if ac.n_head_q_wide  is not None else n_head_q
+            nkv_wide = ac.n_head_kv_wide if ac.n_head_kv_wide is not None else n_head_kv
+            hd_wide  = ac.head_dim_wide  if ac.head_dim_wide  is not None else self.base_head_dim
+            ffn_wide = ac.ffn_wide
+
+            assert nq_deep % nkv_deep == 0, f"n_head_q_deep ({nq_deep}) % n_head_kv_deep ({nkv_deep}) != 0"
+            assert nq_wide % nkv_wide == 0, f"n_head_q_wide ({nq_wide}) % n_head_kv_wide ({nkv_wide}) != 0"
+            assert hd_deep % 2 == 0, f"head_dim_deep ({hd_deep}) must be even for RoPE"
+            assert hd_wide % 2 == 0, f"head_dim_wide ({hd_wide}) must be even for RoPE"
+
+            logger.info(
+                f"Heterogeneous attention:\n"
+                f"  deep: {nq_deep}q/{nkv_deep}kv heads, head_dim={hd_deep}, "
+                f"attn_dim={nq_deep*hd_deep}, ffn={ffn_deep}\n"
+                f"  wide: {nq_wide}q/{nkv_wide}kv heads, head_dim={hd_wide}, "
+                f"attn_dim={nq_wide*hd_wide}, ffn={ffn_wide}"
+            )
+
+        # ----- Build layer types -----
         layer_types_list = []
         if self.use_adaptive:
-            assert adaptive_config is not None, "adaptive_config must be provided if enable_adaptive is True"
-            if adaptive_config.layer_types is not None:
-                layer_types_list = adaptive_config.layer_types
+            if ac.layer_types is not None:
+                layer_types_list = ac.layer_types
                 if len(layer_types_list) != n_layer:
                     raise ValueError(f"layer_types length {len(layer_types_list)} must match n_layer {n_layer}")
             else:
-                has_wide = adaptive_config.wide_ffn_hidden > 0
+                has_wide = ffn_wide > 0
                 layer_types_list = ["dual" if has_wide else "loop"] * n_layer
 
+        # ----- Build layers -----
         layers = {}
         for layer_idx in range(n_layer):
             if self.use_adaptive:
                 l_type = layer_types_list[layer_idx]
-                narrow_block = create_block() if l_type in ["loop", "dual"] else None
-                wide_block = create_block(ffn_hidden_override=adaptive_config.wide_ffn_hidden) if l_type in ["wide", "dual"] else None
+                narrow_block = (
+                    create_block(n_hq=nq_deep, n_hkv=nkv_deep, hd=hd_deep, ffn_h=ffn_deep)
+                    if l_type in ["loop", "dual"] else None
+                )
+                wide_blk = (
+                    create_block(n_hq=nq_wide, n_hkv=nkv_wide, hd=hd_wide, ffn_h=ffn_wide)
+                    if l_type in ["wide", "dual"] else None
+                )
                 layers[str(layer_idx)] = AdaptiveRecursiveBlock(
                     block=narrow_block,
                     adaptive_config=adaptive_config,
                     n_embd=n_embd,
                     layer_idx=layer_idx,
                     n_layers=n_layer,
-                    wide_block=wide_block,
+                    wide_block=wide_blk,
                     layer_type=l_type,
                 )
             else:
@@ -918,12 +806,12 @@ class GPT2LLM(NNModel):
             self.transformer.wte.weight = self.transformer.lm_head.weight
 
     # ------------------------------------------------------------------
-    # Metrics bag construction
+    # Metrics
     # ------------------------------------------------------------------
 
     _VECTOR_KEYS = [
         "step_halt_probs", "step_halt_prob_std", "step_halt_prob_min", "step_halt_prob_max",
-        "step_changes", "loop_scales", "prob_remain_max", "prob_remain_mean", "injection_alpha",
+        "step_changes", "loop_scales", "prob_remain_max", "prob_remain_mean",
     ]
 
     _PER_LAYER_SCALAR_KEYS = [
@@ -960,7 +848,6 @@ class GPT2LLM(NNModel):
             "expected_steps": avg_ponder_cost,
             "normalized_steps": normalized_steps,
         }
-
         per_layer_scalars = {
             "ponder_cost": torch.stack([m["expected_steps"].mean() for m in all_layer_metrics]),
         }
@@ -1011,7 +898,6 @@ class GPT2LLM(NNModel):
         sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
         for layer_key in sorted_keys:
             layer_module = self.transformer.h[layer_key]
-
             if self.use_adaptive:
                 h, layer_metrics = layer_module(h, token_ids=inputs)
                 total_ponder_cost = total_ponder_cost + layer_metrics["expected_steps"].mean()
@@ -1031,8 +917,14 @@ class GPT2LLM(NNModel):
 
         if not self.training:
             metrics_bag["eval_tokens"] = inputs.detach()
-            metrics_bag["eval_gate_deep_probs"] = torch.stack([m.get("gate_deep_token_probs", torch.ones_like(inputs, dtype=logits.dtype)) for m in all_layer_metrics])
-            metrics_bag["eval_gate_wide_probs"] = torch.stack([m.get("gate_wide_token_probs", torch.zeros_like(inputs, dtype=logits.dtype)) for m in all_layer_metrics])
+            metrics_bag["eval_gate_deep_probs"] = torch.stack([
+                m.get("gate_deep_token_probs", torch.ones_like(inputs, dtype=logits.dtype))
+                for m in all_layer_metrics
+            ])
+            metrics_bag["eval_gate_wide_probs"] = torch.stack([
+                m.get("gate_wide_token_probs", torch.zeros_like(inputs, dtype=logits.dtype))
+                for m in all_layer_metrics
+            ])
 
         return {
             "logits": logits,
@@ -1046,7 +938,7 @@ class GPT2LLM(NNModel):
 # =============================================================================
 
 def manual_scaled_dot_product_attention(
-    query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None
+    query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None,
 ):
     L, S = query.size(-2), key.size(-2)
     scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale

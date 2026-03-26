@@ -99,17 +99,18 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
         }
         metrics = {}
         for metric_key, metric_values in eval_result.metrics.items():
-            if metric_key in ["eval_tokens", "eval_gate_probs"]:
+            # Ensure we skip the new decoupled keys so they don't break standard numeric logging
+            if metric_key in ["eval_tokens", "eval_gate_probs", "eval_gate_deep_probs", "eval_gate_wide_probs"]:
                 continue
             metrics[f"{eval_result.dataloader_tag} {metric_key}"] = metric_values.value
 
         # TODO step is not semantically correct here. Need to check if we can rename step to num_samples
         wandb.log(
             data=losses, step=eval_result.num_train_steps_done
-        )  # (eval_result.train_local_sample_id + 1) * self.num_ranks)
+        )
         wandb.log(
             data=metrics, step=eval_result.num_train_steps_done
-        )  # (eval_result.train_local_sample_id + 1) * self.num_ranks)
+        )
         throughput_metrics = {
             f"{eval_result.dataloader_tag} {metric_key}": metric_values.value
             for metric_key, metric_values in eval_result.throughput_metrics.items()
@@ -117,43 +118,45 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
 
         wandb.log(data=throughput_metrics, step=eval_result.num_train_steps_done)
         
-        if "eval_tokens" in eval_result.metrics and "eval_gate_probs" in eval_result.metrics and self.tokenizer is not None:
+        # --- HTML VISUALIZATION ---
+        has_tokens = "eval_tokens" in eval_result.metrics
+        has_deep = "eval_gate_deep_probs" in eval_result.metrics
+        has_wide = "eval_gate_wide_probs" in eval_result.metrics
+
+        if has_tokens and (has_deep or has_wide) and self.tokenizer is not None:
             tokens = eval_result.metrics["eval_tokens"].value
-            gates = eval_result.metrics["eval_gate_probs"].value
+            gates_deep = eval_result.metrics["eval_gate_deep_probs"].value if has_deep else None
+            gates_wide = eval_result.metrics["eval_gate_wide_probs"].value if has_wide else None
             
-            # tokens: [batch_size, seq_len]
-            # gates: [num_layers, batch_size, seq_len]
-            
-            # We will create ONE single HTML string to prevent UI lag compared to a table
-            master_html_parts = [
-                "<div style='font-family: monospace; font-size: 14px; line-height: 1.5; color: black; background: #f9f9f9; padding: 15px;'>",
-                "<h3 style='margin-top: 0;'>Token Gate Activation Heatmap</h3>",
-                "<p><strong>Scale:</strong> <span style='color:blue; font-weight: bold;'>Blue (0.0 wide path)</span> ➝ White (0.5) ➝ <span style='color:red; font-weight: bold;'>Red (1.0 deep path)</span></p>\n<hr/>"
-            ]
-            
+            # Find number of layers dynamically based on whichever gate is present
+            if gates_deep is not None:
+                num_layers = gates_deep.shape[0]
+            else:
+                num_layers = gates_wide.shape[0]
+
             batch_size = tokens.shape[0]
-            num_layers = gates.shape[0]
             seq_len = tokens.shape[1]
             
-            # Calculate color mapping: blue (0) -> white (0.5) -> red (1.0)
-            def get_color(prob):
-                if prob < 0.5:
-                    f = prob / 0.5
-                    r = int(f * 255)
-                    g = int(f * 255)
-                    b = 255
-                else:
-                    f = (prob - 0.5) / 0.5
-                    r = 255
-                    g = int((1.0 - f) * 255)
-                    b = int((1.0 - f) * 255)
-                return f"rgb({r}, {g}, {b})"
+            master_html_parts = [
+                "<div style='font-family: monospace; font-size: 14px; line-height: 1.5; color: black; background: #f9f9f9; padding: 15px;'>",
+                "<h3 style='margin-top: 0;'>Decoupled Gate Activation Heatmaps</h3>",
+                "<p style='margin: 5px 0;'><strong>Deep Track:</strong> White (0.0) ➝ <span style='color:red; font-weight: bold;'>Red (1.0)</span></p>",
+                "<p style='margin: 5px 0;'><strong>Wide Track:</strong> White (0.0) ➝ <span style='color:blue; font-weight: bold;'>Blue (1.0)</span></p>\n<hr/>"
+            ]
+            
+            # Color mapping: White to Red for Deep path
+            def get_deep_color(prob):
+                v = int((1.0 - prob) * 255)
+                return f"rgb(255, {v}, {v})"
+
+            # Color mapping: White to Blue for Wide path
+            def get_wide_color(prob):
+                v = int((1.0 - prob) * 255)
+                return f"rgb({v}, {v}, 255)"
             
             for b_idx in range(batch_size):
                 seq_tokens = tokens[b_idx].tolist()
                 
-                # We decode each token individually to maintain exact mapping
-                # Handle spaces carefully if we can
                 token_texts = []
                 for t_idx in range(seq_len):
                     try:
@@ -164,33 +167,47 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
                     
                 master_html_parts.append(f"<h2>Example {b_idx + 1}</h2>")
                     
-                # Add an average row AT THE TOP for quick viewing
-                avg_html_parts = []
-                for t_idx in range(seq_len):
-                    prob = gates[:, b_idx, t_idx].mean().item()
-                    color = get_color(prob)
-                    avg_html_parts.append(
-                        f"<span style='background-color: {color}; "
-                        f"padding: 2px; border-radius: 3px;'>{token_texts[t_idx]}</span>"
-                    )
-                master_html_parts.append("<strong>Average across all layers:</strong><br/><div style='margin-bottom: 20px; line-height: 2.0;'>")
-                master_html_parts.append("".join(avg_html_parts))
+                # --- Average across all layers ---
+                master_html_parts.append("<strong>Average across all layers:</strong><br/><div style='margin-bottom: 20px;'>")
+                
+                if gates_deep is not None:
+                    master_html_parts.append("<div style='line-height: 2.0;'><strong>Deep: </strong>")
+                    for t_idx in range(seq_len):
+                        prob = gates_deep[:, b_idx, t_idx].mean().item()
+                        color = get_deep_color(prob)
+                        master_html_parts.append(f"<span style='background-color: {color}; padding: 2px; border-radius: 3px;'>{token_texts[t_idx]}</span>")
+                    master_html_parts.append("</div>")
+
+                if gates_wide is not None:
+                    master_html_parts.append("<div style='line-height: 2.0;'><strong>Wide: </strong>")
+                    for t_idx in range(seq_len):
+                        prob = gates_wide[:, b_idx, t_idx].mean().item()
+                        color = get_wide_color(prob)
+                        master_html_parts.append(f"<span style='background-color: {color}; padding: 2px; border-radius: 3px;'>{token_texts[t_idx]}</span>")
+                    master_html_parts.append("</div>")
+                
                 master_html_parts.append("</div>")
 
+                # --- Individual Layers ---
                 for l_idx in range(num_layers):
-                    # We render the text with HTML
-                    html_parts = []
-                    for t_idx in range(seq_len):
-                        prob = gates[l_idx, b_idx, t_idx].item()
-                        color = get_color(prob)
-                        
-                        html_parts.append(
-                            f"<span style='background-color: {color}; "
-                            f"padding: 2px; border-radius: 3px;'>{token_texts[t_idx]}</span>"
-                        )
+                    master_html_parts.append(f"<strong>Layer {l_idx}:</strong><br/><div style='margin-bottom: 15px;'>")
                     
-                    master_html_parts.append(f"<strong>Layer {l_idx}:</strong><br/><div style='margin-bottom: 15px; line-height: 2.0;'>")
-                    master_html_parts.append("".join(html_parts))
+                    if gates_deep is not None:
+                        master_html_parts.append("<div style='line-height: 2.0;'><strong>Deep: </strong>")
+                        for t_idx in range(seq_len):
+                            prob = gates_deep[l_idx, b_idx, t_idx].item()
+                            color = get_deep_color(prob)
+                            master_html_parts.append(f"<span style='background-color: {color}; padding: 2px; border-radius: 3px;'>{token_texts[t_idx]}</span>")
+                        master_html_parts.append("</div>")
+
+                    if gates_wide is not None:
+                        master_html_parts.append("<div style='line-height: 2.0;'><strong>Wide: </strong>")
+                        for t_idx in range(seq_len):
+                            prob = gates_wide[l_idx, b_idx, t_idx].item()
+                            color = get_wide_color(prob)
+                            master_html_parts.append(f"<span style='background-color: {color}; padding: 2px; border-radius: 3px;'>{token_texts[t_idx]}</span>")
+                        master_html_parts.append("</div>")
+                        
                     master_html_parts.append("</div>")
                 
                 master_html_parts.append("<hr/>")

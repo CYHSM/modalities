@@ -219,15 +219,18 @@ class Evaluator:
                 )
                 
                 hc_eval_tokens = None
-                hc_eval_gate_probs = None
+                hc_eval_gate_deep_probs = None
+                hc_eval_gate_wide_probs = None
                 
                 if hasattr(loss_fun, "get_metrics"):
                     m_bag = loss_fun.get_metrics().get("metrics")
                     if m_bag is not None:
                         if "eval_tokens" in m_bag:
                             hc_eval_tokens = m_bag["eval_tokens"].detach().cpu()
-                        if "eval_gate_probs" in m_bag:
-                            hc_eval_gate_probs = m_bag["eval_gate_probs"].detach().cpu()
+                        if "eval_gate_deep_probs" in m_bag:
+                            hc_eval_gate_deep_probs = m_bag["eval_gate_deep_probs"].detach().cpu()
+                        if "eval_gate_wide_probs" in m_bag:
+                            hc_eval_gate_wide_probs = m_bag["eval_gate_wide_probs"].detach().cpu()
                             
                 hc_evaluation_result = EvaluationResultBatch(
                     losses={loss_fun.tag: ResultItem(hardcoded_loss if hardcoded_loss is not None else torch.zeros(1), decimal_places=2)},
@@ -239,8 +242,10 @@ class Evaluator:
                 
                 if hc_eval_tokens is not None:
                     hc_evaluation_result.metrics["eval_tokens"] = ResultItem(hc_eval_tokens)
-                if hc_eval_gate_probs is not None:
-                    hc_evaluation_result.metrics["eval_gate_probs"] = ResultItem(hc_eval_gate_probs)
+                if hc_eval_gate_deep_probs is not None:
+                    hc_evaluation_result.metrics["eval_gate_deep_probs"] = ResultItem(hc_eval_gate_deep_probs)
+                if hc_eval_gate_wide_probs is not None:
+                    hc_evaluation_result.metrics["eval_gate_wide_probs"] = ResultItem(hc_eval_gate_wide_probs)
                     
                 Evaluator._publish_evaluation_result(
                     evaluation_result_publisher=self.evaluation_result_publisher,

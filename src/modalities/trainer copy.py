@@ -103,55 +103,6 @@ def create_ponder_scheduler(
 
 
 # =============================================================================
-# MoE Bias Updater (batched all-reduce across ranks)
-# =============================================================================
-
-def _collect_expert_routers(model_parts: list[FSDPX]) -> list:
-    """Find all ExpertRouter modules across model parts."""
-    routers = []
-    for m in model_parts:
-        module = m.module if hasattr(m, "module") else m
-        for sub in module.modules():
-            if hasattr(sub, "update_bias") and hasattr(sub, "expert_counts") and hasattr(sub, "total_tokens"):
-                routers.append(sub)
-    return routers
-
-
-def update_moe_biases(model_parts: list[FSDPX]) -> None:
-    """
-    Sync expert usage counts across all distributed ranks via a single
-    batched all-reduce, then update each router's bias.
-
-    This avoids N small all-reduces (one per router) and ensures every rank
-    sees the global token distribution before adjusting routing biases.
-    """
-    routers = _collect_expert_routers(model_parts)
-    if not routers:
-        return
-
-    # --- Pack all counts + tokens into one flat tensor for a single all-reduce ---
-    all_counts = torch.cat([r.expert_counts for r in routers])           # (sum of n_experts,)
-    all_tokens = torch.stack([r.total_tokens.reshape(1) for r in routers]).squeeze(-1)  # (n_routers,)
-    sync_tensor = torch.cat([all_counts, all_tokens])
-
-    if dist.is_initialized():
-        dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM)
-
-    # --- Unpack synced values back into each router's buffers ---
-    counts_offset = 0
-    tokens_offset = all_counts.numel()
-    for i, router in enumerate(routers):
-        n = router.n_experts
-        router.expert_counts.copy_(sync_tensor[counts_offset : counts_offset + n])
-        router.total_tokens.fill_(sync_tensor[tokens_offset + i].item())
-        counts_offset += n
-
-    # --- Now each router sees the global picture; update biases ---
-    for router in routers:
-        router.update_bias()
-
-
-# =============================================================================
 # Generic Metrics Accumulator
 # =============================================================================
 # Handles all three metric categories without knowing specific metric names.
@@ -414,10 +365,6 @@ class Trainer:
             gradient_norm_score = self.gradient_clipper.clip_gradients()
             optimizer.step()
             scheduler.step()
-
-            # --- Update MoE expert routing biases (batched all-reduce) ---
-            update_moe_biases(model_parts)
-
             optimizer.zero_grad()
             step_performed = True
             gradient_norm_score = gradient_norm_score.detach().cpu()

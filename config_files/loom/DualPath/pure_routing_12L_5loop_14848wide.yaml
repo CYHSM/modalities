@@ -10,11 +10,12 @@ settings:
     global_rank: ${cuda_env:RANK}
     world_size: ${cuda_env:WORLD_SIZE}
   paths:
-    checkpoint_saving_path: /raid/s3/opengptx/mfrey/loop/checkpoints
+    checkpoint_saving_path: /raid/s3/opengptx/mfrey/loop/checkpoints/loop5_512deep_11776wide_LOG
+    experiments_root_path: /raid/s3/opengptx/mfrey/loop/experiments
   intervals:
     training_log_interval_in_steps: 1
     checkpointing_interval_in_steps: 5000
-    evaluation_interval_in_steps: 100
+    evaluation_interval_in_steps: 1000
   consistency_enforcement:
     enforce_tokens_per_step_consistency: true
     enforce_last_step_logged: false
@@ -979,7 +980,7 @@ fsdp_model:
     mixed_precision_settings:
       param_dtype: BF_16
       reduce_dtype: BF_16
-    block_names: [MoETransformerLayer]
+    block_names: [AdaptiveRecursiveBlock]
 
 compiled_model:
   component_key: model
@@ -988,7 +989,7 @@ compiled_model:
     model:
       instance_key: model_raw
       pass_type: BY_REFERENCE
-    block_names: [MoETransformerLayer]
+    block_names: [AdaptiveRecursiveBlock]
 
 model_raw:
   component_key: model
@@ -1004,7 +1005,7 @@ model_raw:
     n_layer: 12
     n_head_q: 12
     n_head_kv: 12
-    ffn_hidden: 3072
+    ffn_hidden: 64 # not used 
     n_embd: 768
     dropout: 0.0
     bias: false
@@ -1039,10 +1040,13 @@ model_raw:
         normalized_shape: 768
         eps: 1.0e-05
     adaptive_config:
-      use_moe: true
+      enable_adaptive: true
+      max_loops: 5
+      halt_threshold: 1.00
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
-      load_balance_weight: 0.0
+      wide_ffn_hidden: 14848
+      wide_ffn_gate_init_bias: 0.0
 
 lr_scheduler:
   component_key: scheduler
@@ -1104,6 +1108,17 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: moe_approx_lambda0
+    experiment_id: pure_routing_12L_5loop_14848wide
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}
+    tokenizer:
+      instance_key: tokenizer
+      pass_type: BY_REFERENCE
+
+tokenizer:
+  component_key: tokenizer
+  variant_key: pretrained_hf_tokenizer
+  config:
+    pretrained_model_name_or_path: openai-community/gpt2
+    padding: false
+    truncation: false

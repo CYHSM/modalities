@@ -1005,7 +1005,7 @@ model_raw:
     n_layer: 12
     n_head_q: 12
     n_head_kv: 12
-    ffn_hidden: 512
+    ffn_hidden: 1600
     n_embd: 768
     dropout: 0.0
     bias: false
@@ -1013,14 +1013,13 @@ model_raw:
       qkv_transforms:
         - type_hint: RotaryTransform
           config:
-            n_embd: ${model_raw.config.n_embd}
-            n_head: ${model_raw.config.n_head_q}
+            head_dim: 64
             seq_length_dim: -2
             base_freq: 500000
       qk_norm_config:
         norm_type: pytorch_rms_norm
         config:
-          normalized_shape: 64 # n_embd / n_head_q
+          normalized_shape: 64
           eps: 1.0e-05
     attention_implementation: pytorch_flash
     activation_type: swiglu
@@ -1045,8 +1044,16 @@ model_raw:
       halt_threshold: 1.00
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
-      wide_ffn_hidden: 11776
+      n_head_q_deep: 4
+      n_head_kv_deep: 4
+      head_dim_deep: 64
+      ffn_deep: 1600
+      n_head_q_wide: 16
+      n_head_kv_wide: 4
+      head_dim_wide: 64
+      ffn_wide: 14336
       wide_ffn_gate_init_bias: 0.0
+      deep_gate_init_bias: 0.0
 
 lr_scheduler:
   component_key: scheduler
@@ -1108,7 +1115,7 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop5_512deep_11776wide
+    experiment_id: loop5_QK_deep1600_wide14336_qd4kvd4dim64_qw16kvw4dim64
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}
     tokenizer:

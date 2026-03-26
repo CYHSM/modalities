@@ -1002,10 +1002,10 @@ model_raw:
     sequence_length: ${settings.step_profile.sequence_length}
     prediction_key: ${loss_fn.config.prediction_key}
     vocab_size: 50304
-    n_layer: 12
+    n_layer: 20
     n_head_q: 12
     n_head_kv: 12
-    ffn_hidden: 512
+    ffn_hidden: 64 # not used 
     n_embd: 768
     dropout: 0.0
     bias: false
@@ -1041,11 +1041,11 @@ model_raw:
         eps: 1.0e-05
     adaptive_config:
       enable_adaptive: true
-      max_loops: 5
+      max_loops: 3
       halt_threshold: 1.00
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
-      wide_ffn_hidden: 11776
+      wide_ffn_hidden: 8704
       wide_ffn_gate_init_bias: 0.0
 
 lr_scheduler:
@@ -1108,7 +1108,7 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop5_512deep_11776wide
+    experiment_id: pure_routing_20L_3loop_8704wide
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}
     tokenizer:
