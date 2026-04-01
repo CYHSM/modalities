@@ -1047,11 +1047,10 @@ model_raw:
       scheduler_type: "constant"
       wide_ffn_hidden: 11776
       wide_ffn_gate_init_bias: 0.0
-      loop_input_injection: false
-      enrich_router: false
+      loop_input_injection: true
+      enrich_router: true
       enrich_gate: true
-      gate_input_norm: true
-      gate_mlp_proj: false
+      single_gate: false
 lr_scheduler:
   component_key: scheduler
   variant_key: onecycle_lr
@@ -1112,7 +1111,7 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop5_512deep_11776wide_nomix_enrich_gate_inputnorm
+    experiment_id: loop5_512deep_11776wide_nomix_alltrue_nosingle
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}
     tokenizer:

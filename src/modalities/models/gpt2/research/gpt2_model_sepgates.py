@@ -56,7 +56,7 @@ class AdaptiveComputationConfig(BaseModel):
     ponder_penalty_weight: float = 0.00
     wide_ffn_hidden: int = 0
     wide_ffn_gate_init_bias: float = 0.0
-    deep_gate_init_bias: float = 0.0
+    deep_gate_init_bias: float = 0.0  # Added for decoupled gate symmetry
     scheduler_type: str = "constant"
     layer_types: Optional[list[str]] = None
 
@@ -326,62 +326,6 @@ class TransformerMLP(nn.Module):
         return self.dropout(self.c_proj(self.gelu(self.c_fc(x))))
 
 
-# ── NEW: AdaLN-Zero Modulator ──────────────────────────────────────────
-# Produces (γ_attn, β_attn, α_attn, γ_ffn, β_ffn, α_ffn) per token
-# from the wide path output + iteration embedding.
-# α gates are zero-initialized so each sub-block starts as identity.
-# =======================================================================
-
-class AdaLNZeroModulator(nn.Module):
-    """
-    Given a conditioning vector (wide_out concatenated with iteration embedding),
-    produce 6 * n_embd modulation parameters:
-        γ_attn, β_attn, α_attn  (for attention sub-block)
-        γ_ffn,  β_ffn,  α_ffn   (for FFN sub-block)
-    
-    Zero-initialization of α ensures each sub-block starts as identity,
-    matching DiT's proven training dynamics.
-    """
-
-    def __init__(self, n_embd: int, max_loops: int):
-        super().__init__()
-        self.n_embd = n_embd
-        # Iteration embedding: small learned embedding per loop step
-        self.iteration_embed = nn.Embedding(max_loops, n_embd)
-        # Conditioning MLP: [wide_out; iter_embed] -> 6 * n_embd params
-        self.mlp = nn.Sequential(
-            nn.LayerNorm(n_embd * 2),
-            nn.SiLU(),
-            nn.Linear(n_embd * 2, 6 * n_embd, bias=True),
-        )
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        # Zero-init the final linear so all modulations start at identity
-        nn.init.zeros_(self.mlp[-1].weight)
-        nn.init.zeros_(self.mlp[-1].bias)
-
-    def forward(self, wide_out: torch.Tensor, step: int):
-        """
-        Args:
-            wide_out: (B, T, D) — wide path's hidden states
-            step: int — current loop iteration index
-        Returns:
-            Tuple of 6 tensors, each (B, T, D):
-            (γ_attn, β_attn, α_attn, γ_ffn, β_ffn, α_ffn)
-        """
-        B, T, D = wide_out.shape
-        # Broadcast iteration embedding to (B, T, D)
-        iter_emb = self.iteration_embed.weight[step]  # (D,)
-        iter_emb = iter_emb.unsqueeze(0).unsqueeze(0).expand(B, T, -1)  # (B, T, D)
-        # Concatenate and project
-        cond = torch.cat([wide_out, iter_emb], dim=-1)  # (B, T, 2D)
-        params = self.mlp(cond)  # (B, T, 6D)
-        # Split into 6 modulation vectors
-        γ_attn, β_attn, α_attn, γ_ffn, β_ffn, α_ffn = params.chunk(6, dim=-1)
-        return γ_attn, β_attn, α_attn, γ_ffn, β_ffn, α_ffn
-
-
 class GPT2Block(nn.Module):
     def __init__(
         self, n_embd, bias, n_head_q, n_head_kv, activation_type, attention_impl,
@@ -412,34 +356,9 @@ class GPT2Block(nn.Module):
         if ffn_hidden != expected:
             logger.warning(f"Expected ffn_hidden={expected}, got n_embd={n_embd}, ffn_hidden={ffn_hidden}.")
 
-    def forward(self, x, scale=1.0, adaln_modulation=None):
-        """
-        Args:
-            x: (B, T, D)
-            scale: scalar multiplier for residual (from loop_scales)
-            adaln_modulation: None or tuple of 6 tensors
-                (γ_attn, β_attn, α_attn, γ_ffn, β_ffn, α_ffn), each (B, T, D)
-        
-        When adaln_modulation is provided, scale and α are combined:
-            scale controls global per-iteration magnitude (training stability),
-            α controls per-token, content-aware gating (wide→deep signal).
-        """
-        if adaln_modulation is not None:
-            γ_attn, β_attn, α_attn, γ_ffn, β_ffn, α_ffn = adaln_modulation
-
-            # Attention sub-block: scale * α gives combined gating
-            x_norm = self.attention_norm(x)
-            x_norm = (1.0 + γ_attn) * x_norm + β_attn
-            x = x + scale * α_attn * self.attn(x_norm)
-
-            # FFN sub-block: scale * α gives combined gating
-            x_norm = self.ffn_norm(x)
-            x_norm = (1.0 + γ_ffn) * x_norm + β_ffn
-            x = x + scale * α_ffn * self.mlp(x_norm)
-        else:
-            x = x + scale * self.attn(self.attention_norm(x))
-            x = x + scale * self.mlp(self.ffn_norm(x))
-
+    def forward(self, x, scale=1.0):
+        x = x + scale * self.attn(self.attention_norm(x))
+        x = x + scale * self.mlp(self.ffn_norm(x))
         return x
 
 
@@ -547,10 +466,8 @@ class DecoupledDualPathGate(nn.Module):
         blended = gate_deep * h_deep_out + gate_wide * h_wide_out
         return blended, gate_deep, gate_wide
 
-
 # =============================================================================
 # Adaptive Recursive Block (Dual Full-Block Paths)
-# ── MODIFIED: AdaLN-Zero conditioning added for dual layers ─────────────
 # =============================================================================
 
 class AdaptiveRecursiveBlock(nn.Module):
@@ -586,14 +503,10 @@ class AdaptiveRecursiveBlock(nn.Module):
 
         if layer_type == "dual":
             self.dual_gate = DecoupledDualPathGate(
-                n_embd=n_embd,
+                n_embd=n_embd, 
                 init_bias_deep=adaptive_config.deep_gate_init_bias,
                 init_bias_wide=adaptive_config.wide_ffn_gate_init_bias
             )
-
-        # AdaLN-Zero modulator: always active for dual layers
-        if layer_type == "dual" and self.has_wide_path and self.has_loop_path:
-            self.adaln_modulator = AdaLNZeroModulator(n_embd, self.max_loops)
 
     def forward(
         self, x: torch.Tensor, token_ids: torch.Tensor = None,
@@ -602,23 +515,7 @@ class AdaptiveRecursiveBlock(nn.Module):
         device = x.device
 
         # =================================================================
-        # ── CHANGED ORDER: Wide path FIRST (needed for AdaLN-Zero) ──────
-        # When AdaLN-Zero is active, wide must run before the deep loop
-        # so its output can condition each iteration. When inactive, order
-        # doesn't matter (they read from the same x independently).
-        # =================================================================
-
-        # 1) Capacity path: wide block, single pass
-        if self.has_wide_path:
-            wide_scale_val = F.softplus(self.wide_scale)
-            h_wide = self.wide_block(x, scale=wide_scale_val)
-        else:
-            h_wide = torch.zeros_like(x)
-            wide_scale_val = torch.tensor(0.0, device=device)
-
-        # =================================================================
-        # 2) Compute path: full block looped with ACT
-        #    ── MODIFIED: pass AdaLN-Zero modulation into each iteration ──
+        # 1) Compute path: full block looped with ACT
         # =================================================================
         state = HaltingState.init(B, T, D, device=device, dtype=x.dtype)
         metrics = StepMetrics(self.max_loops, device)
@@ -634,13 +531,7 @@ class AdaptiveRecursiveBlock(nn.Module):
                 scale = F.softplus(self.loop_scales[step])
                 metrics.log("loop_scale", scale.detach())
                 h_prev = h_loop
-
-                # AdaLN-Zero modulated forward with loop_scales
-                if self.layer_type == "dual":
-                    adaln_params = self.adaln_modulator(h_wide, step)
-                    h_loop = self.block(h_loop, scale=scale, adaln_modulation=adaln_params)
-                else:
-                    h_loop = self.block(h_loop, scale=scale)
+                h_loop = self.block(h_loop, scale=scale)
 
                 halt_prob = self.router(h_loop, step_normalized=step / step_denom)
                 state.update(h_loop, halt_prob, step)
@@ -651,7 +542,7 @@ class AdaptiveRecursiveBlock(nn.Module):
                 metrics.log("halt_prob_std", halt_prob.detach().std())
                 metrics.log("halt_prob_min", halt_prob.detach().min())
                 metrics.log("halt_prob_max", halt_prob.detach().max())
-                metrics.log("rel_change", rel_change.mean())
+                metrics.log("rel_change", rel_change.mean().detach())
                 metrics.log("prob_remain_max", state.prob_remain.max().detach())
                 metrics.log("prob_remain_mean", state.prob_remain.mean().detach())
 
@@ -664,7 +555,17 @@ class AdaptiveRecursiveBlock(nn.Module):
             frac_alive = torch.tensor(0.0, device=device)
 
         # =================================================================
-        # 3) Gating and Output — operate on DELTAS, preserve residual
+        # 2) Capacity path: wide block, single pass
+        # =================================================================
+        if self.has_wide_path:
+            wide_scale_val = F.softplus(self.wide_scale)
+            h_wide = self.wide_block(x, scale=wide_scale_val)
+        else:
+            h_wide = torch.zeros_like(x)
+            wide_scale_val = torch.tensor(0.0, device=device)
+
+        # =================================================================
+        # 3) Gating and Output
         # =================================================================
         if self.layer_type == "dual":
             output, gate_deep, gate_wide = self.dual_gate(x, h_deep, h_wide)
@@ -699,6 +600,7 @@ class AdaptiveRecursiveBlock(nn.Module):
             "expected_steps_min": es.min(),
             "expected_steps_max": es.max(),
             
+            # Updated Gate Metrics
             "gate_deep_mean": gate_deep_d.mean(),
             "gate_deep_std": gate_deep_d.std(),
             "gate_deep_min": gate_deep_d.min(),
@@ -711,13 +613,8 @@ class AdaptiveRecursiveBlock(nn.Module):
             "gate_wide_token_probs": gate_wide_d.squeeze(-1),
             
             "deep_block_norm": h_deep.detach().norm(dim=-1).mean(),
-            "deep_delta_norm": (h_deep - x).detach().norm(dim=-1).mean(),
             "wide_block_norm": (
                 h_wide.detach().norm(dim=-1).mean()
-                if self.has_wide_path else torch.tensor(0.0, device=device)
-            ),
-            "wide_delta_norm": (
-                (h_wide - x).detach().norm(dim=-1).mean()
                 if self.has_wide_path else torch.tensor(0.0, device=device)
             ),
             "step_halt_probs": step_metrics.get("halt_prob_mean", torch.zeros(self.max_loops, device=device)),
@@ -754,20 +651,15 @@ class GPT2LLM(NNModel):
                 ".lm_head.weight",
                 ".router.linear.weight",
                 ".dual_gate.gate_proj.weight",
-                ".adaln_modulator.mlp",
-                ".dual_gate.proj_w2d.weight",       # <-- ADDED
-                ".dual_gate.proj_d2w.weight",       # <-- ADDED
+                ".dual_gate.proj_w2d.weight",   # new
+                ".dual_gate.proj_d2w.weight",   # new
             ],
-            "embedding": [".wte", ".wpe",
-                          ".adaln_modulator.iteration_embed",
-                          ],
+            "embedding": [".wte", ".wpe"],
             "layernorm": [
                 ".attention_norm", ".ffn_norm", ".lm_head_norm",
                 ".q_norm", ".k_norm",
-                ".loop_scales", ".wide_scale", ".dual_gate.gate_proj.bias",
-                ".router.linear.bias",
-                ".dual_gate.cross_scale_wide",      # <-- ADDED
-                ".dual_gate.cross_scale_deep",      # <-- ADDED
+                ".loop_scales", ".wide_scale", ".dual_gate.gate_proj.bias", # Skips bias decay
+                ".router.linear.bias", ".dual_gate.cross_scale",
             ],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
@@ -863,7 +755,7 @@ class GPT2LLM(NNModel):
         "expected_steps_mean", "expected_steps_std", "expected_steps_min", "expected_steps_max",
         "gate_deep_mean", "gate_deep_std", "gate_deep_min", "gate_deep_max",
         "gate_wide_mean", "gate_wide_std", "gate_wide_min", "gate_wide_max",
-        "deep_block_norm", "deep_delta_norm", "wide_block_norm", "wide_delta_norm",
+        "deep_block_norm", "wide_block_norm",
     ]
 
     def _build_metrics_bag(
@@ -963,6 +855,7 @@ class GPT2LLM(NNModel):
 
         if not self.training:
             metrics_bag["eval_tokens"] = inputs.detach()
+            # Split out both gate probs for eval logging
             metrics_bag["eval_gate_deep_probs"] = torch.stack([m.get("gate_deep_token_probs", torch.ones_like(inputs, dtype=logits.dtype)) for m in all_layer_metrics])
             metrics_bag["eval_gate_wide_probs"] = torch.stack([m.get("gate_wide_token_probs", torch.zeros_like(inputs, dtype=logits.dtype)) for m in all_layer_metrics])
 

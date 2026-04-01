@@ -10,7 +10,7 @@ settings:
     global_rank: ${cuda_env:RANK}
     world_size: ${cuda_env:WORLD_SIZE}
   paths:
-    checkpoint_saving_path: /raid/s3/opengptx/mfrey/loop/checkpoints/loop5_512deep_11776wide_LOG
+    checkpoint_saving_path: /raid/s3/opengptx/mfrey/loop/experiments
     experiments_root_path: /raid/s3/opengptx/mfrey/loop/experiments
   intervals:
     training_log_interval_in_steps: 1
@@ -907,7 +907,7 @@ checkpoint_saving:
       component_key: checkpoint_saving_execution
       variant_key: dcp
       config:
-        checkpoint_path: ${settings.paths.checkpoint_saving_path}
+        checkpoint_path: ${settings.paths.checkpoint_saving_path}/${settings.experiment_id}
         global_rank: ${settings.cuda_env.global_rank}
         experiment_id: ${settings.experiment_id}
 
@@ -1046,12 +1046,8 @@ model_raw:
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
       wide_ffn_hidden: 11776
-      wide_ffn_gate_init_bias: 0.0
-      loop_input_injection: false
-      enrich_router: false
-      enrich_gate: true
-      gate_input_norm: false
-      gate_mlp_proj: true
+      wide_gate_init_bias: 0.0
+      deep_gate_init_bias: 0.0
 lr_scheduler:
   component_key: scheduler
   variant_key: onecycle_lr
@@ -1112,7 +1108,7 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop5_512deep_11776wide_nomix_enrich_gate
+    experiment_id: loop5_512deep_11776wide_nomix_alltrue_new
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}
     tokenizer:

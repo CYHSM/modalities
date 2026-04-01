@@ -16,7 +16,7 @@ import queue  # Standard library queue
 # --- CONFIGURATION MATCHING YOUR CLI ---
 ENTITY = "cyhsm"
 PROJECT = "loom"
-CHECKPOINTS_ROOT = "/raid/s3/opengptx/mfrey/loop/checkpoints"
+CHECKPOINTS_ROOT = "/raid/s3/opengptx/mfrey/loop/experiments"
 BENCHMARK_ROOT = "/raid/s3/opengptx/mfrey/loop/benchmarks_128_allloops"
 
 # WANDB TOGGLE
@@ -42,64 +42,19 @@ RUN_IDS_TO_EVALUATE = None
 # 5. MAPPING (MANIFEST)
 EXPERIMENT_MANIFEST = [
     {
-        "name":   "loop5_768deep_10496wide",
-        "run_id": "jk9rn4ta",
-        "folder": "2026-02-23__21-53-18_d806f62fecec73fe",
+        "name":   "loop5_512deep_11776wide_final_nostats",
+        "run_id": "8tgqluhd",
+        "folder": "2026-03-30__16-01-06_bfa64a856144e693",
     },
     {
-        "name":   "loop5_512deep_11776wide",
-        "run_id": "9m8n6d4w",
-        "folder": "2026-02-23__21-51-33_922bebae894b2fdd",
+        "name":   "loop3_512deep_11776wide_final_nostats",
+        "run_id": "2pp7ukk5",
+        "folder": "2026-03-30__18-50-11_258b23923dc8724e",
     },
     {
-        "name":   "loop5_256deep_13056wide",
+        "name":   "loop7_512deep_11776wide_final_nostats",
         "run_id": "etgqjtc5",
-        "folder": "2026-02-23__21-51-20_a0f0e6adceb2281e",
-    },
-    {
-        "name":   "loop5_1024deep_9216wide",
-        "run_id": "9w2vnhse",
-        "folder": "2026-02-23__17-48-04_4c451e352f45d200",
-    },
-    {
-        "name":   "loop5_1536deep_6144wide",
-        "run_id": "qlu31qx2",
-        "folder": "2026-02-23__14-55-58_e8c5f45db58c21d8",
-    },
-    {
-        "name":   "loop5_1280deep_7680wide",
-        "run_id": "jlw1n0b7",
-        "folder": "2026-02-23__14-55-50_887b99efff8b1da0",
-    },
-    {
-        "name":   "loop5_2048deep_4096wide",
-        "run_id": "r69yv7jr",
-        "folder": "2026-02-23__14-51-13_9491920566c0f077",
-    },
-    {
-        "name":   "loop5_64deep_13952wide",
-        "run_id": "w0yltxx5",
-        "folder": "2026-02-26__21-35-45_3146de54898630db",
-    },
-    {
-        "name":   "loop5_128deep_13696wide",
-        "run_id": "50a2ib13",
-        "folder": "2026-02-26__21-31-13_00226372e9f9f401",
-    },
-    {
-        "name":   "loop5_512deep_11776wide_onepath",
-        "run_id": "jwwqmelj",
-        "folder": "2026-03-02__21-34-59_f1430be97349a6c7",
-    },
-    {
-        "name":   "loop3_512deep_11776wide",
-        "run_id": "rqvqbevf",
-        "folder": "2026-03-03__17-14-28_2b50b094916413cd",
-    },
-    {
-        "name":   "loop7_512deep_11776wide",
-        "run_id": "c49tbpsn",
-        "folder": "2026-03-03__19-20-14_6e2e8fa2b09a5a32",
+        "folder": "2026-03-31__10-47-04_cf0a36c1668ca9f8",
     },
 ]
 
@@ -364,7 +319,7 @@ if __name__ == "__main__":
     # ==========================================
     # 1. CONFIGURATION
     # ==========================================
-    GPU_IDS = [3,4,7]              # <--- LIST YOUR GPUS HERE
+    GPU_IDS = [2,3]              # <--- LIST YOUR GPUS HERE
     CONCURRENT_PER_GPU = 3    # <--- WORKERS PER GPU
 
     # ==========================================

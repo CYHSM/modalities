@@ -57,6 +57,20 @@ class RichResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]):
         raise NotImplementedError
 
 
+def _preference_color_rgb(deep_val: float, wide_val: float) -> str:
+    """Blue (wide) <-> White (neutral) <-> Red (deep).
+
+    pref = deep - wide, clamped to [-1, 1].
+    """
+    pref = max(-1.0, min(1.0, deep_val - wide_val))
+    if pref >= 0:
+        r, g, b = 255, int(255 * (1 - pref)), int(255 * (1 - pref))
+    else:
+        t = -pref
+        r, g, b = int(255 * (1 - t)), int(255 * (1 - t)), 255
+    return f"rgb({r}, {g}, {b})"
+
+
 class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]):
     """A subscriber object for the WandBEvaluationResult observable."""
 
@@ -99,8 +113,12 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
         }
         metrics = {}
         for metric_key, metric_values in eval_result.metrics.items():
-            # Ensure we skip the new decoupled keys so they don't break standard numeric logging
-            if metric_key in ["eval_tokens", "eval_gate_probs", "eval_gate_deep_probs", "eval_gate_wide_probs"]:
+            # Skip visualization-only keys so they don't break standard numeric logging
+            if metric_key in [
+                "eval_tokens", "eval_gate_probs",
+                "eval_gate_deep_probs", "eval_gate_wide_probs",
+                "eval_expected_steps",
+            ]:
                 continue
             metrics[f"{eval_result.dataloader_tag} {metric_key}"] = metric_values.value
 
@@ -117,7 +135,7 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
         }
 
         wandb.log(data=throughput_metrics, step=eval_result.num_train_steps_done)
-        
+
         # --- HTML VISUALIZATION ---
         has_tokens = "eval_tokens" in eval_result.metrics
         has_deep = "eval_gate_deep_probs" in eval_result.metrics
@@ -127,7 +145,7 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
             tokens = eval_result.metrics["eval_tokens"].value
             gates_deep = eval_result.metrics["eval_gate_deep_probs"].value if has_deep else None
             gates_wide = eval_result.metrics["eval_gate_wide_probs"].value if has_wide else None
-            
+
             # Find number of layers dynamically based on whichever gate is present
             if gates_deep is not None:
                 num_layers = gates_deep.shape[0]
@@ -136,40 +154,40 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
 
             batch_size = tokens.shape[0]
             seq_len = tokens.shape[1]
-            
+
             master_html_parts = [
                 "<div style='font-family: monospace; font-size: 14px; line-height: 1.5; color: black; background: #f9f9f9; padding: 15px;'>",
                 "<h3 style='margin-top: 0;'>Decoupled Gate Activation Heatmaps</h3>",
                 "<p style='margin: 5px 0;'><strong>Deep Track:</strong> White (0.0) ➝ <span style='color:red; font-weight: bold;'>Red (1.0)</span></p>",
-                "<p style='margin: 5px 0;'><strong>Wide Track:</strong> White (0.0) ➝ <span style='color:blue; font-weight: bold;'>Blue (1.0)</span></p>\n<hr/>"
+                "<p style='margin: 5px 0;'><strong>Wide Track:</strong> White (0.0) ➝ <span style='color:blue; font-weight: bold;'>Blue (1.0)</span></p>",
+                "<p style='margin: 5px 0;'><strong>Preference:</strong> <span style='color:blue; font-weight: bold;'>Blue (wide)</span> ➝ White (neutral) ➝ <span style='color:red; font-weight: bold;'>Red (deep)</span></p>",
+                "<hr/>",
             ]
-            
-            # Color mapping: White to Red for Deep path
+
             def get_deep_color(prob):
                 v = int((1.0 - prob) * 255)
                 return f"rgb(255, {v}, {v})"
 
-            # Color mapping: White to Blue for Wide path
             def get_wide_color(prob):
                 v = int((1.0 - prob) * 255)
                 return f"rgb({v}, {v}, 255)"
-            
+
             for b_idx in range(batch_size):
                 seq_tokens = tokens[b_idx].tolist()
-                
+
                 token_texts = []
                 for t_idx in range(seq_len):
                     try:
                         token_text = self.tokenizer.decode([seq_tokens[t_idx]])
-                    except:
+                    except Exception:
                         token_text = str(seq_tokens[t_idx])
                     token_texts.append(token_text)
-                    
+
                 master_html_parts.append(f"<h2>Example {b_idx + 1}</h2>")
-                    
+
                 # --- Average across all layers ---
                 master_html_parts.append("<strong>Average across all layers:</strong><br/><div style='margin-bottom: 20px;'>")
-                
+
                 if gates_deep is not None:
                     master_html_parts.append("<div style='line-height: 2.0;'><strong>Deep: </strong>")
                     for t_idx in range(seq_len):
@@ -185,13 +203,22 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
                         color = get_wide_color(prob)
                         master_html_parts.append(f"<span style='background-color: {color}; padding: 2px; border-radius: 3px;'>{token_texts[t_idx]}</span>")
                     master_html_parts.append("</div>")
-                
+
+                if gates_deep is not None and gates_wide is not None:
+                    master_html_parts.append("<div style='line-height: 2.0;'><strong>Pref: </strong>")
+                    for t_idx in range(seq_len):
+                        deep_val = gates_deep[:, b_idx, t_idx].mean().item()
+                        wide_val = gates_wide[:, b_idx, t_idx].mean().item()
+                        color = _preference_color_rgb(deep_val, wide_val)
+                        master_html_parts.append(f"<span style='background-color: {color}; padding: 2px; border-radius: 3px;'>{token_texts[t_idx]}</span>")
+                    master_html_parts.append("</div>")
+
                 master_html_parts.append("</div>")
 
                 # --- Individual Layers ---
                 for l_idx in range(num_layers):
                     master_html_parts.append(f"<strong>Layer {l_idx}:</strong><br/><div style='margin-bottom: 15px;'>")
-                    
+
                     if gates_deep is not None:
                         master_html_parts.append("<div style='line-height: 2.0;'><strong>Deep: </strong>")
                         for t_idx in range(seq_len):
@@ -207,14 +234,23 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
                             color = get_wide_color(prob)
                             master_html_parts.append(f"<span style='background-color: {color}; padding: 2px; border-radius: 3px;'>{token_texts[t_idx]}</span>")
                         master_html_parts.append("</div>")
-                        
+
+                    if gates_deep is not None and gates_wide is not None:
+                        master_html_parts.append("<div style='line-height: 2.0;'><strong>Pref: </strong>")
+                        for t_idx in range(seq_len):
+                            deep_val = gates_deep[l_idx, b_idx, t_idx].item()
+                            wide_val = gates_wide[l_idx, b_idx, t_idx].item()
+                            color = _preference_color_rgb(deep_val, wide_val)
+                            master_html_parts.append(f"<span style='background-color: {color}; padding: 2px; border-radius: 3px;'>{token_texts[t_idx]}</span>")
+                        master_html_parts.append("</div>")
+
                     master_html_parts.append("</div>")
-                
+
                 master_html_parts.append("<hr/>")
-            
+
             master_html_parts.append("</div>")
             final_html = "".join(master_html_parts)
-            
+
             wandb.log({f"{eval_result.dataloader_tag} token_routing": wandb.Html(final_html)}, step=eval_result.num_train_steps_done)
 
 
@@ -238,7 +274,6 @@ class EvaluationResultToDiscSubscriber(MessageSubscriberIF[EvaluationResultBatch
         """
 
         def shallow_asdict(obj):
-            # Converts a dataclass to a dictionary without deep recursion.
             if not is_dataclass(obj):
                 raise TypeError("shallow_asdict() should be called on dataclass instances")
             return {f.name: getattr(obj, f.name) for f in fields(obj)}
@@ -264,7 +299,6 @@ class EvaluationResultToDiscSubscriber(MessageSubscriberIF[EvaluationResultBatch
         """Writes the evaluation result to the JSONL file if rank 0."""
         if torch.distributed.get_rank() == 0:
             eval_result = message.payload
-            # Convert the dataclass (including nested dataclasses) to a dictionary
             record_converted = EvaluationResultToDiscSubscriber._convert_evaluation_result_batch(eval_result)
             with self.output_file_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(record_converted) + "\n")

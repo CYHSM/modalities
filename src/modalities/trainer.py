@@ -35,7 +35,6 @@ from modalities.utils.typing_utils import FSDPX
 class ConstantPonderScheduler:
     def __init__(self, model_parts: list[FSDPX], constant_value: float = 0.0):
         self.constant_value = constant_value
-        # Unwrap FSDP if needed — config lives on the first model part
         first = model_parts[0]
         self.config_module = first.module if hasattr(first, "module") else first
 
@@ -88,7 +87,6 @@ def create_ponder_scheduler(
     num_target_steps: int,
     global_rank: int,
 ):
-    """Factory function — add new scheduler types here."""
     if scheduler_type == "constant":
         return ConstantPonderScheduler(model_parts=model_parts, constant_value=config_weight)
     elif scheduler_type == "random":
@@ -107,7 +105,6 @@ def create_ponder_scheduler(
 # =============================================================================
 
 def _collect_expert_routers(model_parts: list[FSDPX]) -> list:
-    """Find all ExpertRouter modules across model parts."""
     routers = []
     for m in model_parts:
         module = m.module if hasattr(m, "module") else m
@@ -118,26 +115,17 @@ def _collect_expert_routers(model_parts: list[FSDPX]) -> list:
 
 
 def update_moe_biases(model_parts: list[FSDPX]) -> None:
-    """
-    Sync expert usage counts across all distributed ranks via a single
-    batched all-reduce, then update each router's bias.
-
-    This avoids N small all-reduces (one per router) and ensures every rank
-    sees the global token distribution before adjusting routing biases.
-    """
     routers = _collect_expert_routers(model_parts)
     if not routers:
         return
 
-    # --- Pack all counts + tokens into one flat tensor for a single all-reduce ---
-    all_counts = torch.cat([r.expert_counts for r in routers])           # (sum of n_experts,)
-    all_tokens = torch.stack([r.total_tokens.reshape(1) for r in routers]).squeeze(-1)  # (n_routers,)
+    all_counts = torch.cat([r.expert_counts for r in routers])
+    all_tokens = torch.stack([r.total_tokens.reshape(1) for r in routers]).squeeze(-1)
     sync_tensor = torch.cat([all_counts, all_tokens])
 
     if dist.is_initialized():
         dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM)
 
-    # --- Unpack synced values back into each router's buffers ---
     counts_offset = 0
     tokens_offset = all_counts.numel()
     for i, router in enumerate(routers):
@@ -146,25 +134,68 @@ def update_moe_biases(model_parts: list[FSDPX]) -> None:
         router.total_tokens.fill_(sync_tensor[tokens_offset + i].item())
         counts_offset += n
 
-    # --- Now each router sees the global picture; update biases ---
     for router in routers:
         router.update_bias()
 
 
 # =============================================================================
-# Generic Metrics Accumulator
+# Per-Component Gradient Norms
 # =============================================================================
-# Handles all three metric categories without knowing specific metric names.
+
+def compute_component_gradient_norms(model_parts: list[FSDPX]) -> dict[str, torch.Tensor]:
+    """Compute gradient L2 norms grouped by model component."""
+    groups: dict[str, list[float]] = {
+        "router": [],
+        "gate": [],
+        "loop_scales": [],
+        "wide_scale": [],
+        "wide_block": [],
+        "deep_block_attn": [],
+        "deep_block_mlp": [],
+        "embedding": [],
+        "lm_head": [],
+    }
+
+    for part in model_parts:
+        module = part.module if hasattr(part, "module") else part
+        for name, param in module.named_parameters():
+            if param.grad is None:
+                continue
+            grad_sq_norm = param.grad.detach().float().norm().item() ** 2
+
+            if "router" in name:
+                groups["router"].append(grad_sq_norm)
+            elif "dual_gate" in name:
+                groups["gate"].append(grad_sq_norm)
+            elif "loop_scales" in name:
+                groups["loop_scales"].append(grad_sq_norm)
+            elif "wide_scale" in name:
+                groups["wide_scale"].append(grad_sq_norm)
+            elif "wide_block" in name:
+                groups["wide_block"].append(grad_sq_norm)
+            elif ".block." in name and "attn" in name:
+                groups["deep_block_attn"].append(grad_sq_norm)
+            elif ".block." in name and "mlp" in name:
+                groups["deep_block_mlp"].append(grad_sq_norm)
+            elif "wte" in name or "wpe" in name:
+                groups["embedding"].append(grad_sq_norm)
+            elif "lm_head" in name:
+                groups["lm_head"].append(grad_sq_norm)
+
+    result = {}
+    for group_name, sq_norms in groups.items():
+        if sq_norms:
+            result[f"grad_norm/{group_name}"] = torch.tensor(sum(sq_norms) ** 0.5)
+        else:
+            result[f"grad_norm/{group_name}"] = torch.tensor(0.0)
+    return result
+
+
+# =============================================================================
+# Generic Metrics Accumulator
 # =============================================================================
 
 class MetricsAccumulator:
-    """
-    Accumulates metrics from a MetricsBag across microbatches.
-
-    Scalars and per-layer scalars are summed and averaged.
-    Per-layer vectors are kept as last-batch snapshots only.
-    """
-
     def __init__(self):
         self.reset()
 
@@ -177,9 +208,6 @@ class MetricsAccumulator:
         self.count: int = 0
 
     def accumulate(self, loss_metrics: dict):
-        """
-        Accepts the dict returned by loss_fun.get_metrics().
-        """
         self.ce_loss_sum += loss_metrics["ce_loss"].item()
         self.ponder_loss_sum += loss_metrics["ponder_loss"].item()
         self.count += 1
@@ -188,25 +216,18 @@ class MetricsAccumulator:
         if bag is None:
             return
 
-        # Scalars
         for name, tensor in bag.get("scalars", {}).items():
             self.scalar_sums[name] = self.scalar_sums.get(name, 0.0) + tensor.item()
 
-        # Per-layer scalars
         for name, tensor in bag.get("per_layer_scalars", {}).items():
             if name not in self.per_layer_scalar_sums:
-                self.per_layer_scalar_sums[name] = torch.zeros_like(tensor)
-            self.per_layer_scalar_sums[name] += tensor
+                self.per_layer_scalar_sums[name] = torch.zeros_like(tensor, dtype=torch.float32)
+            self.per_layer_scalar_sums[name] += tensor.float()
 
-        # Per-layer vectors — just overwrite (last-batch snapshot)
         for name, tensor in bag.get("per_layer_vectors", {}).items():
             self.last_per_layer_vectors[name] = tensor
 
     def build_sync_tensor(self, device: torch.device) -> tuple[torch.Tensor, list[str], list[str], dict[str, int]]:
-        """
-        Packs all accumulated averages into a single flat tensor for one all-reduce.
-        Returns (tensor, scalar_names, per_layer_names, per_layer_sizes).
-        """
         if self.count == 0:
             return torch.zeros(2, device=device), [], [], {}
 
@@ -238,10 +259,6 @@ class MetricsAccumulator:
         per_layer_names: list[str],
         per_layer_sizes: dict[str, int],
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor]]:
-        """
-        Unpacks the all-reduced tensor back into named metrics.
-        Returns (ce_loss, ponder_loss, scalars_dict, per_layer_scalars_dict).
-        """
         idx = 0
         ce_loss = synced[idx]; idx += 1
         ponder_loss = synced[idx]; idx += 1
@@ -259,9 +276,7 @@ class MetricsAccumulator:
 
 
 # =============================================================================
-# Generic Metrics Formatter
-# =============================================================================
-# Converts synced metrics into the ResultItem dicts for W&B logging.
+# Metrics Formatter
 # =============================================================================
 
 def format_metrics(
@@ -271,17 +286,18 @@ def format_metrics(
     per_layer_scalars: dict[str, torch.Tensor],
     per_layer_vectors: dict[str, torch.Tensor],
     current_ponder_weight: float,
+    summary_only: bool = False,
 ) -> tuple[dict[str, ResultItem], dict[str, ResultItem]]:
-    """
-    Returns (losses_dict, metrics_dict) ready for EvaluationResultBatch.
+    """Format metrics for W&B logging.
 
-    W&B key hierarchy:
+    W&B key hierarchy (full mode, summary_only=False):
         adaptive/       — global scalars (ponder_weight, expected_steps, ...)
         summary/        — averages across all layers (and loops for vectors)
         layer_{i}/      — per-layer detail: scalars + per-loop vectors + loop averages
         loop_{j}/       — per-loop-step detail: averaged across all layers
 
-    This function never needs to change when new metrics are added in the model.
+    When summary_only=True (used during evaluation):
+        Only adaptive/ and summary/ are emitted.
     """
     losses = {
         "loss/ce_avg": ResultItem(ce_loss, decimal_places=2),
@@ -292,17 +308,18 @@ def format_metrics(
         "adaptive/ponder_weight": ResultItem(torch.tensor(current_ponder_weight), 4),
     }
 
-    # ---- adaptive/ : global scalars ----
+    # adaptive/ : global scalars
     for name, val in scalars.items():
         metrics[f"adaptive/{name}"] = ResultItem(val, 4)
 
-    # ---- per-layer scalars → layer_{i}/ + summary/ ----
+    # per-layer scalars → summary/ (always) + layer_{i}/ (full mode)
     for name, vals in per_layer_scalars.items():
         metrics[f"summary/{name}"] = ResultItem(vals.mean(), 4)
-        for i, v in enumerate(vals):
-            metrics[f"layer_{i}/{name}"] = ResultItem(v, 4)
+        if not summary_only:
+            for i, v in enumerate(vals):
+                metrics[f"layer_{i}/{name}"] = ResultItem(v, 4)
 
-    # ---- per-layer vectors → layer_{i}/ + loop_{j}/ + summary/ ----
+    # per-layer vectors → summary/ (always) + layer_{i}/ + loop_{j}/ (full mode)
     for name, tensor in per_layer_vectors.items():
         if tensor.numel() == 0:
             continue
@@ -312,15 +329,16 @@ def format_metrics(
         # summary/ : grand mean across all layers and loops
         metrics[f"summary/{name}"] = ResultItem(t.mean(), 4)
 
-        # layer_{i}/ : average across loops + per-loop detail
-        for i in range(n_layers):
-            metrics[f"layer_{i}/avg_{name}"] = ResultItem(t[i].mean(), 4)
-            for j in range(n_loops):
-                metrics[f"layer_{i}/{name}_{j}"] = ResultItem(t[i, j], 4)
+        if not summary_only:
+            # layer_{i}/ : average across loops + per-loop detail
+            for i in range(n_layers):
+                metrics[f"layer_{i}/avg_{name}"] = ResultItem(t[i].mean(), 4)
+                for j in range(n_loops):
+                    metrics[f"layer_{i}/{name}_{j}"] = ResultItem(t[i, j], 4)
 
-        # loop_{j}/ : average across layers
-        for j in range(n_loops):
-            metrics[f"loop_{j}/{name}"] = ResultItem(t[:, j].mean(), 4)
+            # loop_{j}/ : average across layers
+            for j in range(n_loops):
+                metrics[f"loop_{j}/{name}"] = ResultItem(t[:, j].mean(), 4)
 
     return losses, metrics
 
@@ -361,7 +379,7 @@ class Trainer:
                 device_mesh, [ParallelismDegrees.DP_REPLICATE, ParallelismDegrees.DP_SHARD]
             )
             self.pp_degree = get_parallel_degree(device_mesh, [ParallelismDegrees.PP])
-        else:  # TODO: we can remove the else part once we refactored out FSDP1
+        else:
             self.dp_degree = dist.get_world_size()
             self.pp_degree = 1
         self.progress_publisher = progress_publisher
@@ -389,7 +407,7 @@ class Trainer:
         loss_fun: Loss,
         micro_batch_id: int,
         scheduled_pipeline: Optional[Pipeline] = None,
-    ) -> tuple[bool, int, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    ) -> tuple[bool, int, Optional[torch.Tensor], Optional[torch.Tensor], dict[str, torch.Tensor]]:
         if scheduled_pipeline is not None:
             pp_schedule = scheduled_pipeline.pp_schedule
             targets, losses = (
@@ -410,14 +428,14 @@ class Trainer:
             loss = loss_fun(result_batch)
             (loss / self.gradient_acc_steps).backward()
 
+        component_grad_norms = {}
         if (micro_batch_id + 1) % self.gradient_acc_steps == 0:
             gradient_norm_score = self.gradient_clipper.clip_gradients()
+            component_grad_norms = compute_component_gradient_norms(model_parts)
+
             optimizer.step()
             scheduler.step()
-
-            # --- Update MoE expert routing biases (batched all-reduce) ---
             update_moe_biases(model_parts)
-
             optimizer.zero_grad()
             step_performed = True
             gradient_norm_score = gradient_norm_score.detach().cpu()
@@ -428,7 +446,7 @@ class Trainer:
         num_train_steps_done = Trainer._get_num_train_steps_done(
             micro_batch_id=micro_batch_id, gradient_acc_steps=self.gradient_acc_steps,
         )
-        return step_performed, num_train_steps_done, loss, gradient_norm_score
+        return step_performed, num_train_steps_done, loss, gradient_norm_score, component_grad_norms
 
     def train(
         self,
@@ -444,11 +462,10 @@ class Trainer:
         optimizer = app_state.optimizer
         lr_scheduler = app_state.lr_scheduler
         if scheduled_pipeline is None:
-            assert len(model_parts) == 1, "Expected a single model part when no scheduled pipeline is provided."
+            assert len(model_parts) == 1
         for m in model_parts:
             m.train()
 
-        # --- Ponder scheduler ---
         underlying_model = model_parts[0]
         if hasattr(underlying_model, "module"):
             underlying_model = underlying_model.module
@@ -463,19 +480,17 @@ class Trainer:
         )
         current_ponder_weight = 0.0
 
-        # --- Accumulators ---
         local_num_seen_samples = 0
         cumulated_losses = torch.zeros(3).cuda()
         metrics_accum = MetricsAccumulator()
 
-        # --- Throughput ---
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         forward_backward_time_recorder = TimeRecorder()
         forward_backward_time_recorder.start()
         gradient_norm_scores = []
+        last_component_grad_norms: dict[str, torch.Tensor] = {}
 
-        # --- Initial callbacks ---
         evaluation_callback(num_train_steps_done=self.num_seen_train_steps)
         training_progress = TrainingProgress(
             num_seen_steps_previous_run=self.num_seen_train_steps,
@@ -496,7 +511,8 @@ class Trainer:
                 current_ponder_weight = ponder_scheduler.step(training_progress.num_seen_steps_total)
 
                 (
-                    step_performed, num_train_steps_done, batch_loss, gradient_norm_score,
+                    step_performed, num_train_steps_done, batch_loss,
+                    gradient_norm_score, component_grad_norms,
                 ) = self._train_batch(
                     batch=batch,
                     model_parts=model_parts,
@@ -511,7 +527,6 @@ class Trainer:
                     self.global_num_tokens_per_train_step * num_train_steps_done
                 )
 
-                # --- Accumulate ---
                 if batch_loss is not None:
                     cumulated_losses[0] += batch_loss.detach().item()
                     cumulated_losses[-1] += 1
@@ -521,6 +536,8 @@ class Trainer:
 
                 if gradient_norm_score is not None:
                     gradient_norm_scores.append(gradient_norm_score.item())
+                if component_grad_norms:
+                    last_component_grad_norms = component_grad_norms
 
                 local_num_seen_samples += len(batch)
 
@@ -530,9 +547,6 @@ class Trainer:
                     dataloader_tag=train_loader.dataloader_tag,
                 )
 
-                # ==============================================================
-                # LOG INTERVAL — generic metric syncing and formatting
-                # ==============================================================
                 if training_progress.num_seen_steps_total % training_log_interval_in_steps == 0 and step_performed:
                     forward_backward_time_recorder.stop()
                     forward_backward_time = forward_backward_time_recorder.delta_t
@@ -543,7 +557,6 @@ class Trainer:
                     local_num_seen_samples = 0
                     global_num_samples_per_second = global_num_seen_samples / forward_backward_time
 
-                    # --- Reduce total loss (same as upstream) ---
                     cumulated_losses[1] = batch_loss.detach().item() if batch_loss is not None else 0.0
                     reduced_losses = (
                         Reducer.reduce(
@@ -559,7 +572,6 @@ class Trainer:
                     train_loss_avg = reduced_losses[0]
                     train_loss_last_batch = reduced_losses[1]
 
-                    # --- Generic metric sync (single all-reduce) ---
                     (
                         sync_tensor, scalar_names, per_layer_names, per_layer_sizes,
                     ) = metrics_accum.build_sync_tensor(device)
@@ -577,7 +589,6 @@ class Trainer:
                         synced_tensor, scalar_names, per_layer_names, per_layer_sizes,
                     )
 
-                    # --- Format into W&B dicts ---
                     adaptive_losses, adaptive_metrics = format_metrics(
                         ce_loss=synced_ce,
                         ponder_loss=synced_ponder,
@@ -587,7 +598,6 @@ class Trainer:
                         current_ponder_weight=current_ponder_weight,
                     )
 
-                    # --- Combine all losses and metrics ---
                     losses = {
                         "train loss avg": ResultItem(train_loss_avg, decimal_places=2),
                         "train loss last": ResultItem(train_loss_last_batch, decimal_places=2),
@@ -601,14 +611,17 @@ class Trainer:
                         "grad norm last": ResultItem(torch.tensor(gradient_norm_scores[-1]), 2),
                         **adaptive_metrics,
                     }
-                    gradient_norm_scores = []
 
-                    # --- MFU ---
+                    for gn_key, gn_val in last_component_grad_norms.items():
+                        metrics[gn_key] = ResultItem(gn_val, 4)
+
+                    gradient_norm_scores = []
+                    last_component_grad_norms = {}
+
                     mfu_score = torch.tensor(-1.0)
                     if self.mfu_calculator is not None:
                         mfu_score = self.mfu_calculator.compute(num_samples_per_second=global_num_samples_per_second)
 
-                    # --- Peak memory ---
                     if device.type == "cuda":
                         peak_memory_MB = torch.cuda.max_memory_allocated(device) / 1024**2
                         torch.cuda.reset_peak_memory_stats(device)
@@ -637,7 +650,6 @@ class Trainer:
                         evaluation_result=training_metrics,
                     )
 
-                    # --- Reset all accumulators ---
                     cumulated_losses.zero_()
                     metrics_accum.reset()
 

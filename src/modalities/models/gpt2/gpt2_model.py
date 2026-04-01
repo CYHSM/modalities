@@ -55,19 +55,10 @@ class AdaptiveComputationConfig(BaseModel):
     halt_threshold: float = 0.99
     ponder_penalty_weight: float = 0.00
     wide_ffn_hidden: int = 0
-    wide_ffn_gate_init_bias: float = 0.0
     deep_gate_init_bias: float = 0.0
+    wide_gate_init_bias: float = 0.0
     scheduler_type: str = "constant"
     layer_types: Optional[list[str]] = None
-    
-    # --- Enhancements ---
-    loop_input_injection: bool = False
-    enrich_router: bool = False
-    enrich_gate: bool = False
-    
-    # --- Gate Toggles ---
-    gate_input_norm: bool = False
-    gate_mlp_proj: bool = False
 
 
 class LayerNorms(LookupEnum):
@@ -432,18 +423,21 @@ def _displacement_stats(
 
     relative_norm: ||h - x|| / (||x|| + eps)   — shape (B, T)
     cosine_sim:    cos(h, x)                    — shape (B, T)
+
+    NOTE: Callers are responsible for torch.no_grad() context if gradients
+    are not needed.
     """
     diff = h - x
-    x_norm = x.norm(dim=-1).clamp(min=eps)          # (B, T)
-    rel_norm = diff.norm(dim=-1) / x_norm            # (B, T)
+    x_norm = x.norm(dim=-1).clamp(min=eps)
+    rel_norm = diff.norm(dim=-1) / x_norm
 
-    h_norm = h.norm(dim=-1).clamp(min=eps)           # (B, T)
-    cos_sim = (h * x).sum(dim=-1) / (h_norm * x_norm)  # (B, T)
+    h_norm = h.norm(dim=-1).clamp(min=eps)
+    cos_sim = (h * x).sum(dim=-1) / (h_norm * x_norm)
 
     return rel_norm, cos_sim
 
 
-# --- Original router (unchanged) ---
+# --- Router ---
 
 class AdaptiveRouter(nn.Module):
     """Per-token halting: [h; t_normalized] -> sigmoid -> halt_prob."""
@@ -459,45 +453,14 @@ class AdaptiveRouter(nn.Module):
         return torch.sigmoid(logit).squeeze(-1)
 
 
-# --- Enriched router ---
+# --- Dual Path Gate (enriched, two independent sigmoids) ---
 
-class EnrichedAdaptiveRouter(nn.Module):
-    """Per-token halting with scale-invariant displacement features."""
-
-    def __init__(self, n_embd: int, bias: bool = True):
+class DualPathGate(nn.Module):
+    def __init__(self, n_embd: int, init_bias_deep: float = 0.0, init_bias_wide: float = 0.0):
         super().__init__()
-        self.linear = nn.Linear(n_embd + 3, 1, bias=bias)
-
-    def forward(self, h: torch.Tensor, step_normalized: float, x: torch.Tensor = None) -> torch.Tensor:
-        assert x is not None, "EnrichedAdaptiveRouter requires x (layer input)"
-        B, T, _ = h.shape
-
-        rel_norm, cos_sim = _displacement_stats(h, x)
-
-        step_feat = torch.full((B, T, 1), step_normalized, device=h.device, dtype=h.dtype)
-        features = torch.cat([
-            h,                              
-            rel_norm.unsqueeze(-1),         
-            cos_sim.unsqueeze(-1),          
-            step_feat,                      
-        ], dim=-1)
-
-        logit = self.linear(features)
-        return torch.sigmoid(logit).squeeze(-1)
-
-
-# --- Original dual gate (unchanged) ---
-
-class DecoupledDualPathGate(nn.Module):
-    def __init__(self, n_embd, init_bias_deep=0.0, init_bias_wide=0.0):
-        super().__init__()
-        self.gate_proj = nn.Linear(n_embd, 2, bias=True)
-        self.proj_w2d = nn.Linear(n_embd, n_embd, bias=False)
-        self.proj_d2w = nn.Linear(n_embd, n_embd, bias=False)
-        self.cross_scale_wide = nn.Parameter(torch.tensor([-7.0]))
-        self.cross_scale_deep = nn.Parameter(torch.tensor([-7.0]))
         self.init_bias_deep = init_bias_deep
         self.init_bias_wide = init_bias_wide
+        self.gate_proj = nn.Linear(n_embd, 2, bias=True)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -505,128 +468,30 @@ class DecoupledDualPathGate(nn.Module):
         with torch.no_grad():
             self.gate_proj.bias[0] = self.init_bias_deep
             self.gate_proj.bias[1] = self.init_bias_wide
-        nn.init.zeros_(self.proj_w2d.weight)
-        nn.init.zeros_(self.proj_d2w.weight)
 
-    def forward(self, routing_input, h_deep, h_wide, use_cross=False):
-        logits = self.gate_proj(routing_input)
+    def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor):
+        logits = self.gate_proj(x)
         gates = torch.sigmoid(logits)
         gate_deep = gates[..., 0:1]
         gate_wide = gates[..., 1:2]
+        blended = gate_deep * h_deep + gate_wide * h_wide
 
-        if use_cross:
-            scale_deep = F.softplus(self.cross_scale_deep)
-            scale_wide = F.softplus(self.cross_scale_wide)
-            h_deep_out = h_deep + scale_deep * self.proj_w2d(h_wide)
-            h_wide_out = h_wide + scale_wide * self.proj_d2w(h_deep)
-        else:
-            h_deep_out = h_deep
-            h_wide_out = h_wide
-
-        blended = gate_deep * h_deep_out + gate_wide * h_wide_out
-        return blended, gate_deep, gate_wide
-
-
-# --- Enriched dual gate (UPDATED WITH TOGGLES) ---
-
-class EnrichedDecoupledDualPathGate(nn.Module):
-    """Gate that sees x + scale-invariant summaries of both path outputs."""
-
-    def __init__(self, n_embd, init_bias_deep=0.0, init_bias_wide=0.0, use_norm=False, use_mlp=False):
-        super().__init__()
-        self.use_norm = use_norm
-        self.use_mlp = use_mlp
-        self.init_bias_deep = init_bias_deep
-        self.init_bias_wide = init_bias_wide
-        
-        input_dim = n_embd + 4
-        
-        # 1. Configurable LayerNorm for Scale Mismatch
-        if self.use_norm:
-            self.gate_norm = nn.LayerNorm(input_dim)
-            
-        # 2. Configurable MLP for breaking the linear bottleneck
-        if self.use_mlp:
-            hidden_dim = max(16, n_embd // 4)
-            self.gate_proj_1 = nn.Linear(input_dim, hidden_dim, bias=True)
-            self.gate_act = nn.SiLU()
-            self.gate_proj_2 = nn.Linear(hidden_dim, 2, bias=True)
-        else:
-            self.gate_proj = nn.Linear(input_dim, 2, bias=True)
-
-        self.proj_w2d = nn.Linear(n_embd, n_embd, bias=False)
-        self.proj_d2w = nn.Linear(n_embd, n_embd, bias=False)
-        self.cross_scale_wide = nn.Parameter(torch.tensor([-7.0]))
-        self.cross_scale_deep = nn.Parameter(torch.tensor([-7.0]))
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        # Reset based on whether we are using the MLP or Linear projection
-        if self.use_mlp:
-            nn.init.zeros_(self.gate_proj_2.weight)
-            with torch.no_grad():
-                self.gate_proj_2.bias[0] = self.init_bias_deep
-                self.gate_proj_2.bias[1] = self.init_bias_wide
-        else:
-            nn.init.zeros_(self.gate_proj.weight)
-            with torch.no_grad():
-                self.gate_proj.bias[0] = self.init_bias_deep
-                self.gate_proj.bias[1] = self.init_bias_wide
-                
-        nn.init.zeros_(self.proj_w2d.weight)
-        nn.init.zeros_(self.proj_d2w.weight)
-
-    def forward(self, routing_input, h_deep, h_wide, use_cross=False):
-        x = routing_input
-
-        # Detach both paths: gate evaluates, paths learn to be useful
-        h_deep_det = h_deep.detach()
-        h_wide_det = h_wide.detach()
-
-        rel_norm_deep, cos_sim_deep = _displacement_stats(h_deep_det, x)
-        rel_norm_wide, cos_sim_wide = _displacement_stats(h_wide_det, x)
-
-        gate_input = torch.cat([
-            x,                                   
-            rel_norm_deep.unsqueeze(-1),         
-            rel_norm_wide.unsqueeze(-1),         
-            cos_sim_deep.unsqueeze(-1),          
-            cos_sim_wide.unsqueeze(-1),          
-        ], dim=-1)
-
-        # Apply enhancements if toggled on
-        if self.use_norm:
-            gate_input = self.gate_norm(gate_input)
-            
-        if self.use_mlp:
-            hidden = self.gate_act(self.gate_proj_1(gate_input))
-            logits = self.gate_proj_2(hidden)
-        else:
-            logits = self.gate_proj(gate_input)
-
-        gates = torch.sigmoid(logits)
-        gate_deep = gates[..., 0:1]
-        gate_wide = gates[..., 1:2]
-
-        if use_cross:
-            scale_deep = F.softplus(self.cross_scale_deep)
-            scale_wide = F.softplus(self.cross_scale_wide)
-            h_deep_out = h_deep + scale_deep * self.proj_w2d(h_wide)
-            h_wide_out = h_wide + scale_wide * self.proj_d2w(h_deep)
-        else:
-            h_deep_out = h_deep
-            h_wide_out = h_wide
-
-        blended = gate_deep * h_deep_out + gate_wide * h_wide_out
-        return blended, gate_deep, gate_wide
+        with torch.no_grad():
+            aux = {
+                "gate_logit_deep_mean": logits[..., 0].mean(),
+                "gate_logit_deep_std": logits[..., 0].std(),
+                "gate_logit_wide_mean": logits[..., 1].mean(),
+                "gate_logit_wide_std": logits[..., 1].std(),
+            }
+        return blended, gate_deep, gate_wide, aux
 
 
 # =============================================================================
-# Adaptive Recursive Block (Dual Full-Block Paths)
+# Adaptive Recursive Block
 # =============================================================================
 
 class AdaptiveRecursiveBlock(nn.Module):
-    _INIT_SCALE_RAW: float = -7.0
+    _INIT_SCALE_RAW: float = -5.0
 
     def __init__(
         self,
@@ -648,15 +513,8 @@ class AdaptiveRecursiveBlock(nn.Module):
 
         self.has_loop_path = layer_type in ["loop", "dual"]
         if self.has_loop_path:
-            # Select router variant
-            if adaptive_config.enrich_router:
-                self.router = EnrichedAdaptiveRouter(n_embd)
-            else:
-                self.router = AdaptiveRouter(n_embd)
+            self.router = AdaptiveRouter(n_embd)
             self.loop_scales = nn.Parameter(torch.full((self.max_loops,), self._INIT_SCALE_RAW))
-
-            if adaptive_config.loop_input_injection:
-                self.injection_alpha_raw = nn.Parameter(torch.full((self.max_loops,), self._INIT_SCALE_RAW))
 
         self.has_wide_path = layer_type in ["wide", "dual"]
         if self.has_wide_path:
@@ -664,31 +522,17 @@ class AdaptiveRecursiveBlock(nn.Module):
             self.wide_scale = nn.Parameter(torch.tensor([self._INIT_SCALE_RAW]))
 
         if layer_type == "dual":
-            # Select gate variant
-            if adaptive_config.enrich_gate:
-                self.dual_gate = EnrichedDecoupledDualPathGate(
-                    n_embd=n_embd,
-                    init_bias_deep=adaptive_config.deep_gate_init_bias,
-                    init_bias_wide=adaptive_config.wide_ffn_gate_init_bias,
-                    use_norm=adaptive_config.gate_input_norm,
-                    use_mlp=adaptive_config.gate_mlp_proj,
-                )
-            else:
-                self.dual_gate = DecoupledDualPathGate(
-                    n_embd=n_embd,
-                    init_bias_deep=adaptive_config.deep_gate_init_bias,
-                    init_bias_wide=adaptive_config.wide_ffn_gate_init_bias,
-                )
+            self.dual_gate = DualPathGate(
+                n_embd=n_embd,
+                init_bias_deep=adaptive_config.deep_gate_init_bias,
+                init_bias_wide=adaptive_config.wide_gate_init_bias,
+            )
 
     def forward(
         self, x: torch.Tensor, token_ids: torch.Tensor = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         B, T, D = x.shape
         device = x.device
-
-        use_input_injection = (
-            self.has_loop_path and hasattr(self, "injection_alpha_raw")
-        )
 
         state = HaltingState.init(B, T, D, device=device, dtype=x.dtype)
         metrics = StepMetrics(self.max_loops, device)
@@ -701,33 +545,39 @@ class AdaptiveRecursiveBlock(nn.Module):
             for step in range(self.max_loops):
                 actual_steps = step + 1
 
-                scale = F.softplus(self.loop_scales[step])
-                metrics.log("loop_scale", scale.detach())
+                learned_scale = F.softplus(self.loop_scales[step])
+                scale = learned_scale / self.max_loops
                 h_prev = h_loop
 
-                if use_input_injection:
-                    step_alpha = F.softplus(self.injection_alpha_raw[step])
-                    metrics.log("injection_alpha", step_alpha.detach())
-                    h_loop = self.block(h_loop + step_alpha * x, scale=scale)
-                else:
-                    h_loop = self.block(h_loop, scale=scale)
+                h_loop = self.block(h_loop, scale=scale)
 
                 halt_prob = self.router(h_loop, step_normalized=step / step_denom, x=x)
                 state.update(h_loop, halt_prob, step)
 
-                rel_change = (h_loop - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)
+                # --- Per-step diagnostics (fully detached, no autograd overhead) ---
+                with torch.no_grad():
+                    metrics.log("loop_scale", scale.detach())
 
-                metrics.log("halt_prob_mean", halt_prob.detach().mean())
-                metrics.log("halt_prob_std", halt_prob.detach().std())
-                metrics.log("halt_prob_min", halt_prob.detach().min())
-                metrics.log("halt_prob_max", halt_prob.detach().max())
-                metrics.log("rel_change", rel_change.mean())
-                metrics.log("prob_remain_max", state.prob_remain.max().detach())
-                metrics.log("prob_remain_mean", state.prob_remain.mean().detach())
+                    rel_change = (h_loop - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)
+                    metrics.log("step_h_norm", h_loop.norm(dim=-1).mean())
+
+                    rel_norm_to_input, cos_sim_to_input = _displacement_stats(h_loop, x)
+                    metrics.log("step_cos_sim_to_input", cos_sim_to_input.mean())
+                    metrics.log("step_rel_norm_to_input", rel_norm_to_input.mean())
+
+                    metrics.log("halt_prob_mean", halt_prob.mean())
+                    metrics.log("halt_prob_std", halt_prob.std())
+                    metrics.log("halt_prob_min", halt_prob.min())
+                    metrics.log("halt_prob_max", halt_prob.max())
+                    metrics.log("rel_change", rel_change.mean())
+                    metrics.log("prob_remain_max", state.prob_remain.max())
+                    metrics.log("prob_remain_mean", state.prob_remain.mean())
 
             state.finalize(h_loop, actual_steps)
             h_deep = state.output
-            frac_alive = (state.prob_remain.detach() > 0.01).float().mean()
+
+            with torch.no_grad():
+                frac_alive = (state.prob_remain > 0.01).float().mean()
         else:
             h_deep = torch.zeros_like(x)
             actual_steps = 0
@@ -740,8 +590,10 @@ class AdaptiveRecursiveBlock(nn.Module):
             h_wide = torch.zeros_like(x)
             wide_scale_val = torch.tensor(0.0, device=device)
 
+        # --- Gate ---
+        gate_aux = {}
         if self.layer_type == "dual":
-            output, gate_deep, gate_wide = self.dual_gate(x, h_deep, h_wide)
+            output, gate_deep, gate_wide, gate_aux = self.dual_gate(x, h_deep, h_wide)
         elif self.layer_type == "loop":
             output = h_deep
             gate_deep = torch.ones(B, T, 1, device=device, dtype=x.dtype)
@@ -753,13 +605,19 @@ class AdaptiveRecursiveBlock(nn.Module):
         else:
             raise ValueError(f"Unknown layer type: {self.layer_type}")
 
+        # --- Build layer_metrics dict (all diagnostics under no_grad) ---
         step_metrics = metrics.finalize()
 
-        es = state.expected_steps.detach()
-        gate_deep_d = gate_deep.detach()
-        gate_wide_d = gate_wide.detach()
+        with torch.no_grad():
+            gated_deep_contrib_norm = (gate_deep * h_deep).norm(dim=-1).mean()
+            gated_wide_contrib_norm = (gate_wide * h_wide).norm(dim=-1).mean()
+
+            es = state.expected_steps.detach()
+            gate_deep_d = gate_deep.detach()
+            gate_wide_d = gate_wide.detach()
 
         layer_metrics = {
+            # expected_steps keeps gradients for ponder loss
             "expected_steps": state.expected_steps,
             "actual_steps": torch.tensor(float(actual_steps), device=device),
             "residual_mass": state.prob_remain.mean().detach(),
@@ -777,13 +635,16 @@ class AdaptiveRecursiveBlock(nn.Module):
             "gate_wide_std": gate_wide_d.std(),
             "gate_wide_min": gate_wide_d.min(),
             "gate_wide_max": gate_wide_d.max(),
-            "gate_deep_token_probs": gate_deep_d.squeeze(-1),
-            "gate_wide_token_probs": gate_wide_d.squeeze(-1),
+            "gate_deep_token_probs": gate_deep_d.squeeze(-1),   # (B, T)
+            "gate_wide_token_probs": gate_wide_d.squeeze(-1),   # (B, T)
             "deep_block_norm": h_deep.detach().norm(dim=-1).mean(),
             "wide_block_norm": (
                 h_wide.detach().norm(dim=-1).mean()
                 if self.has_wide_path else torch.tensor(0.0, device=device)
             ),
+            "gated_deep_contrib_norm": gated_deep_contrib_norm,
+            "gated_wide_contrib_norm": gated_wide_contrib_norm,
+            # --- Step-level vectors (already detached via StepMetrics + no_grad) ---
             "step_halt_probs": step_metrics.get("halt_prob_mean", torch.zeros(self.max_loops, device=device)),
             "step_halt_prob_std": step_metrics.get("halt_prob_std", torch.zeros(self.max_loops, device=device)),
             "step_halt_prob_min": step_metrics.get("halt_prob_min", torch.zeros(self.max_loops, device=device)),
@@ -792,12 +653,24 @@ class AdaptiveRecursiveBlock(nn.Module):
             "loop_scales": step_metrics.get("loop_scale", torch.zeros(self.max_loops, device=device)),
             "prob_remain_max": step_metrics.get("prob_remain_max", torch.zeros(self.max_loops, device=device)),
             "prob_remain_mean": step_metrics.get("prob_remain_mean", torch.zeros(self.max_loops, device=device)),
+            "step_h_norm": step_metrics.get("step_h_norm", torch.zeros(self.max_loops, device=device)),
+            "step_cos_sim_to_input": step_metrics.get("step_cos_sim_to_input", torch.zeros(self.max_loops, device=device)),
+            "step_rel_norm_to_input": step_metrics.get("step_rel_norm_to_input", torch.zeros(self.max_loops, device=device)),
         }
 
-        if use_input_injection:
-            layer_metrics["injection_alpha"] = step_metrics.get("injection_alpha", torch.zeros(self.max_loops, device=device))
-        else:
-            layer_metrics["injection_alpha"] = torch.zeros(self.max_loops, device=device)
+        # Gate aux metrics (already computed under no_grad in DualPathGate)
+        for k, v in gate_aux.items():
+            layer_metrics[k] = v if isinstance(v, torch.Tensor) else torch.tensor(v, device=device)
+
+        # Defaults for gate aux keys when not present (non-dual layers)
+        for k in [
+            "gate_logit_deep_mean", "gate_logit_deep_std",
+            "gate_logit_wide_mean", "gate_logit_wide_std",
+            "gate_rel_norm_deep", "gate_rel_norm_wide",
+            "gate_cos_sim_deep", "gate_cos_sim_wide",
+        ]:
+            if k not in layer_metrics:
+                layer_metrics[k] = torch.tensor(0.0, device=device)
 
         return output, layer_metrics
 
@@ -823,19 +696,13 @@ class GPT2LLM(NNModel):
                 ".lm_head.weight",
                 ".router.linear.weight",
                 ".dual_gate.gate_proj.weight",
-                ".dual_gate.gate_proj_1.weight",
-                ".dual_gate.gate_proj_2.weight",
-                ".dual_gate.proj_w2d.weight",
-                ".dual_gate.proj_d2w.weight",
             ],
             "embedding": [".wte", ".wpe"],
             "layernorm": [
                 ".attention_norm", ".ffn_norm", ".lm_head_norm",
-                ".q_norm", ".k_norm", ".dual_gate.gate_norm",
+                ".q_norm", ".k_norm",
                 ".loop_scales", ".wide_scale", ".dual_gate.gate_proj.bias",
-                ".dual_gate.gate_proj_1.bias", ".dual_gate.gate_proj_2.bias",
-                ".router.linear.bias", ".dual_gate.cross_scale",
-                ".injection_alpha_raw",
+                ".router.linear.bias",
             ],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
@@ -878,7 +745,7 @@ class GPT2LLM(NNModel):
 
         layer_types_list = []
         if self.use_adaptive:
-            assert adaptive_config is not None, "adaptive_config must be provided if enable_adaptive is True"
+            assert adaptive_config is not None
             if adaptive_config.layer_types is not None:
                 layer_types_list = adaptive_config.layer_types
                 if len(layer_types_list) != n_layer:
@@ -917,13 +784,17 @@ class GPT2LLM(NNModel):
         if use_weight_tying:
             self.transformer.wte.weight = self.transformer.lm_head.weight
 
+        # Cache sorted layer keys to avoid re-sorting every forward pass
+        self._layer_order = sorted(layers.keys(), key=int)
+
     # ------------------------------------------------------------------
     # Metrics bag construction
     # ------------------------------------------------------------------
 
     _VECTOR_KEYS = [
         "step_halt_probs", "step_halt_prob_std", "step_halt_prob_min", "step_halt_prob_max",
-        "step_changes", "loop_scales", "prob_remain_max", "prob_remain_mean", "injection_alpha",
+        "step_changes", "loop_scales", "prob_remain_max", "prob_remain_mean",
+        "step_h_norm", "step_cos_sim_to_input", "step_rel_norm_to_input",
     ]
 
     _PER_LAYER_SCALAR_KEYS = [
@@ -932,6 +803,11 @@ class GPT2LLM(NNModel):
         "gate_deep_mean", "gate_deep_std", "gate_deep_min", "gate_deep_max",
         "gate_wide_mean", "gate_wide_std", "gate_wide_min", "gate_wide_max",
         "deep_block_norm", "wide_block_norm",
+        "gated_deep_contrib_norm", "gated_wide_contrib_norm",
+        "gate_logit_deep_mean", "gate_logit_deep_std",
+        "gate_logit_wide_mean", "gate_logit_wide_std",
+        "gate_rel_norm_deep", "gate_rel_norm_wide",
+        "gate_cos_sim_deep", "gate_cos_sim_wide",
     ]
 
     def _build_metrics_bag(
@@ -956,13 +832,13 @@ class GPT2LLM(NNModel):
             return torch.stack([m[key] for m in all_layer_metrics])
 
         scalars = {
-            "ponder_cost_unweighted": total_ponder_cost,
-            "expected_steps": avg_ponder_cost,
-            "normalized_steps": normalized_steps,
+            "ponder_cost_unweighted": total_ponder_cost.detach(),
+            "expected_steps": avg_ponder_cost.detach(),
+            "normalized_steps": normalized_steps.detach(),
         }
 
         per_layer_scalars = {
-            "ponder_cost": torch.stack([m["expected_steps"].mean() for m in all_layer_metrics]),
+            "ponder_cost": torch.stack([m["expected_steps"].mean().detach() for m in all_layer_metrics]),
         }
         for key in self._PER_LAYER_SCALAR_KEYS:
             per_layer_scalars[key] = stack_key(key)
@@ -1008,8 +884,7 @@ class GPT2LLM(NNModel):
         all_layer_metrics: list[dict[str, torch.Tensor]] = []
         total_ponder_cost = torch.tensor(0.0, device=device, dtype=h.dtype)
 
-        sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
-        for layer_key in sorted_keys:
+        for layer_key in self._layer_order:
             layer_module = self.transformer.h[layer_key]
 
             if self.use_adaptive:
@@ -1030,9 +905,20 @@ class GPT2LLM(NNModel):
         )
 
         if not self.training:
-            metrics_bag["eval_tokens"] = inputs.detach()
-            metrics_bag["eval_gate_deep_probs"] = torch.stack([m.get("gate_deep_token_probs", torch.ones_like(inputs, dtype=logits.dtype)) for m in all_layer_metrics])
-            metrics_bag["eval_gate_wide_probs"] = torch.stack([m.get("gate_wide_token_probs", torch.zeros_like(inputs, dtype=logits.dtype)) for m in all_layer_metrics])
+            with torch.no_grad():
+                metrics_bag["eval_tokens"] = inputs
+                metrics_bag["eval_gate_deep_probs"] = torch.stack([
+                    m.get("gate_deep_token_probs", torch.ones_like(inputs, dtype=logits.dtype))
+                    for m in all_layer_metrics
+                ])
+                metrics_bag["eval_gate_wide_probs"] = torch.stack([
+                    m.get("gate_wide_token_probs", torch.zeros_like(inputs, dtype=logits.dtype))
+                    for m in all_layer_metrics
+                ])
+                metrics_bag["eval_expected_steps"] = torch.stack([
+                    m["expected_steps"]
+                    for m in all_layer_metrics
+                ])
 
         return {
             "logits": logits,

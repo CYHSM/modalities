@@ -1050,8 +1050,7 @@ model_raw:
       loop_input_injection: false
       enrich_router: false
       enrich_gate: true
-      gate_input_norm: true
-      gate_mlp_proj: false
+      gate_type: "factored"
 lr_scheduler:
   component_key: scheduler
   variant_key: onecycle_lr
@@ -1112,7 +1111,7 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop5_512deep_11776wide_nomix_enrich_gate_inputnorm
+    experiment_id: loop5_512deep_11776wide_nomix_enrich_gate
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}
     tokenizer:
