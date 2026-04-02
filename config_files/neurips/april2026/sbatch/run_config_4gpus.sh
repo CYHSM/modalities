@@ -18,6 +18,7 @@ set -e # Exit immediately if a command fails
 
 # Your Project Root in D21_101
 MY_ROOT="/leonardo_work/EUHPC_D21_101/mfrey"
+MY_SCRATCH="/leonardo_scratch/fast/EUHPC_D21_101/mfrey"
 
 # path to container
 CONTAINER_IMAGE="${MY_ROOT}/containers/image_34c40a6bbdb8dcbb6d674d06caaa93af68d5692fb744eeb0e28908eea6158b13.sif"
@@ -34,7 +35,7 @@ CONTAINER_DATA_DIR="/data"
 CONFIG_FILE_PATH="config_files/loom/SepGates/loop5_512deep_11776wide_nomix_loop_enrich_gate_inputnorm.yaml"
 
 # Output directory for logs/checkpoints
-EXPERIMENT_ROOT="${MY_ROOT}/experiments/${SLURM_JOB_NAME}-${SLURM_JOB_ID}"
+EXPERIMENT_ROOT="${MY_SCRATCH}/experiments/${SLURM_JOB_NAME}-${SLURM_JOB_ID}"
 mkdir -p "${EXPERIMENT_ROOT}"
 
 # ============================================================================
@@ -65,7 +66,7 @@ export CONTAINER_SRC_DIR="${CONTAINER_CODE_DIR}/src"
 srun singularity exec --nv \
 --bind "${HOST_CODE_DIR}:${CONTAINER_CODE_DIR}" \
 --bind "${HOST_DATA_DIR}:${CONTAINER_DATA_DIR}" \
---bind "${MY_ROOT}/experiments:${MY_ROOT}/experiments" \
+--bind "${MY_SCRATCH}/experiments:${MY_SCRATCH}/experiments" \
 --bind "${MY_ROOT}/tokenizer:${MY_ROOT}/tokenizer" \
 "${CONTAINER_IMAGE}" bash -c "
     # Force Python to look in your local code first

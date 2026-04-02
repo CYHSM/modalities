@@ -907,7 +907,7 @@ checkpoint_saving:
       component_key: checkpoint_saving_execution
       variant_key: dcp
       config:
-        checkpoint_path: ${settings.paths.checkpoint_saving_path}/${settings.experiment_id}
+        checkpoint_path: ${settings.paths.experiments_root_path}/${settings.experiment_id}
         global_rank: ${settings.cuda_env.global_rank}
         experiment_id: ${settings.experiment_id}
 
