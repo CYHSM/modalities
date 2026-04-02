@@ -455,189 +455,86 @@ class AdaptiveRouter(nn.Module):
 
 # --- Dual Path Gate (enriched, two independent sigmoids) ---
 
-# class DualPathGate(nn.Module):
-#     def __init__(self, n_embd: int, init_bias_deep: float = 0.0, init_bias_wide: float = 0.0):
-#         super().__init__()
-#         self.init_bias_deep = init_bias_deep
-#         self.init_bias_wide = init_bias_wide
-#         self.gate_proj = nn.Linear(n_embd, 2, bias=True)
-#         self.reset_parameters()
-
-#     def reset_parameters(self):
-#         nn.init.zeros_(self.gate_proj.weight)
-#         with torch.no_grad():
-#             self.gate_proj.bias[0] = self.init_bias_deep
-#             self.gate_proj.bias[1] = self.init_bias_wide
-
-#     def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor):
-#         logits = self.gate_proj(x)
-#         gates = torch.sigmoid(logits)
-#         gate_deep = gates[..., 0:1]
-#         gate_wide = gates[..., 1:2]
-#         blended = gate_deep * h_deep + gate_wide * h_wide
-
-#         with torch.no_grad():
-#             aux = {
-#                 "gate_logit_deep_mean": logits[..., 0].mean(),
-#                 "gate_logit_deep_std": logits[..., 0].std(),
-#                 "gate_logit_wide_mean": logits[..., 1].mean(),
-#                 "gate_logit_wide_std": logits[..., 1].std(),
-#             }
-#         return blended, gate_deep, gate_wide, aux
-
 # BT1
-# class DualPathGate(nn.Module):
-#     def __init__(self, n_embd: int, init_bias_deep: float = 0.0, init_bias_wide: float = 0.0):
-#         super().__init__()
-#         self.init_bias_deep = init_bias_deep
-#         self.init_bias_wide = init_bias_wide
-#         self.gate_proj = nn.Linear(n_embd, 2, bias=True)
-#         self.reset_parameters()
-
-#     def reset_parameters(self):
-#         nn.init.zeros_(self.gate_proj.weight)
-#         with torch.no_grad():
-#             self.gate_proj.bias[0] = self.init_bias_deep
-#             self.gate_proj.bias[1] = self.init_bias_wide
-
-#     def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor):
-#         logits = self.gate_proj(x)
-#         gates = torch.softmax(logits, dim=-1)
-        
-#         gate_deep = gates[..., 0:1]
-#         gate_wide = gates[..., 1:2]
-        
-#         blended = gate_deep * h_deep + gate_wide * h_wide
-
-#         with torch.no_grad():
-#             aux = {
-#                 "gate_logit_deep_mean": logits[..., 0].mean(),
-#                 "gate_logit_deep_std": logits[..., 0].std(),
-#                 "gate_logit_wide_mean": logits[..., 1].mean(),
-#                 "gate_logit_wide_std": logits[..., 1].std(),
-#             }
-#         return blended, gate_deep, gate_wide, aux
-
-#BT1
-# class DualPathGate(nn.Module):
-#     def __init__(self, n_embd: int, init_bias_deep: float = 0.0, init_bias_wide: float = 0.0):
-#         super().__init__()
-#         # Project to 1 dimension instead of 2. We only need one logit now.
-#         self.gate_proj = nn.Linear(n_embd, 1, bias=True)
-#         self.init_bias_deep = init_bias_deep
-#         # We keep init_bias_wide in the signature so you don't have to change 
-#         # AdaptiveRecursiveBlock, but we won't actually use it in the math.
-#         self.reset_parameters()
-
-#     def reset_parameters(self):
-#         nn.init.zeros_(self.gate_proj.weight)
-#         with torch.no_grad():
-#             self.gate_proj.bias[0] = self.init_bias_deep
-
-#     def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor):
-#         logit = self.gate_proj(x)
-        
-#         # --- FIX: Convex combination using (1 - gate) ---
-#         # This guarantees that gate_deep + gate_wide == 1.0
-#         gate_deep = torch.sigmoid(logit)
-#         gate_wide = 1.0 - gate_deep 
-        
-#         blended = gate_deep * h_deep + gate_wide * h_wide
-
-#         with torch.no_grad():
-#             aux = {
-#                 "gate_logit_deep_mean": logit.mean(),
-#                 "gate_logit_deep_std": logit.std(),
-#                 # Provide dummy metrics for wide logits to prevent KeyErrors 
-#                 # in your layer_metrics dictionary downstream.
-#                 "gate_logit_wide_mean": torch.tensor(0.0, device=x.device),
-#                 "gate_logit_wide_std": torch.tensor(0.0, device=x.device),
-#             }
-#         return blended, gate_deep, gate_wide, aux
-
-# BTD Single
-# class DualPathGate(nn.Module):
-#     def __init__(self, n_embd: int, init_bias_deep: float = 0.0, init_bias_wide: float = 0.0):
-#         super().__init__()
-#         # CHANGE 1: Project to n_embd (D) dimensions instead of 1.
-#         self.gate_proj = nn.Linear(n_embd, n_embd, bias=True)
-#         self.init_bias_deep = init_bias_deep
-#         self.reset_parameters()
-
-#     def reset_parameters(self):
-#         nn.init.zeros_(self.gate_proj.weight)
-#         with torch.no_grad():
-#             # CHANGE 2: Initialize ALL 'D' bias dimensions to the starting value
-#             nn.init.constant_(self.gate_proj.bias, self.init_bias_deep)
-
-#     def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor):
-#         # logit is now (B, T, D)
-#         logit = self.gate_proj(x)
-        
-#         # Gates are now (B, T, D)
-#         gate_deep = torch.sigmoid(logit)
-#         gate_wide = 1.0 - gate_deep 
-        
-#         # Element-wise multiplication across all D features independently
-#         blended = gate_deep * h_deep + gate_wide * h_wide
-
-#         with torch.no_grad():
-#             aux = {
-#                 "gate_logit_deep_mean": logit.mean(),
-#                 "gate_logit_deep_std": logit.std(),
-#                 "gate_logit_wide_mean": torch.tensor(0.0, device=x.device),
-#                 "gate_logit_wide_std": torch.tensor(0.0, device=x.device),
-#             }
-#         return blended, gate_deep, gate_wide, aux
-
-
-# BTD Softmax
 class DualPathGate(nn.Module):
     def __init__(self, n_embd: int, init_bias_deep: float = 0.0, init_bias_wide: float = 0.0):
         super().__init__()
-        self.n_embd = n_embd
-        
-        # Use two separate linear layers to avoid DTensor slice-initialization bugs
-        self.proj_deep = nn.Linear(n_embd, n_embd, bias=True)
-        self.proj_wide = nn.Linear(n_embd, n_embd, bias=True)
-        
         self.init_bias_deep = init_bias_deep
         self.init_bias_wide = init_bias_wide
+        self.gate_proj = nn.Linear(n_embd, 2, bias=True)
         self.reset_parameters()
 
     def reset_parameters(self):
-        # DTensor fully supports these whole-tensor initializations
-        nn.init.zeros_(self.proj_deep.weight)
-        nn.init.zeros_(self.proj_wide.weight)
+        nn.init.zeros_(self.gate_proj.weight)
         with torch.no_grad():
-            nn.init.constant_(self.proj_deep.bias, self.init_bias_deep)
-            nn.init.constant_(self.proj_wide.bias, self.init_bias_wide)
+            self.gate_proj.bias[0] = self.init_bias_deep
+            self.gate_proj.bias[1] = self.init_bias_wide
 
     def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor):
-        # Get logits for both paths: shapes are (B, T, D)
-        logit_deep = self.proj_deep(x)
-        logit_wide = self.proj_wide(x)
-        
-        # Stack them together along a new last dimension -> shape: (B, T, D, 2)
-        logits = torch.stack([logit_deep, logit_wide], dim=-1)
-        
-        # Softmax over the last dimension forces deep + wide == 1.0 for EVERY feature
+        logits = self.gate_proj(x)
         gates = torch.softmax(logits, dim=-1)
         
-        # Extract the shapes: (B, T, D)
-        gate_deep = gates[..., 0]
-        gate_wide = gates[..., 1]
+        gate_deep = gates[..., 0:1]
+        gate_wide = gates[..., 1:2]
         
         blended = gate_deep * h_deep + gate_wide * h_wide
 
         with torch.no_grad():
             aux = {
-                "gate_logit_deep_mean": logit_deep.mean(),
-                "gate_logit_deep_std": logit_deep.std(),
-                "gate_logit_wide_mean": logit_wide.mean(),
-                "gate_logit_wide_std": logit_wide.std(),
+                "gate_logit_deep_mean": logits[..., 0].mean(),
+                "gate_logit_deep_std": logits[..., 0].std(),
+                "gate_logit_wide_mean": logits[..., 1].mean(),
+                "gate_logit_wide_std": logits[..., 1].std(),
             }
         return blended, gate_deep, gate_wide, aux
+
+# BTD Softmax
+# class DualPathGate(nn.Module):
+#     def __init__(self, n_embd: int, init_bias_deep: float = 0.0, init_bias_wide: float = 0.0):
+#         super().__init__()
+#         self.n_embd = n_embd
+        
+#         # Use two separate linear layers to avoid DTensor slice-initialization bugs
+#         self.proj_deep = nn.Linear(n_embd, n_embd, bias=True)
+#         self.proj_wide = nn.Linear(n_embd, n_embd, bias=True)
+        
+#         self.init_bias_deep = init_bias_deep
+#         self.init_bias_wide = init_bias_wide
+#         self.reset_parameters()
+
+#     def reset_parameters(self):
+#         # DTensor fully supports these whole-tensor initializations
+#         nn.init.zeros_(self.proj_deep.weight)
+#         nn.init.zeros_(self.proj_wide.weight)
+#         with torch.no_grad():
+#             nn.init.constant_(self.proj_deep.bias, self.init_bias_deep)
+#             nn.init.constant_(self.proj_wide.bias, self.init_bias_wide)
+
+#     def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor):
+#         # Get logits for both paths: shapes are (B, T, D)
+#         logit_deep = self.proj_deep(x)
+#         logit_wide = self.proj_wide(x)
+        
+#         # Stack them together along a new last dimension -> shape: (B, T, D, 2)
+#         logits = torch.stack([logit_deep, logit_wide], dim=-1)
+        
+#         # Softmax over the last dimension forces deep + wide == 1.0 for EVERY feature
+#         gates = torch.softmax(logits, dim=-1)
+        
+#         # Extract the shapes: (B, T, D)
+#         gate_deep = gates[..., 0]
+#         gate_wide = gates[..., 1]
+        
+#         blended = gate_deep * h_deep + gate_wide * h_wide
+
+#         with torch.no_grad():
+#             aux = {
+#                 "gate_logit_deep_mean": logit_deep.mean(),
+#                 "gate_logit_deep_std": logit_deep.std(),
+#                 "gate_logit_wide_mean": logit_wide.mean(),
+#                 "gate_logit_wide_std": logit_wide.std(),
+#             }
+#         return blended, gate_deep, gate_wide, aux
 
 # =============================================================================
 # Adaptive Recursive Block
@@ -787,10 +684,10 @@ class AdaptiveRecursiveBlock(nn.Module):
             "gate_wide_std": gate_wide_d.std(),
             "gate_wide_min": gate_wide_d.min(),
             "gate_wide_max": gate_wide_d.max(),
-            # "gate_deep_token_probs": gate_deep_d.squeeze(-1),   # (B, T)
-            # "gate_wide_token_probs": gate_wide_d.squeeze(-1),   # (B, T)
-            "gate_deep_token_probs": gate_deep_d.mean(dim=-1),
-            "gate_wide_token_probs": gate_wide_d.mean(dim=-1),
+            "gate_deep_token_probs": gate_deep_d.squeeze(-1),   # (B, T)
+            "gate_wide_token_probs": gate_wide_d.squeeze(-1),   # (B, T)
+            #"gate_deep_token_probs": gate_deep_d.mean(dim=-1),
+            #"gate_wide_token_probs": gate_wide_d.mean(dim=-1),
             "deep_block_norm": h_deep.detach().norm(dim=-1).mean(),
             "wide_block_norm": (
                 h_wide.detach().norm(dim=-1).mean()
@@ -842,23 +739,6 @@ class GPT2LLM(NNModel):
         use_weight_tying, seed=None, enforce_swiglu_hidden_dim_multiple_of=32,
         adaptive_config=None,
     ):
-        # weight_decay_groups = {
-        #     "linear": [
-        #         ".q_attn", ".k_attn", ".v_attn",
-        #         ".attn.c_proj",
-        #         ".mlp",
-        #         ".lm_head.weight",
-        #         ".router.linear.weight",
-        #         ".dual_gate.gate_proj.weight",
-        #     ],
-        #     "embedding": [".wte", ".wpe"],
-        #     "layernorm": [
-        #         ".attention_norm", ".ffn_norm", ".lm_head_norm",
-        #         ".q_norm", ".k_norm",
-        #         ".loop_scales", ".wide_scale", ".dual_gate.gate_proj.bias",
-        #         ".router.linear.bias",
-        #     ],
-        # }
         weight_decay_groups = {
             "linear": [
                 ".q_attn", ".k_attn", ".v_attn",
@@ -866,19 +746,36 @@ class GPT2LLM(NNModel):
                 ".mlp",
                 ".lm_head.weight",
                 ".router.linear.weight",
-                ".dual_gate.proj_deep.weight",
-                ".dual_gate.proj_wide.weight",
+                ".dual_gate.gate_proj.weight",
             ],
             "embedding": [".wte", ".wpe"],
             "layernorm": [
                 ".attention_norm", ".ffn_norm", ".lm_head_norm",
                 ".q_norm", ".k_norm",
-                ".loop_scales", ".wide_scale", 
-                ".dual_gate.proj_deep.bias",
-                ".dual_gate.proj_wide.bias",
-                ".router.linear.bias", ".inter_loop_norm",
+                ".loop_scales", ".wide_scale", ".dual_gate.gate_proj.bias",
+                ".router.linear.bias",
             ],
         }
+        # weight_decay_groups = {
+        #     "linear": [
+        #         ".q_attn", ".k_attn", ".v_attn",
+        #         ".attn.c_proj",
+        #         ".mlp",
+        #         ".lm_head.weight",
+        #         ".router.linear.weight",
+        #         ".dual_gate.proj_deep.weight",
+        #         ".dual_gate.proj_wide.weight",
+        #     ],
+        #     "embedding": [".wte", ".wpe"],
+        #     "layernorm": [
+        #         ".attention_norm", ".ffn_norm", ".lm_head_norm",
+        #         ".q_norm", ".k_norm",
+        #         ".loop_scales", ".wide_scale", 
+        #         ".dual_gate.proj_deep.bias",
+        #         ".dual_gate.proj_wide.bias",
+        #         ".router.linear.bias", ".inter_loop_norm",
+        #     ],
+        # }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
 
         self.sample_key = sample_key
