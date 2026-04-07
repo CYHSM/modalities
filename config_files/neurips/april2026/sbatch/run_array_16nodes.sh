@@ -1,83 +1,88 @@
 #!/bin/bash
 #SBATCH --job-name=modalities_run
 #SBATCH --account=euhpc_e05_119
+#SBATCH --exclusive
+#SBATCH --qos=normal
 #SBATCH --partition=boost_usr_prod
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=32
+#SBATCH --nodes=16
+#SBATCH --cpus-per-task=8
 #SBATCH --gpus-per-node=4
-#SBATCH --time=00:10:00
-#SBATCH --output=logs/%x-%j.out
-#SBATCH --error=logs/%x-%j.err
+#SBATCH --mem=0
+#SBATCH --time=23:59:00
+#SBATCH --output=logs/%x-%A_%a.out
+#SBATCH --error=logs/%x-%A_%a.err
 
-set -e # Exit immediately if a command fails
+set -e 
 
 # ============================================================================
-# 1. PATH CONFIGURATION (User defined)
+# 0. ARRAY SETUP
 # ============================================================================
+# Check if SLURM_ARRAY_TASK_ID is set (failsafe if run without --array)
+if [ -z "$SLURM_ARRAY_TASK_ID" ]; then
+    echo "Error: SLURM_ARRAY_TASK_ID is not set. Please submit with --array"
+    exit 1
+fi
 
-# Your Project Root in D21_101
+# Read the Nth line from the config list based on the array task ID
+CONFIG_LIST="configs_list.txt"
+CONFIG_FILE_PATH=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$CONFIG_LIST")
+
+if [ -z "$CONFIG_FILE_PATH" ]; then
+    echo "Error: No config found for array index $SLURM_ARRAY_TASK_ID"
+    exit 1
+fi
+
+echo "Array Task $SLURM_ARRAY_TASK_ID using config: $CONFIG_FILE_PATH"
+
+# ============================================================================
+# 1. PATH CONFIGURATION
+# ============================================================================
 MY_ROOT="/leonardo_work/EUHPC_D21_101/mfrey"
-MY_SCRATCH="/leonardo_scratch/fast/EUHPC_D21_101/mfrey"
-
-# path to container
 CONTAINER_IMAGE="${MY_ROOT}/containers/image_34c40a6bbdb8dcbb6d674d06caaa93af68d5692fb744eeb0e28908eea6158b13.sif"
-
-# path to code
 HOST_CODE_DIR="${MY_ROOT}/modalities"
 CONTAINER_CODE_DIR="/opt/repos/modalities" 
-
-# path to data
 HOST_DATA_DIR="/leonardo_work/EUHPC_E05_119/mfrey/tokenized"
 CONTAINER_DATA_DIR="/data"
 
-# config file
-CONFIG_FILE_PATH="config_files/loom/SepGates/loop5_512deep_11776wide_nomix_loop_enrich_gate_inputnorm.yaml"
-
-# Output directory for logs/checkpoints
-EXPERIMENT_ROOT="${MY_SCRATCH}/experiments/${SLURM_JOB_NAME}-${SLURM_JOB_ID}"
+# Make experiment root unique per array task so they don't overwrite each other
+EXPERIMENT_ROOT="${MY_ROOT}/experiments/${SLURM_JOB_NAME}-${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}"
 mkdir -p "${EXPERIMENT_ROOT}"
 
 # ============================================================================
 # 2. ENVIRONMENT SETUP
 # ============================================================================
-
 module purge
-
 export WANDB_MODE=offline
-export MASTER_ADDR=localhost # Safest for single-node multi-GPU
-export MASTER_PORT=$(( 10000 + (SLURM_JOB_ID % 50000) + (RANDOM % 1000) ))
+export MASTER_ADDR=localhost 
+# Use the array task ID to ensure distinct ports if multiple jobs land on the same node
+export MASTER_PORT=$(( 10000 + (SLURM_ARRAY_JOB_ID % 40000) + SLURM_ARRAY_TASK_ID ))
 export PYTHONPATH="${CONTAINER_CODE_DIR}:${PYTHONPATH}"
 
 echo "=========================================="
-echo "Job ID: ${SLURM_JOB_ID}"
+echo "Job ID: ${SLURM_JOB_ID} | Array ID: ${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 echo "Node:   ${SLURM_JOB_NODELIST}"
-echo "Container: ${CONTAINER_IMAGE}"
-echo "Data (Host): ${HOST_DATA_DIR}"
-echo "Data (Container): ${CONTAINER_DATA_DIR}"
+echo "Config: ${CONFIG_FILE_PATH}"
 echo "=========================================="
 
 # ============================================================================
-# 3. RUN TRAINING (Single Node, 4 GPUs)
+# 3. RUN TRAINING
 # ============================================================================
-# Check if "src" exists in your code path, otherwise remove "/src" from the line below
 export CONTAINER_SRC_DIR="${CONTAINER_CODE_DIR}/src"
 
 srun singularity exec --nv \
 --bind "${HOST_CODE_DIR}:${CONTAINER_CODE_DIR}" \
 --bind "${HOST_DATA_DIR}:${CONTAINER_DATA_DIR}" \
---bind "${MY_SCRATCH}/experiments:${MY_SCRATCH}/experiments" \
+--bind "${MY_ROOT}/experiments:${MY_ROOT}/experiments" \
 --bind "${MY_ROOT}/tokenizer:${MY_ROOT}/tokenizer" \
 "${CONTAINER_IMAGE}" bash -c "
-    # Force Python to look in your local code first
     export PYTHONPATH='${CONTAINER_SRC_DIR}':\$PYTHONPATH
-    
     cd ${CONTAINER_CODE_DIR}
     
-    echo 'Starting Torchrun...'
     torchrun \
         --rdzv_endpoint ${MASTER_ADDR}:${MASTER_PORT} \
-        --nnodes 1 \
+        --nnodes 16 \
         --nproc_per_node 4 \
         --rdzv_backend c10d \
         src/modalities/__main__.py run \

@@ -42,20 +42,20 @@ RUN_IDS_TO_EVALUATE = None
 # 5. MAPPING (MANIFEST)
 EXPERIMENT_MANIFEST = [
     {
-        "name":   "loop5_512deep_11776wide_final_nostats",
-        "run_id": "8tgqluhd",
-        "folder": "2026-03-30__16-01-06_bfa64a856144e693",
+        "name":   "loop7_512deep_11776wide_final_softmax",
+        "run_id": "d0h7v6jt",
+        "folder": "2026-04-01__17-53-03_cf0a36c1668ca9f8",
     },
     {
-        "name":   "loop3_512deep_11776wide_final_nostats",
-        "run_id": "2pp7ukk5",
-        "folder": "2026-03-30__18-50-11_258b23923dc8724e",
+        "name":   "loop7_512deep_11776wide_final_onegate",
+        "run_id": "2qhbsjzh",
+        "folder": "2026-04-01__17-57-05_cf0a36c1668ca9f8",
     },
-    {
-        "name":   "loop7_512deep_11776wide_final_nostats",
-        "run_id": "etgqjtc5",
-        "folder": "2026-03-31__10-47-04_cf0a36c1668ca9f8",
-    },
+    # {
+    #     "name":   "loop7_512deep_11776wide_final_nostats",
+    #     "run_id": "etgqjtc5",
+    #     "folder": "2026-03-31__10-47-04_cf0a36c1668ca9f8",
+    # },
 ]
 
 # =====================================================================

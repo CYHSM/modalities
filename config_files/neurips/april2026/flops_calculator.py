@@ -7,25 +7,36 @@ per-token FLOPs match a dense baseline, then optionally writes out YAML
 config files ready for training.
 
 Usage examples:
-  # Print FLOP tables (original behaviour)
+  # Print FLOP tables
   python flops_calculator.py table
 
-  # Generate YAML configs for a specific scenario
+  # Generate YAML configs for a specific scenario (custom ratios)
   python flops_calculator.py yaml \\
       --template base.yaml \\
       --output-dir configs/ \\
-      --baseline-layers 36 \\
+      --baseline-layers 60 \\
       --our-layers 12 \\
       --max-loops 5 \\
       --ratios 0.3 0.5 0.7
 
-  # Generate ALL configs for a NeurIPS paper (Table 1 + Table 2)
+  # Generate the full paper grid:
+  #   dense iso-FLOP, pure loop, pure wide, ratios + max-wide
+  #
+  # Small base (~370M):
   python flops_calculator.py paper \\
-      --template base.yaml \\
-      --output-dir paper_configs/ \\
-      --baseline-layers 36 \\
-      --our-layers 12 \\
-      --max-loops 5
+      --template base_leonardo_16nodes.yaml \\
+      --output-dir configs_d768 \\
+      --d-model 768 --n-head-q 12 --n-head-kv 12 \\
+      --baseline-layers 60 --our-layers 12 --max-loops 5 \\
+      --ratios 0.3 0.5 0.7
+  #
+  # 3x scaled base (~1B):
+  python flops_calculator.py paper \\
+      --template base_leonardo_16nodes.yaml \\
+      --output-dir configs_d1280 \\
+      --d-model 1280 --n-head-q 20 --n-head-kv 20 \\
+      --baseline-layers 60 --our-layers 12 --max-loops 5 \\
+      --ratios 0.3 0.5 0.7
 """
 
 import argparse
@@ -277,6 +288,17 @@ def _patch_yaml(template_text: str, res: dict) -> str:
     }
     if "_enable_adaptive" in res:
         patches[("model_raw", "enable_adaptive")] = str(res["_enable_adaptive"]).lower()
+    # Optional model-size patches (for scaling experiments)
+    if res.get("_d_model") is not None:
+        patches[("model_raw", "n_embd")] = str(res["_d_model"])
+    if res.get("_n_head_q") is not None:
+        patches[("model_raw", "n_head_q")] = str(res["_n_head_q"])
+    if res.get("_n_head_kv") is not None:
+        patches[("model_raw", "n_head_kv")] = str(res["_n_head_kv"])
+    # head_dim = d_model / n_head_q  (qk_norm normalized_shape, only literal one)
+    if res.get("_d_model") is not None and res.get("_n_head_q") is not None:
+        head_dim = res["_d_model"] // res["_n_head_q"]
+        patches[("model_raw", "normalized_shape")] = f"{head_dim} # n_embd / n_head_q"
 
     kv_re = re.compile(r'^(\s*)([\w_]+)(:\s+)(.+)$')
 
@@ -298,10 +320,12 @@ def _patch_yaml(template_text: str, res: dict) -> str:
         m = kv_re.match(line)
         if m and current_section:
             indent, key, sep, old_val = m.group(1), m.group(2), m.group(3), m.group(4)
-            patch_key = (current_section, key)
-            if patch_key in patches:
-                new_val = patches[patch_key]
-                line = f"{indent}{key}{sep}{new_val}\n"
+            # Don't overwrite YAML interpolation refs like `${model_raw.config.n_embd}`
+            if not old_val.lstrip().startswith('${'):
+                patch_key = (current_section, key)
+                if patch_key in patches:
+                    new_val = patches[patch_key]
+                    line = f"{indent}{key}{sep}{new_val}\n"
 
         out_lines.append(line)
 
@@ -364,18 +388,50 @@ def generate_yamls(
 # Paper config generator (Table 1 + Table 2)
 # =====================================================================
 
-def _write_and_log(template_path, output_dir, res, tag, params=None):
+def _write_and_log(template_path, output_dir, res, tag, params=None,
+                   baseline_params=None):
     """Write one YAML and print a summary line."""
     exp_id = _make_experiment_id(res)
     out_path = os.path.join(output_dir, f"{exp_id}.yaml")
     write_yaml(template_path, out_path, res)
-    param_str = f"  params={params/1e6:.1f}M" if params else ""
+    # Stash params on res so the summary table can use it
+    if params is not None:
+        res["_params"] = params
+    param_str = ""
+    if params is not None:
+        param_str = f"  params={params/1e6:.1f}M"
+        if baseline_params is not None and baseline_params > 0:
+            delta_pct = (params / baseline_params - 1.0) * 100
+            sign = "+" if delta_pct >= 0 else ""
+            param_str += f" ({sign}{delta_pct:.1f}% vs baseline)"
     print(f"  ✓  [{tag}]  {exp_id}")
     print(f"     L={res['our_layers']}  loops={res['max_loops']}  "
           f"ffn_deep={res['Target ffn_deep']}  ffn_wide={res['Target ffn_wide']}  "
           f"match={res['FLOP Match']}{param_str}")
     print(f"     -> {out_path}")
     return out_path, exp_id, res
+
+
+def _find_max_wide_ratio(d_model, baseline_layers, dense_ffn_mult, our_layers,
+                         max_loops, ffn_round_multiple, n_head_q, n_head_kv,
+                         step=0.01, start=0.99):
+    """Walk down from `start` in `step` increments and return the highest
+    capacity_ratio for which the deep path is still feasible (deep budget can
+    afford `max_loops` of attention plus at least one ffn_round_multiple of
+    FFN). Returns (ratio, result_dict) or (None, None)."""
+    r = start
+    while r > 0.0:
+        res = asymmetric_dual_config(
+            d_model=d_model, target_dense_layers=baseline_layers,
+            dense_ffn_mult=dense_ffn_mult, our_layers=our_layers,
+            max_loops=max_loops, capacity_ratio=r,
+            ffn_round_multiple=ffn_round_multiple,
+            n_head_q=n_head_q, n_head_kv=n_head_kv,
+        )
+        if "error" not in res:
+            return r, res
+        r = round(r - step, 4)
+    return None, None
 
 
 def generate_paper_configs(
@@ -391,87 +447,75 @@ def generate_paper_configs(
     use_weight_tying: bool = False,
     n_head_q: int | None = None,
     n_head_kv: int | None = None,
-    table2_ratios: list[float] | None = None,
+    ratios: list[float] | None = None,
+    find_max_wide: bool = True,
 ):
     """
-    Generate every YAML config needed for a NeurIPS paper.
+    Generate the experiment grid for a single (d_model, baseline_layers) setup.
 
-    Table 1 — Main comparison (all iso-FLOP to `baseline_layers` dense):
-      1. Dense iso-FLOP          36L dense, loops=1, wide=0
-      2. Dense iso-param          ≈22L dense (matched to dual-50/50 param count)
-      3. Pure loop                12L, 5 loops, ratio=0  (all budget → deep)
-      4. Pure wide                12L, loops=1, ratio=1  (all budget → wide)
-      5. Best dual (50/50)        12L, 5 loops, ratio=0.5
-
-    Table 2 — Ratio sweep (all iso-FLOP):
-      ratio = 0.0, 0.1, 0.2, ..., 0.9, 1.0
+    Generates:
+      1. Dense iso-FLOP        baseline_layers L dense
+      2. Pure loop             our_layers L, max_loops loops, ratio=0
+      3. Pure wide             our_layers L, loops=1, ratio=1
+      4. Ratio sweep           our_layers L, max_loops loops, default [0.3, 0.5, 0.7]
+                               (capacity_ratio = wide fraction)
+      5. Max-wide              the most wide-heavy ratio still feasible
+                               (search in 0.01 steps)
     """
     n_rep = (n_head_q // n_head_kv) if (n_head_q and n_head_kv) else 1
     dense_ffn = d_model * dense_ffn_mult
-    if table2_ratios is None:
-        table2_ratios = [round(x * 0.1, 2) for x in range(11)]
+    if ratios is None:
+        ratios = [0.3, 0.5, 0.7]
 
+    # All results carry the model size so the YAML patcher can write
+    # n_embd / n_head_q / n_head_kv / qk_norm head_dim correctly.
+    def _add_size_info(res):
+        res["_d_model"] = d_model
+        res["_n_head_q"] = n_head_q
+        res["_n_head_kv"] = n_head_kv
+        return res
+
+    # Tag every experiment id with the model size so configs from the
+    # small and large runs land in disjoint namespaces.
+    tag = f"d{d_model}"
     all_results = []
 
-    # =================================================================
-    # TABLE 1
-    # =================================================================
     print(f"\n{'='*70}")
-    print(f"  TABLE 1 — Main iso-FLOP comparison")
-    print(f"  Baseline: {baseline_layers}L dense  (d={d_model}, ffn={dense_ffn})")
-    print(f"  Dual:     {our_layers}L, {max_loops} loops")
+    print(f"  PAPER CONFIGS")
+    print(f"  d_model={d_model}  (heads q={n_head_q}, kv={n_head_kv})")
+    print(f"  Baseline:  {baseline_layers}L dense, ffn={dense_ffn}")
+    print(f"  Dual:      {our_layers}L × {max_loops} loops")
+    print(f"  Ratios:    {ratios}    +max-wide search: {find_max_wide}")
     print(f"{'='*70}\n")
 
-    # --- 1a. Dense iso-FLOP ---
-    # baseline_layers layers, 1 loop, no wide path → ffn ≈ dense_ffn
-    dense_isoflop = asymmetric_dual_config(
+    # Track baseline for "% vs baseline" — set once dense iso-FLOP succeeds.
+    baseline_params = None
+
+    # --- 1. Dense iso-FLOP ---
+    # baseline_layers layers, 1 loop, no wide path. Set layer_types=["loop"]*L
+    # so every block is a single-pass deep block (= plain dense).
+    dense_iso = asymmetric_dual_config(
         d_model=d_model, target_dense_layers=baseline_layers,
         dense_ffn_mult=dense_ffn_mult, our_layers=baseline_layers,
         max_loops=1, capacity_ratio=0.0, ffn_round_multiple=ffn_round_multiple,
         n_head_q=n_head_q, n_head_kv=n_head_kv,
     )
-    dense_isoflop["_exp_id"] = f"t1_dense_isoflop_{baseline_layers}L"
-    dense_params = count_dense_params(d_model, baseline_layers, dense_ffn,
-                                      vocab_size, use_weight_tying, n_rep)
-    all_results.append(_write_and_log(template_path, output_dir,
-                                      dense_isoflop, "Dense iso-FLOP", dense_params))
-
-    # --- 1b. Dense iso-param ---
-    # First compute param count of the reference dual model (50/50)
-    ref_dual = asymmetric_dual_config(
-        d_model=d_model, target_dense_layers=baseline_layers,
-        dense_ffn_mult=dense_ffn_mult, our_layers=our_layers,
-        max_loops=max_loops, capacity_ratio=0.5,
-        ffn_round_multiple=ffn_round_multiple,
-        n_head_q=n_head_q, n_head_kv=n_head_kv,
-    )
-    if "error" not in ref_dual:
-        dual_params = count_model_params(
-            d_model, our_layers, max_loops,
-            ref_dual["Target ffn_deep"], ref_dual["Target ffn_wide"],
-            vocab_size, use_weight_tying, "dual", n_rep,
-        )
-        L_iso = solve_isoparam_dense_layers(dual_params, d_model, dense_ffn_mult,
-                                            vocab_size, use_weight_tying, n_rep)
-        # Build a result dict for the iso-param dense model
-        isoparam_dense = asymmetric_dual_config(
-            d_model=d_model, target_dense_layers=L_iso,
-            dense_ffn_mult=dense_ffn_mult, our_layers=L_iso,
-            max_loops=1, capacity_ratio=0.0,
-            ffn_round_multiple=ffn_round_multiple,
-            n_head_q=n_head_q, n_head_kv=n_head_kv,
-        )
-        isoparam_dense["_exp_id"] = f"t1_dense_isoparam_{L_iso}L"
-        isoparam_params = count_dense_params(d_model, L_iso, dense_ffn,
-                                             vocab_size, use_weight_tying, n_rep)
+    if "error" not in dense_iso:
+        if dense_iso["Target ffn_wide"] == 0:
+            dense_iso["Target ffn_wide"] = 64   # dummy, ignored by "loop" layers
+        dense_iso["_layer_types"] = ["loop"] * baseline_layers
+        dense_iso["_exp_id"] = f"{tag}_dense_isoflop_{baseline_layers}L"
+        _add_size_info(dense_iso)
+        dense_params = count_dense_params(d_model, baseline_layers, dense_ffn,
+                                          vocab_size, use_weight_tying, n_rep)
+        baseline_params = dense_params
         all_results.append(_write_and_log(template_path, output_dir,
-                                          isoparam_dense, "Dense iso-param", isoparam_params))
-        print(f"     (matched to dual-50/50 with {dual_params/1e6:.1f}M params"
-              f" -> {L_iso}L dense with {isoparam_params/1e6:.1f}M params)")
+                                          dense_iso, "Dense iso-FLOP", dense_params,
+                                          baseline_params=baseline_params))
     else:
-        print(f"  ⚠  Skipping iso-param: reference dual failed: {ref_dual['error']}")
+        print(f"  ⚠  Skipping dense iso-FLOP: {dense_iso['error']}")
 
-    # --- 1c. Pure loop (ratio=0, no wide path) ---
+    # --- 2. Pure loop (ratio=0, no wide path) ---
     pure_loop = asymmetric_dual_config(
         d_model=d_model, target_dense_layers=baseline_layers,
         dense_ffn_mult=dense_ffn_mult, our_layers=our_layers,
@@ -480,20 +524,24 @@ def generate_paper_configs(
         n_head_q=n_head_q, n_head_kv=n_head_kv,
     )
     if "error" not in pure_loop:
-        pure_loop["_exp_id"] = (f"t1_pure_loop{max_loops}_"
+        if pure_loop["Target ffn_wide"] == 0:
+            pure_loop["Target ffn_wide"] = 64   # dummy, ignored by "loop" layers
+        pure_loop["_layer_types"] = ["loop"] * our_layers
+        pure_loop["_exp_id"] = (f"{tag}_pure_loop{max_loops}_"
                                 f"{pure_loop['Target ffn_deep']}deep_{our_layers}L")
+        _add_size_info(pure_loop)
         loop_params = count_model_params(
             d_model, our_layers, max_loops,
             pure_loop["Target ffn_deep"], 0,
             vocab_size, use_weight_tying, "loop", n_rep,
         )
         all_results.append(_write_and_log(template_path, output_dir,
-                                          pure_loop, "Pure loop", loop_params))
+                                          pure_loop, "Pure loop", loop_params,
+                                          baseline_params=baseline_params))
     else:
         print(f"  ⚠  Skipping pure loop: {pure_loop['error']}")
 
-    # --- 1d. Pure wide (ratio=1, single pass, all budget to wide) ---
-    # Use max_loops=1 since loops are irrelevant; set layer_types=["wide"]
+    # --- 3. Pure wide (ratio=1, single pass, all budget to wide) ---
     pure_wide = asymmetric_dual_config(
         d_model=d_model, target_dense_layers=baseline_layers,
         dense_ffn_mult=dense_ffn_mult, our_layers=our_layers,
@@ -502,94 +550,117 @@ def generate_paper_configs(
         n_head_q=n_head_q, n_head_kv=n_head_kv,
     )
     if "error" not in pure_wide:
-        # ffn_deep=0 is invalid in config; set a dummy value (unused by "wide" layers)
         if pure_wide["Target ffn_deep"] == 0:
             pure_wide["Target ffn_deep"] = 64
-        pure_wide["_exp_id"] = (f"t1_pure_wide_"
-                                f"{pure_wide['Target ffn_wide']}wide_{our_layers}L")
         pure_wide["_layer_types"] = ["wide"] * our_layers
+        pure_wide["_exp_id"] = (f"{tag}_pure_wide_"
+                                f"{pure_wide['Target ffn_wide']}wide_{our_layers}L")
+        _add_size_info(pure_wide)
         wide_params = count_model_params(
-            d_model, our_layers, 1,
-            0, pure_wide["Target ffn_wide"],
+            d_model, our_layers, 1, 0, pure_wide["Target ffn_wide"],
             vocab_size, use_weight_tying, "wide", n_rep,
         )
         all_results.append(_write_and_log(template_path, output_dir,
-                                          pure_wide, "Pure wide", wide_params))
+                                          pure_wide, "Pure wide", wide_params,
+                                          baseline_params=baseline_params))
     else:
         print(f"  ⚠  Skipping pure wide: {pure_wide['error']}")
 
-    # --- 1e. Best dual (50/50 reference, also appears in Table 2) ---
-    if "error" not in ref_dual:
-        ref_dual["_exp_id"] = (f"t1_dual_{ref_dual['Target ffn_deep']}deep_"
-                               f"{ref_dual['Target ffn_wide']}wide_{our_layers}L_"
-                               f"{max_loops}loops")
-        all_results.append(_write_and_log(template_path, output_dir,
-                                          ref_dual, "Dual 50/50", dual_params))
-
-    # =================================================================
-    # TABLE 2 — Ratio sweep
-    # =================================================================
-    print(f"\n{'='*70}")
-    print(f"  TABLE 2 — Capacity ratio sweep (all iso-FLOP to {baseline_layers}L dense)")
-    print(f"  {our_layers}L, {max_loops} loops, ratios: {table2_ratios}")
-    print(f"{'='*70}\n")
-
-    for r in table2_ratios:
-        # Pure wide endpoint: special handling (layer_types)
-        if r == 1.0:
-            res = asymmetric_dual_config(
-                d_model=d_model, target_dense_layers=baseline_layers,
-                dense_ffn_mult=dense_ffn_mult, our_layers=our_layers,
-                max_loops=1, capacity_ratio=1.0,
-                ffn_round_multiple=ffn_round_multiple,
-                n_head_q=n_head_q, n_head_kv=n_head_kv,
-            )
-            if "error" not in res:
-                if res["Target ffn_deep"] == 0:
-                    res["Target ffn_deep"] = 64
-                res["_layer_types"] = ["wide"] * our_layers
-        elif r == 0.0:
-            res = asymmetric_dual_config(
-                d_model=d_model, target_dense_layers=baseline_layers,
-                dense_ffn_mult=dense_ffn_mult, our_layers=our_layers,
-                max_loops=max_loops, capacity_ratio=0.0,
-                ffn_round_multiple=ffn_round_multiple,
-                n_head_q=n_head_q, n_head_kv=n_head_kv,
-            )
-        else:
-            res = asymmetric_dual_config(
-                d_model=d_model, target_dense_layers=baseline_layers,
-                dense_ffn_mult=dense_ffn_mult, our_layers=our_layers,
-                max_loops=max_loops, capacity_ratio=r,
-                ffn_round_multiple=ffn_round_multiple,
-                n_head_q=n_head_q, n_head_kv=n_head_kv,
-            )
-
+    # --- 4. Ratio sweep ---
+    for r in ratios:
+        res = asymmetric_dual_config(
+            d_model=d_model, target_dense_layers=baseline_layers,
+            dense_ffn_mult=dense_ffn_mult, our_layers=our_layers,
+            max_loops=max_loops, capacity_ratio=r,
+            ffn_round_multiple=ffn_round_multiple,
+            n_head_q=n_head_q, n_head_kv=n_head_kv,
+        )
         if "error" in res:
             print(f"  ⚠  Skipping ratio {r:.0%}: {res['error']}")
             continue
-
-        ratio_pct = int(r * 100)
-        res["_exp_id"] = (f"t2_r{ratio_pct:02d}w{100-ratio_pct:02d}d_"
-                          f"{res['Target ffn_deep']}deep_{res['Target ffn_wide']}wide")
+        wp = int(round(r * 100))
+        dp = 100 - wp
+        res["_exp_id"] = (f"{tag}_dual_r{wp:02d}w{dp:02d}d_"
+                          f"{res['Target ffn_deep']}deep_{res['Target ffn_wide']}wide_"
+                          f"{our_layers}L_loop{max_loops}")
+        _add_size_info(res)
+        params = count_model_params(
+            d_model, our_layers, max_loops,
+            res["Target ffn_deep"], res["Target ffn_wide"],
+            vocab_size, use_weight_tying, "dual", n_rep,
+        )
         all_results.append(_write_and_log(template_path, output_dir,
-                                          res, f"Table2 {ratio_pct}w/{100-ratio_pct}d"))
+                                          res, f"Ratio {wp}w/{dp}d", params,
+                                          baseline_params=baseline_params))
+
+    # --- 5. Max-wide search (highest feasible wide-heavy ratio) ---
+    if find_max_wide:
+        best_r, best_res = _find_max_wide_ratio(
+            d_model=d_model, baseline_layers=baseline_layers,
+            dense_ffn_mult=dense_ffn_mult, our_layers=our_layers,
+            max_loops=max_loops, ffn_round_multiple=ffn_round_multiple,
+            n_head_q=n_head_q, n_head_kv=n_head_kv,
+        )
+        if best_res is not None:
+            already = any(abs(best_r - rr) < 0.005 for rr in ratios)
+            if already:
+                print(f"\n  Max-wide ratio {best_r:.2f} already in --ratios, "
+                      f"skipping duplicate.")
+            else:
+                wp = int(round(best_r * 100))
+                dp = 100 - wp
+                best_res["_exp_id"] = (
+                    f"{tag}_dual_MAXWIDE_r{wp:02d}w{dp:02d}d_"
+                    f"{best_res['Target ffn_deep']}deep_"
+                    f"{best_res['Target ffn_wide']}wide_"
+                    f"{our_layers}L_loop{max_loops}"
+                )
+                _add_size_info(best_res)
+                params = count_model_params(
+                    d_model, our_layers, max_loops,
+                    best_res["Target ffn_deep"], best_res["Target ffn_wide"],
+                    vocab_size, use_weight_tying, "dual", n_rep,
+                )
+                print(f"\n  Max-wide search: highest feasible ratio = {best_r:.2f}  "
+                      f"({wp}% wide / {dp}% deep)")
+                all_results.append(_write_and_log(template_path, output_dir,
+                                                  best_res,
+                                                  f"MAX-WIDE {wp}w/{dp}d", params,
+                                                  baseline_params=baseline_params))
+        else:
+            print("\n  ⚠  Max-wide search found no feasible ratio")
 
     # =================================================================
     # Summary
     # =================================================================
     print(f"\n{'='*70}")
     print(f"  SUMMARY:  {len(all_results)} configs written to {output_dir}/")
+    if baseline_params is not None:
+        print(f"  Baseline (dense iso-FLOP) = {baseline_params/1e6:.1f}M params")
     print(f"{'='*70}\n")
 
     # Print a compact table for copy-paste
     print(f"  {'Experiment ID':<58s} {'L':>3s} {'Lp':>3s} "
-          f"{'FFN_d':>6s} {'FFN_w':>6s} {'Match':>7s}")
-    print(f"  {'-'*58} {'-'*3} {'-'*3} {'-'*6} {'-'*6} {'-'*7}")
+          f"{'FFN_d':>6s} {'FFN_w':>6s} {'Match':>7s} "
+          f"{'Params':>9s} {'vs base':>9s}")
+    print(f"  {'-'*58} {'-'*3} {'-'*3} {'-'*6} {'-'*6} {'-'*7} "
+          f"{'-'*9} {'-'*9}")
     for _, eid, r in all_results:
+        params = r.get("_params")
+        if params is not None:
+            params_str = f"{params/1e6:.1f}M"
+            if baseline_params is not None and baseline_params > 0:
+                delta_pct = (params / baseline_params - 1.0) * 100
+                sign = "+" if delta_pct >= 0 else ""
+                vs_str = f"{sign}{delta_pct:.1f}%"
+            else:
+                vs_str = "-"
+        else:
+            params_str = "-"
+            vs_str = "-"
         print(f"  {eid:<58s} {r['our_layers']:>3d} {r['max_loops']:>3d} "
               f"{r['Target ffn_deep']:>6d} {r['Target ffn_wide']:>6d} "
-              f"{r['FLOP Match']:>7s}")
+              f"{r['FLOP Match']:>7s} {params_str:>9s} {vs_str:>9s}")
 
     return all_results
 
@@ -638,8 +709,10 @@ def build_parser():
     pp.add_argument("--max-loops", type=int, required=True)
     pp.add_argument("--vocab-size", type=int, default=50304)
     pp.add_argument("--weight-tying", action="store_true", default=False)
-    pp.add_argument("--table2-ratios", type=float, nargs="+", default=None,
-                    help="Custom ratio list for Table 2 (default: 0.0 to 1.0 in 0.1 steps)")
+    pp.add_argument("--ratios", type=float, nargs="+", default=[0.3, 0.5, 0.7],
+                    help="Wide-fraction ratios to sweep (default: 0.3 0.5 0.7)")
+    pp.add_argument("--no-max-wide", action="store_true", default=False,
+                    help="Skip the max-wide search (most extreme wide-heavy ratio).")
 
     return p
 
@@ -686,7 +759,8 @@ def main():
             vocab_size=args.vocab_size,
             use_weight_tying=args.weight_tying,
             n_head_q=args.n_head_q, n_head_kv=args.n_head_kv,
-            table2_ratios=args.table2_ratios,
+            ratios=args.ratios,
+            find_max_wide=not args.no_max_wide,
         )
 
 

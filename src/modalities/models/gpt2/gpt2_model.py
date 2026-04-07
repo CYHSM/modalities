@@ -488,54 +488,6 @@ class DualPathGate(nn.Module):
             }
         return blended, gate_deep, gate_wide, aux
 
-# BTD Softmax
-# class DualPathGate(nn.Module):
-#     def __init__(self, n_embd: int, init_bias_deep: float = 0.0, init_bias_wide: float = 0.0):
-#         super().__init__()
-#         self.n_embd = n_embd
-        
-#         # Use two separate linear layers to avoid DTensor slice-initialization bugs
-#         self.proj_deep = nn.Linear(n_embd, n_embd, bias=True)
-#         self.proj_wide = nn.Linear(n_embd, n_embd, bias=True)
-        
-#         self.init_bias_deep = init_bias_deep
-#         self.init_bias_wide = init_bias_wide
-#         self.reset_parameters()
-
-#     def reset_parameters(self):
-#         # DTensor fully supports these whole-tensor initializations
-#         nn.init.zeros_(self.proj_deep.weight)
-#         nn.init.zeros_(self.proj_wide.weight)
-#         with torch.no_grad():
-#             nn.init.constant_(self.proj_deep.bias, self.init_bias_deep)
-#             nn.init.constant_(self.proj_wide.bias, self.init_bias_wide)
-
-#     def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor):
-#         # Get logits for both paths: shapes are (B, T, D)
-#         logit_deep = self.proj_deep(x)
-#         logit_wide = self.proj_wide(x)
-        
-#         # Stack them together along a new last dimension -> shape: (B, T, D, 2)
-#         logits = torch.stack([logit_deep, logit_wide], dim=-1)
-        
-#         # Softmax over the last dimension forces deep + wide == 1.0 for EVERY feature
-#         gates = torch.softmax(logits, dim=-1)
-        
-#         # Extract the shapes: (B, T, D)
-#         gate_deep = gates[..., 0]
-#         gate_wide = gates[..., 1]
-        
-#         blended = gate_deep * h_deep + gate_wide * h_wide
-
-#         with torch.no_grad():
-#             aux = {
-#                 "gate_logit_deep_mean": logit_deep.mean(),
-#                 "gate_logit_deep_std": logit_deep.std(),
-#                 "gate_logit_wide_mean": logit_wide.mean(),
-#                 "gate_logit_wide_std": logit_wide.std(),
-#             }
-#         return blended, gate_deep, gate_wide, aux
-
 # =============================================================================
 # Adaptive Recursive Block
 # =============================================================================
