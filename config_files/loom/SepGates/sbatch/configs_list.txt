@@ -1,0 +1,2 @@
+config_files/loom/SepGates/loop5_512deep_11776wide_nomix_loop_enrich_gate_inputnorm.yaml
+config_files/loom/SepGates/loop5_512deep_11776wide_nomix_loop_enrich_gate_mlp_proj.yaml

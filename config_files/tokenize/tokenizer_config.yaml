@@ -1,0 +1,18 @@
+settings:
+  src_path: __SRC__
+  dst_path: __DST__
+  index_path: __IDX__
+  jq_pattern: .text
+  num_cpus: 8
+  eod_token: <|endoftext|>
+  processing_batch_size: 512
+  raw_samples_queue_size: 1024
+  processed_samples_queue_size: 1024
+
+tokenizer:
+  component_key: tokenizer
+  variant_key: pretrained_hf_tokenizer
+  config:
+    pretrained_model_name_or_path: openai-community/gpt2
+    padding: false
+    truncation: false

@@ -1,0 +1,174 @@
+==========================================
+Job ID: 35033772
+Node:   lrdn0118
+Container: /leonardo_work/EUHPC_D21_101/mfrey/containers/image_34c40a6bbdb8dcbb6d674d06caaa93af68d5692fb744eeb0e28908eea6158b13.sif
+Data (Host): /leonardo_work/EUHPC_E05_119/mfrey/tokenized
+Data (Container): /data
+==========================================
+Loading modalities from: /opt/repos/modalities/src/modalities/__init__.py
+Starting Torchrun...
+Rank 0 received experiment_id: 2026-02-26__11-54-09_2ec2926ed3fcf29d
+Instantiated <class 'torch.distributed.device_mesh.DeviceMesh'>: device_mesh
+Instantiated <class 'int'>: dp_degree
+Instantiated <class 'int'>: settings -> training_target -> num_target_steps
+Instantiated <class 'modalities.models.gpt2.gpt2_model.GPT2LLM'>: model_raw
+Instantiated <class 'modalities.models.gpt2.gpt2_model.GPT2LLM'>: compiled_model
+Instantiated <class 'torch.distributed.fsdp._fully_shard._fully_shard.FSDPGPT2LLM'>: fsdp_model
+Instantiated <class 'modalities.nn.model_initialization.composed_initialization.ModelInitializerWrapper'>: initialized_model -> config -> model_initializer
+Instantiated <class 'torch.distributed.fsdp._fully_shard._fully_shard.FSDPGPT2LLM'>: initialized_model
+=> optimizer groups:
+with_weight_decay (338 modules with 335,964,000 parameters): weight_decay = 0.1
+without_weight_decay (1 modules with 38,633,472 parameters): weight_decay = 0.0
+=> all (339 modules with 374,597,472 parameters)
+Instantiated <class 'torch.optim.adamw.AdamW'>: optimizer
+Instantiated <class 'int'>: lr_scheduler -> config -> total_steps
+Instantiated <class 'torch.optim.lr_scheduler.OneCycleLR'>: lr_scheduler
+Instantiated <class 'modalities.checkpointing.stateful.app_state.AppState'>: app_state
+Instantiated <class 'modalities.loss_functions.CLMCrossEntropyWithPonderLoss'>: loss_fn
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 0
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 1
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 2
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 3
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 4
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 5
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 6
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 7
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 8
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 9
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 10
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 11
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 12
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 13
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 14
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 15
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 16
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 17
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 18
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 19
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 20
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 21
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 22
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 23
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 24
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 25
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 26
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 27
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 28
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 29
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 30
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 31
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 32
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 33
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 34
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 35
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 36
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 37
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 38
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 39
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 40
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 41
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 42
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 43
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 44
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 45
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 46
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 47
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 48
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 49
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 50
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 51
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 52
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 53
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 54
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 55
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 56
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 57
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 58
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 59
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 60
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 61
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 62
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 63
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 64
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 65
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 66
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 67
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 68
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 69
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 70
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 71
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 72
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 73
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 74
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 75
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 76
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 77
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 78
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 79
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 80
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 81
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 82
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 83
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 84
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 85
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 86
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 87
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 88
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 89
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 90
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 91
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 92
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 93
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 94
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 95
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 96
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 97
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 98
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 99
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 100
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 101
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 102
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 103
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 104
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 105
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 106
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 107
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 108
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 109
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 110
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 111
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 112
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 113
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 114
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 115
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 116
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 117
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 118
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 119
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 120
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 121
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 122
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 123
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 124
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 125
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: train_dataset -> config -> datasets -> 126
+Instantiated <class 'modalities.dataloader.dataset.CombinedDataset'>: train_dataset
+Instantiated <class 'modalities.dataloader.samplers.ResumableDistributedSampler'>: train_dataloader -> config -> batch_sampler -> config -> sampler
+Instantiated <class 'torch.utils.data.sampler.BatchSampler'>: train_dataloader -> config -> batch_sampler
+Instantiated <class 'modalities.models.gpt2.collator.GPT2LLMCollateFn'>: collate_fn
+Instantiated <class 'modalities.dataloader.dataloader.LLMDataLoader'>: train_dataloader
+Instantiated <class 'modalities.dataloader.dataset.PackedMemMapDatasetContinuous'>: eval_dataset
+Instantiated <class 'torch.utils.data.distributed.DistributedSampler'>: eval_dataloader -> config -> batch_sampler -> config -> sampler
+Instantiated <class 'torch.utils.data.sampler.BatchSampler'>: eval_dataloader -> config -> batch_sampler
+Instantiated <class 'modalities.dataloader.dataloader.LLMDataLoader'>: eval_dataloader
+Instantiated <class 'int'>: progress_subscriber -> config -> num_target_steps
+Instantiated <class 'modalities.logging_broker.subscriber_impl.progress_subscriber.RichProgressSubscriber'>: progress_subscriber
+Instantiated <class 'modalities.logging_broker.subscriber_impl.results_subscriber.WandBEvaluationResultSubscriber'>: evaluation_subscriber
+Instantiated <class 'modalities.checkpointing.checkpoint_saving_strategies.SaveKMostRecentCheckpointsStrategy'>: checkpoint_saving -> config -> checkpoint_saving_strategy
+Instantiated <class 'modalities.checkpointing.fsdp.fsdp_checkpoint_saving.DCPCheckpointSaving'>: checkpoint_saving -> config -> checkpoint_saving_execution
+Instantiated <class 'modalities.checkpointing.checkpoint_saving.CheckpointSaving'>: checkpoint_saving
+Instantiated <class 'modalities.training.gradient_clipping.fsdp_gradient_clipper.FSDP2GradientClipper'>: gradient_clipper
+[1;34mwandb[0m: 
+[1;34mwandb[0m: You can sync this run to the cloud by running:
+[1;34mwandb[0m: [1mwandb sync /opt/repos/modalities/wandb_storage/wandb/offline-run-20260226_115420-obn7xy23[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb_storage/wandb/offline-run-20260226_115420-obn7xy23/logs[0m

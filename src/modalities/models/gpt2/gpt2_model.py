@@ -59,6 +59,7 @@ class AdaptiveComputationConfig(BaseModel):
     wide_gate_init_bias: float = 0.0
     scheduler_type: str = "constant"
     layer_types: Optional[list[str]] = None
+    use_cross: bool = False  # Restored cross-scale toggle
 
 
 class LayerNorms(LookupEnum):
@@ -419,14 +420,7 @@ class StepMetrics:
 def _displacement_stats(
     h: torch.Tensor, x: torch.Tensor, eps: float = 1e-6
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return (relative_norm, cosine_similarity) between h and x.
-
-    relative_norm: ||h - x|| / (||x|| + eps)   — shape (B, T)
-    cosine_sim:    cos(h, x)                    — shape (B, T)
-
-    NOTE: Callers are responsible for torch.no_grad() context if gradients
-    are not needed.
-    """
+    """Return (relative_norm, cosine_similarity) between h and x."""
     diff = h - x
     x_norm = x.norm(dim=-1).clamp(min=eps)
     rel_norm = diff.norm(dim=-1) / x_norm
@@ -453,15 +447,42 @@ class AdaptiveRouter(nn.Module):
         return torch.sigmoid(logit).squeeze(-1)
 
 
-# --- Dual Path Gate (enriched, two independent sigmoids) ---
+# --- Dual Path Gate (coupled softmax with restored cross-path logic) ---
 
-# BT1
 class DualPathGate(nn.Module):
+    """
+    Decoupled sigmoid gate (from Doc 2) with Doc 1's per-token logging.
+
+    Structure (matches Doc 2, stable):
+        h_deep_out = h_deep + scale_deep * proj_w2d(h_wide)
+        h_wide_out = h_wide + scale_wide * proj_d2w(h_deep)
+        blended    = gate_deep * h_deep_out + gate_wide * h_wide_out
+
+    Gates are independent sigmoids (NOT a softmax), so the two paths
+    don't fight each other in a zero-sum tug-of-war.
+
+    Logging decomposition (for token-level analysis):
+        pure_deep   = gate_deep * h_deep        # deep path's own contribution
+        pure_wide   = gate_wide * h_wide        # wide path's own contribution
+        contam_w2d  = gate_deep * scale_deep * proj_w2d(h_wide)   # wide -> deep leak
+        contam_d2w  = gate_wide * scale_wide * proj_d2w(h_deep)   # deep -> wide leak
+
+    Per-token contamination magnitude for token i is
+    gate_deep(i) * softplus(cross_scale_deep) * ||proj_w2d(h_wide)(i)||
+    which is exactly what token_norm_contam_w2d captures.
+    """
+
     def __init__(self, n_embd: int, init_bias_deep: float = 0.0, init_bias_wide: float = 0.0):
         super().__init__()
         self.init_bias_deep = init_bias_deep
         self.init_bias_wide = init_bias_wide
         self.gate_proj = nn.Linear(n_embd, 2, bias=True)
+
+        self.proj_w2d = nn.Linear(n_embd, n_embd, bias=False)
+        self.proj_d2w = nn.Linear(n_embd, n_embd, bias=False)
+        self.cross_scale_wide = nn.Parameter(torch.tensor([-7.0]))
+        self.cross_scale_deep = nn.Parameter(torch.tensor([-7.0]))
+
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -469,22 +490,51 @@ class DualPathGate(nn.Module):
         with torch.no_grad():
             self.gate_proj.bias[0] = self.init_bias_deep
             self.gate_proj.bias[1] = self.init_bias_wide
+        nn.init.zeros_(self.proj_w2d.weight)
+        nn.init.zeros_(self.proj_d2w.weight)
 
-    def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor):
+    def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor, use_cross: bool = False):
         logits = self.gate_proj(x)
-        gates = torch.softmax(logits, dim=-1)
-        
+        gates = torch.sigmoid(logits)
+
         gate_deep = gates[..., 0:1]
         gate_wide = gates[..., 1:2]
-        
-        blended = gate_deep * h_deep + gate_wide * h_wide
+
+        # Pure per-path contributions (gated own signal)
+        pure_deep = gate_deep * h_deep
+        pure_wide = gate_wide * h_wide
+
+        if use_cross:
+            scale_deep = F.softplus(self.cross_scale_deep)
+            scale_wide = F.softplus(self.cross_scale_wide)
+
+            cross_w_into_d = scale_deep * self.proj_w2d(h_wide)
+            cross_d_into_w = scale_wide * self.proj_d2w(h_deep)
+
+            contam_w2d = gate_deep * cross_w_into_d
+            contam_d2w = gate_wide * cross_d_into_w
+
+            h_deep_out = pure_deep + contam_w2d
+            h_wide_out = pure_wide + contam_d2w
+        else:
+            contam_w2d = torch.zeros_like(pure_deep)
+            contam_d2w = torch.zeros_like(pure_wide)
+            h_deep_out = pure_deep
+            h_wide_out = pure_wide
+
+        blended = h_deep_out + h_wide_out
 
         with torch.no_grad():
             aux = {
                 "gate_logit_deep_mean": logits[..., 0].mean(),
-                "gate_logit_deep_std": logits[..., 0].std(),
+                "gate_logit_deep_std":  logits[..., 0].std(),
                 "gate_logit_wide_mean": logits[..., 1].mean(),
-                "gate_logit_wide_std": logits[..., 1].std(),
+                "gate_logit_wide_std":  logits[..., 1].std(),
+                # (B, T) per-token norms — keep un-meaned for eval extraction
+                "token_norm_pure_deep":   pure_deep.norm(dim=-1),
+                "token_norm_pure_wide":   pure_wide.norm(dim=-1),
+                "token_norm_contam_w2d":  contam_w2d.norm(dim=-1),
+                "token_norm_contam_d2w":  contam_d2w.norm(dim=-1),
             }
         return blended, gate_deep, gate_wide, aux
 
@@ -555,7 +605,6 @@ class AdaptiveRecursiveBlock(nn.Module):
                 halt_prob = self.router(h_loop, step_normalized=step / step_denom, x=x)
                 state.update(h_loop, halt_prob, step)
 
-                # --- Per-step diagnostics (fully detached, no autograd overhead) ---
                 with torch.no_grad():
                     metrics.log("loop_scale", scale.detach())
 
@@ -594,7 +643,9 @@ class AdaptiveRecursiveBlock(nn.Module):
         # --- Gate ---
         gate_aux = {}
         if self.layer_type == "dual":
-            output, gate_deep, gate_wide, gate_aux = self.dual_gate(x, h_deep, h_wide)
+            output, gate_deep, gate_wide, gate_aux = self.dual_gate(
+                x, h_deep, h_wide, use_cross=self.config.use_cross
+            )
         elif self.layer_type == "loop":
             output = h_deep
             gate_deep = torch.ones(B, T, 1, device=device, dtype=x.dtype)
@@ -610,9 +661,6 @@ class AdaptiveRecursiveBlock(nn.Module):
         step_metrics = metrics.finalize()
 
         with torch.no_grad():
-            gated_deep_contrib_norm = (gate_deep * h_deep).norm(dim=-1).mean()
-            gated_wide_contrib_norm = (gate_wide * h_wide).norm(dim=-1).mean()
-
             es = state.expected_steps.detach()
             gate_deep_d = gate_deep.detach()
             gate_wide_d = gate_wide.detach()
@@ -636,18 +684,26 @@ class AdaptiveRecursiveBlock(nn.Module):
             "gate_wide_std": gate_wide_d.std(),
             "gate_wide_min": gate_wide_d.min(),
             "gate_wide_max": gate_wide_d.max(),
-            "gate_deep_token_probs": gate_deep_d.squeeze(-1),   # (B, T)
-            "gate_wide_token_probs": gate_wide_d.squeeze(-1),   # (B, T)
-            #"gate_deep_token_probs": gate_deep_d.mean(dim=-1),
-            #"gate_wide_token_probs": gate_wide_d.mean(dim=-1),
+            "gate_deep_token_probs": gate_deep_d.squeeze(-1),
+            "gate_wide_token_probs": gate_wide_d.squeeze(-1),
             "deep_block_norm": h_deep.detach().norm(dim=-1).mean(),
             "wide_block_norm": (
                 h_wide.detach().norm(dim=-1).mean()
                 if self.has_wide_path else torch.tensor(0.0, device=device)
             ),
-            "gated_deep_contrib_norm": gated_deep_contrib_norm,
-            "gated_wide_contrib_norm": gated_wide_contrib_norm,
-            # --- Step-level vectors (already detached via StepMetrics + no_grad) ---
+            
+            # Surface component scalar means for standard layer-wise logging
+            "norm_pure_deep_mean": gate_aux.get("token_norm_pure_deep", torch.tensor(0.0, device=device)).mean(),
+            "norm_pure_wide_mean": gate_aux.get("token_norm_pure_wide", torch.tensor(0.0, device=device)).mean(),
+            "norm_contam_w2d_mean": gate_aux.get("token_norm_contam_w2d", torch.tensor(0.0, device=device)).mean(),
+            "norm_contam_d2w_mean": gate_aux.get("token_norm_contam_d2w", torch.tensor(0.0, device=device)).mean(),
+
+            # Store the un-meaned (B, T) tensors for token-level evaluation extraction later
+            "token_norm_pure_deep": gate_aux.get("token_norm_pure_deep", torch.zeros(B, T, device=device)),
+            "token_norm_pure_wide": gate_aux.get("token_norm_pure_wide", torch.zeros(B, T, device=device)),
+            "token_norm_contam_w2d": gate_aux.get("token_norm_contam_w2d", torch.zeros(B, T, device=device)),
+            "token_norm_contam_d2w": gate_aux.get("token_norm_contam_d2w", torch.zeros(B, T, device=device)),
+
             "step_halt_probs": step_metrics.get("halt_prob_mean", torch.zeros(self.max_loops, device=device)),
             "step_halt_prob_std": step_metrics.get("halt_prob_std", torch.zeros(self.max_loops, device=device)),
             "step_halt_prob_min": step_metrics.get("halt_prob_min", torch.zeros(self.max_loops, device=device)),
@@ -661,18 +717,11 @@ class AdaptiveRecursiveBlock(nn.Module):
             "step_rel_norm_to_input": step_metrics.get("step_rel_norm_to_input", torch.zeros(self.max_loops, device=device)),
         }
 
-        # Gate aux metrics (already computed under no_grad in DualPathGate)
-        for k, v in gate_aux.items():
-            layer_metrics[k] = v if isinstance(v, torch.Tensor) else torch.tensor(v, device=device)
-
-        # Defaults for gate aux keys when not present (non-dual layers)
-        for k in [
-            "gate_logit_deep_mean", "gate_logit_deep_std",
-            "gate_logit_wide_mean", "gate_logit_wide_std",
-            "gate_rel_norm_deep", "gate_rel_norm_wide",
-            "gate_cos_sim_deep", "gate_cos_sim_wide",
-        ]:
-            if k not in layer_metrics:
+        # Catch remaining aux metrics
+        for k in ["gate_logit_deep_mean", "gate_logit_deep_std", "gate_logit_wide_mean", "gate_logit_wide_std"]:
+            if k in gate_aux:
+                layer_metrics[k] = gate_aux[k]
+            else:
                 layer_metrics[k] = torch.tensor(0.0, device=device)
 
         return output, layer_metrics
@@ -699,6 +748,8 @@ class GPT2LLM(NNModel):
                 ".lm_head.weight",
                 ".router.linear.weight",
                 ".dual_gate.gate_proj.weight",
+                ".dual_gate.proj_w2d.weight",     # Added proj_w2d
+                ".dual_gate.proj_d2w.weight",     # Added proj_d2w
             ],
             "embedding": [".wte", ".wpe"],
             "layernorm": [
@@ -706,28 +757,10 @@ class GPT2LLM(NNModel):
                 ".q_norm", ".k_norm",
                 ".loop_scales", ".wide_scale", ".dual_gate.gate_proj.bias",
                 ".router.linear.bias",
+                ".dual_gate.cross_scale_wide",    # Added cross scales
+                ".dual_gate.cross_scale_deep",    
             ],
         }
-        # weight_decay_groups = {
-        #     "linear": [
-        #         ".q_attn", ".k_attn", ".v_attn",
-        #         ".attn.c_proj",
-        #         ".mlp",
-        #         ".lm_head.weight",
-        #         ".router.linear.weight",
-        #         ".dual_gate.proj_deep.weight",
-        #         ".dual_gate.proj_wide.weight",
-        #     ],
-        #     "embedding": [".wte", ".wpe"],
-        #     "layernorm": [
-        #         ".attention_norm", ".ffn_norm", ".lm_head_norm",
-        #         ".q_norm", ".k_norm",
-        #         ".loop_scales", ".wide_scale", 
-        #         ".dual_gate.proj_deep.bias",
-        #         ".dual_gate.proj_wide.bias",
-        #         ".router.linear.bias", ".inter_loop_norm",
-        #     ],
-        # }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
 
         self.sample_key = sample_key
@@ -807,7 +840,6 @@ class GPT2LLM(NNModel):
         if use_weight_tying:
             self.transformer.wte.weight = self.transformer.lm_head.weight
 
-        # Cache sorted layer keys to avoid re-sorting every forward pass
         self._layer_order = sorted(layers.keys(), key=int)
 
     # ------------------------------------------------------------------
@@ -826,11 +858,10 @@ class GPT2LLM(NNModel):
         "gate_deep_mean", "gate_deep_std", "gate_deep_min", "gate_deep_max",
         "gate_wide_mean", "gate_wide_std", "gate_wide_min", "gate_wide_max",
         "deep_block_norm", "wide_block_norm",
-        "gated_deep_contrib_norm", "gated_wide_contrib_norm",
         "gate_logit_deep_mean", "gate_logit_deep_std",
         "gate_logit_wide_mean", "gate_logit_wide_std",
-        "gate_rel_norm_deep", "gate_rel_norm_wide",
-        "gate_cos_sim_deep", "gate_cos_sim_wide",
+        "norm_pure_deep_mean", "norm_pure_wide_mean",
+        "norm_contam_w2d_mean", "norm_contam_d2w_mean",
     ]
 
     def _build_metrics_bag(
@@ -940,6 +971,24 @@ class GPT2LLM(NNModel):
                 ])
                 metrics_bag["eval_expected_steps"] = torch.stack([
                     m["expected_steps"]
+                    for m in all_layer_metrics
+                ])
+                
+                # --- Un-meaned (B, T) norms to analyze specific tokens post-eval ---
+                metrics_bag["eval_norm_pure_deep"] = torch.stack([
+                    m.get("token_norm_pure_deep", torch.zeros_like(inputs, dtype=logits.dtype))
+                    for m in all_layer_metrics
+                ])
+                metrics_bag["eval_norm_pure_wide"] = torch.stack([
+                    m.get("token_norm_pure_wide", torch.zeros_like(inputs, dtype=logits.dtype))
+                    for m in all_layer_metrics
+                ])
+                metrics_bag["eval_norm_contam_w2d"] = torch.stack([
+                    m.get("token_norm_contam_w2d", torch.zeros_like(inputs, dtype=logits.dtype))
+                    for m in all_layer_metrics
+                ])
+                metrics_bag["eval_norm_contam_d2w"] = torch.stack([
+                    m.get("token_norm_contam_d2w", torch.zeros_like(inputs, dtype=logits.dtype))
                     for m in all_layer_metrics
                 ])
 

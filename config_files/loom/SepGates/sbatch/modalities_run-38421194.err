@@ -1,0 +1,69 @@
+/usr/bin/rm: cannot remove '/usr/local/cuda/compat/lib': Read-only file system
+rm: cannot remove '/usr/local/cuda/compat/lib': Read-only file system
+rm: cannot remove '/usr/local/cuda/compat/lib': Read-only file system
+/opt/venv_custom/lib/python3.12/site-packages/torch/library.py:356: UserWarning: Warning only once for all operators,  other operators may also be overridden.
+  Overriding a previously registered kernel for the same operator and the same dispatch key
+  operator: flash_attn::_flash_attn_backward(Tensor dout, Tensor q, Tensor k, Tensor v, Tensor out, Tensor softmax_lse, Tensor(a6!)? dq, Tensor(a7!)? dk, Tensor(a8!)? dv, float dropout_p, float softmax_scale, bool causal, SymInt window_size_left, SymInt window_size_right, float softcap, Tensor? alibi_slopes, bool deterministic, Tensor? rng_state=None) -> Tensor
+    registered at /opt/venv_custom/lib/python3.12/site-packages/torch/_library/custom_ops.py:922
+  dispatch key: ADInplaceOrView
+  previous kernel: no debug info
+       new kernel: registered at /opt/venv_custom/lib/python3.12/site-packages/torch/_library/custom_ops.py:922 (Triggered internally at /opt/pytorch/aten/src/ATen/core/dispatch/OperatorEntry.cpp:208.)
+  self.m.impl(
+Skipping import of cpp extensions due to incompatible torch version 2.8.0a0+5228986 for torchao version 0.14.1             Please see https://github.com/pytorch/ao/issues/2919 for more info
+model_factory - INFO - device_mesh=DeviceMesh((dp_shard=1), 'cuda', stride=(1,)) | world_size=1 | enable_loss_parallel=False
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=512.
+Expected ffn_hidden=3072, got n_embd=768, ffn_hidden=11776.
+model_factory - INFO - Rank 0 unsharded number of parameters (possibly on meta device): 381684744
+model_factory - INFO - Rank 0 sharded number of parameters: 381684744
+[RANK 0] optimizer_factory - WARNING - group = pytorch_rms_norm specified in weight_decay_groups_excluded is not in models optimizer_module_groups = ['linear', 'embedding', 'layernorm']. (This might be due to pipeline parallelism and is not necessarily an error.)
+wandb: Tracking run with wandb version 0.23.0
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /opt/repos/modalities/wandb_storage/wandb/offline-run-20260326_104750-7z5vdnep
+/opt/repos/modalities/src/modalities/util.py:40: UserWarning: [91m Last step will not be evaluated. Since remaining_steps (38620) is not a multiple of evaluation_interval_in_steps (1000) [00m
+  warnings.warn(message_with_color_code)
+/opt/repos/modalities/src/modalities/util.py:40: UserWarning: [91m Last step will not be checkpointed. Since remaining_steps (38620) is not a multiple of checkpointing_interval_in_steps (50000000000) [00m
+  warnings.warn(message_with_color_code)
+/opt/venv_custom/lib/python3.12/site-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+main - INFO - Rank info for current rank:   global_rank=0	world_size=1	local_rank=0	dp_shard_degree=1	dp_shard_rank=0
+main - INFO - Training model with 381684744 parameters.
+/opt/venv_custom/lib/python3.12/site-packages/torch/backends/cuda/__init__.py:156: UserWarning: Please use the new API settings to control TF32 behavior, such as torch.backends.cudnn.conv.fp32_precision = 'tf32' or torch.backends.cuda.matmul.fp32_precision = 'ieee'. Old settings, e.g, torch.backends.cuda.matmul.allow_tf32 = True, torch.backends.cudnn.allow_tf32 = True, allowTF32CuDNN() and allowTF32CuBLAS() will be deprecated after Pytorch 2.9. Please see https://pytorch.org/docs/main/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices (Triggered internally at /opt/pytorch/aten/src/ATen/Context.cpp:45.)
+  return torch._C._get_cublas_allow_tf32()
+/opt/repos/modalities/src/modalities/trainer.py:627: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  "train mfu (16-bit)": ResultItem(torch.tensor(mfu_score), 2),
+/opt/repos/modalities/src/modalities/trainer.py:627: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.detach().clone() or sourceTensor.detach().clone().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  "train mfu (16-bit)": ResultItem(torch.tensor(mfu_score), 2),
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+slurmstepd: error: *** STEP 38421194.0 ON lrdn1702 CANCELLED AT 2026-03-26T22:57:34 DUE TO TIME LIMIT ***
+slurmstepd: error: *** JOB 38421194 ON lrdn1702 CANCELLED AT 2026-03-26T22:57:34 DUE TO TIME LIMIT ***
+W0326 22:57:34.277000 242034 torch/distributed/elastic/agent/server/api.py:733] Received 15 death signal, shutting down workers
+W0326 22:57:34.277000 242034 torch/distributed/elastic/multiprocessing/api.py:1004] Sending process 242148 closing signal SIGTERM
