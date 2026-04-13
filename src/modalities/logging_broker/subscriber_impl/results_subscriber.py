@@ -1,7 +1,7 @@
 import json
 from dataclasses import fields, is_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import rich
 import torch
@@ -81,6 +81,7 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
         mode: WandbMode,
         logging_directory: Path,
         config_file_path: Path,
+        entity: Optional[str] = None,
         tokenizer=None,
     ) -> None:
         super().__init__()
@@ -89,6 +90,7 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
         with open(config_file_path, "r", encoding="utf-8") as file:
             config = yaml.safe_load(file)
         self.run = wandb.init(
+            entity=entity,
             project=project,
             name=experiment_id,
             mode=mode.value.lower(),
@@ -97,7 +99,7 @@ class WandBEvaluationResultSubscriber(MessageSubscriberIF[EvaluationResultBatch]
             settings=wandb.Settings(init_timeout=120, console="off"),
         )
 
-        self.run.log_artifact(config_file_path, name=f"config_{wandb.run.id}", type="config")
+        self.run.log_artifact(config_file_path, name=f"config_{self.run.id}", type="config")
 
     def consume_dict(self, message_dict: dict[str, Any]):
         for k, v in message_dict.items():

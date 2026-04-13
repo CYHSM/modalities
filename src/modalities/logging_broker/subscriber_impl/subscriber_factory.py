@@ -68,6 +68,7 @@ class ResultsSubscriberFactory:
         mode: WandbMode,
         config_file_path: Path,
         directory: Optional[Path] = None,
+        entity: Optional[str] = None,
         tokenizer = None,
     ) -> WandBEvaluationResultSubscriber:
         if global_rank == 0 and (mode != WandbMode.DISABLED):
@@ -89,7 +90,7 @@ class ResultsSubscriberFactory:
                 absolute_dir = None
 
             result_subscriber = WandBEvaluationResultSubscriber(
-                project, experiment_id, mode, absolute_dir, config_file_path, tokenizer
+                project, experiment_id, mode, absolute_dir, config_file_path, entity, tokenizer
             )
         else:
             result_subscriber = ResultsSubscriberFactory.get_dummy_result_subscriber()
