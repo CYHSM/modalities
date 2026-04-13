@@ -49,6 +49,7 @@ from modalities.config.config import (
     GPT2MFUCalculatorConfig,
     GPT2ModelTPConfig,
     LinearLRSchedulerConfig,
+    LinearWarmupCosineAnnealingLRSchedulerConfig,
     LLMDataLoaderConfig,
     MemMapDatasetConfig,
     OneCycleLRSchedulerConfig,
@@ -93,6 +94,7 @@ from modalities.models.components.layer_norms import (
 )
 from modalities.models.gpt2.collator import GPT2LLMCollateFn
 from modalities.models.gpt2.gpt2_model import GPT2LLMConfig
+from modalities.models.gpt2.llama3_like_initialization import Llama3Initializer, Llama3InitializerConfig
 from modalities.models.huggingface.huggingface_model import HuggingFacePretrainedModel, HuggingFacePretrainedModelConfig
 from modalities.models.model_factory import GPT2ModelFactory, ModelFactory
 from modalities.models.parallelism.pipeline_parallelism import ComponentSelectorFromPipeline, PipelineFactory
@@ -108,7 +110,7 @@ from modalities.nn.model_initialization.composed_initialization import (
     ComposedInitializationRoutines,
     ComposedModelInitializationConfig,
 )
-from modalities.optimizers.lr_schedulers import DummyLRScheduler
+from modalities.optimizers.lr_schedulers import DummyLRScheduler, LRSchedulerFactory
 from modalities.optimizers.optimizer_factory import OptimizerFactory
 from modalities.optimizers.optimizer_list import OptimizersList
 from modalities.optimizers.scheduler_list import SchedulerList
@@ -241,6 +243,12 @@ COMPONENTS = [
         ComposedInitializationRoutines.get_composed_model_initializer,
         ComposedModelInitializationConfig,
     ),
+    ComponentEntity(
+        "model_initialization",
+        "gpt2_llama3_like",
+        Llama3Initializer,
+        Llama3InitializerConfig,
+    ),
     # losses
     ComponentEntity("loss", "clm_cross_entropy_loss", CLMCrossEntropyLoss, CLMCrossEntropyLossConfig),
     ComponentEntity("loss", "clm_cross_entropy_with_ponder_loss", CLMCrossEntropyWithPonderLoss, CLMCrossEntropyWithPonderLossConfig),
@@ -279,6 +287,12 @@ COMPONENTS = [
         "cosine_annealing_lr",
         maybe_optimizer_list(torch.optim.lr_scheduler.CosineAnnealingLR),
         CosineAnnealingLRSchedulerConfig,
+    ),
+    ComponentEntity(
+        "scheduler",
+        "linear_warmup_cosine_annealing_lr",
+        maybe_optimizer_list(LRSchedulerFactory.get_linear_warmup_cosine_annealing_lr_scheduler),
+        LinearWarmupCosineAnnealingLRSchedulerConfig,
     ),
     # tokenizers
     ComponentEntity("tokenizer", "pretrained_hf_tokenizer", PreTrainedHFTokenizer, PreTrainedHFTokenizerConfig),
