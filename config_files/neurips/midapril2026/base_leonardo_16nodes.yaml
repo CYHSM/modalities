@@ -2555,6 +2555,121 @@ train_dataset:
         raw_data_path: /data/score4.5+/part-00126.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part1.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part2.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part3.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part4.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part5.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part6.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part7.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part8.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part9.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part10.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part11.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part12.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part13.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part14.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part15.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part16.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part17.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part18.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part19.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+
 train_dataloader:
   component_key: data_loader
   variant_key: default
@@ -2840,8 +2955,8 @@ evaluation_subscriber:
   variant_key: wandb
   config:
     global_rank: ${settings.cuda_env.global_rank}
-    project: loom
-    mode: ONLINE
+    project: dualcross
+    mode: OFFLINE
     experiment_id: d1280_dual_r70w30d_1728deep_22208wide_12L_loop3_cross_scheduler
     directory: ${settings.paths.experiments_root_path}/wandb
     config_file_path: ${settings.config_file_path}
