@@ -10,6 +10,9 @@ core.*
 checkpoint
 wandb
 artifacts
+*.out
+*.err
+.wandb_sync_state
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
