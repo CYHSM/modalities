@@ -1048,6 +1048,7 @@ model_raw:
       wide_ffn_hidden: 11776
       wide_gate_init_bias: 0.0
       deep_gate_init_bias: 0.0
+      use_cross: true
 lr_scheduler:
   component_key: scheduler
   variant_key: onecycle_lr
@@ -1108,7 +1109,7 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: loom
     mode: ONLINE
-    experiment_id: loop3_512deep_11776wide_final
+    experiment_id: loop3_512deep_11776wide_final_sigmoid
     directory: wandb_storage
     config_file_path: ${settings.config_file_path}
     tokenizer:

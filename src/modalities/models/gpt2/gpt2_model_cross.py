@@ -450,34 +450,13 @@ class AdaptiveRouter(nn.Module):
 # --- Dual Path Gate (coupled softmax with restored cross-path logic) ---
 
 class DualPathGate(nn.Module):
-    """
-    Decoupled sigmoid gate (from Doc 2) with Doc 1's per-token logging.
-
-    Structure (matches Doc 2, stable):
-        h_deep_out = h_deep + scale_deep * proj_w2d(h_wide)
-        h_wide_out = h_wide + scale_wide * proj_d2w(h_deep)
-        blended    = gate_deep * h_deep_out + gate_wide * h_wide_out
-
-    Gates are independent sigmoids (NOT a softmax), so the two paths
-    don't fight each other in a zero-sum tug-of-war.
-
-    Logging decomposition (for token-level analysis):
-        pure_deep   = gate_deep * h_deep        # deep path's own contribution
-        pure_wide   = gate_wide * h_wide        # wide path's own contribution
-        contam_w2d  = gate_deep * scale_deep * proj_w2d(h_wide)   # wide -> deep leak
-        contam_d2w  = gate_wide * scale_wide * proj_d2w(h_deep)   # deep -> wide leak
-
-    Per-token contamination magnitude for token i is
-    gate_deep(i) * softplus(cross_scale_deep) * ||proj_w2d(h_wide)(i)||
-    which is exactly what token_norm_contam_w2d captures.
-    """
-
     def __init__(self, n_embd: int, init_bias_deep: float = 0.0, init_bias_wide: float = 0.0):
         super().__init__()
         self.init_bias_deep = init_bias_deep
         self.init_bias_wide = init_bias_wide
         self.gate_proj = nn.Linear(n_embd, 2, bias=True)
-
+        
+        # Restored explicit cross-scales and projection matrices
         self.proj_w2d = nn.Linear(n_embd, n_embd, bias=False)
         self.proj_d2w = nn.Linear(n_embd, n_embd, bias=False)
         self.cross_scale_wide = nn.Parameter(torch.tensor([-7.0]))
@@ -490,29 +469,29 @@ class DualPathGate(nn.Module):
         with torch.no_grad():
             self.gate_proj.bias[0] = self.init_bias_deep
             self.gate_proj.bias[1] = self.init_bias_wide
+        
+        # Init projections to exactly zero to avoid random early shock
         nn.init.zeros_(self.proj_w2d.weight)
         nn.init.zeros_(self.proj_d2w.weight)
 
     def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor, use_cross: bool = False):
         logits = self.gate_proj(x)
-        gates = torch.sigmoid(logits)          # <-- decoupled, not softmax
-
+        gates = torch.softmax(logits, dim=-1)
+        
         gate_deep = gates[..., 0:1]
         gate_wide = gates[..., 1:2]
-
-        # Pure per-path contributions (gated own signal)
+        
+        # Decompose signals for accurate token-level telemetry
         pure_deep = gate_deep * h_deep
         pure_wide = gate_wide * h_wide
 
         if use_cross:
-            scale_deep = torch.sigmoid(self.cross_scale_deep)
-            scale_wide = torch.sigmoid(self.cross_scale_wide)
-            cross_w_into_d = scale_deep * self.proj_w2d(h_wide)   # wide content, deep slot
-            cross_d_into_w = scale_wide * self.proj_d2w(h_deep)   # deep content, wide slot
-
-            contam_w2d = gate_deep * cross_w_into_d
-            contam_d2w = gate_wide * cross_d_into_w
-
+            scale_deep = F.softplus(self.cross_scale_deep)
+            scale_wide = F.softplus(self.cross_scale_wide)
+            
+            contam_w2d = gate_deep * (scale_deep * self.proj_w2d(h_wide))
+            contam_d2w = gate_wide * (scale_wide * self.proj_d2w(h_deep))
+            
             h_deep_out = pure_deep + contam_w2d
             h_wide_out = pure_wide + contam_d2w
         else:
@@ -526,14 +505,14 @@ class DualPathGate(nn.Module):
         with torch.no_grad():
             aux = {
                 "gate_logit_deep_mean": logits[..., 0].mean(),
-                "gate_logit_deep_std":  logits[..., 0].std(),
+                "gate_logit_deep_std": logits[..., 0].std(),
                 "gate_logit_wide_mean": logits[..., 1].mean(),
-                "gate_logit_wide_std":  logits[..., 1].std(),
-                # (B, T) per-token norms — keep un-meaned for eval extraction
-                "token_norm_pure_deep":   pure_deep.norm(dim=-1),
-                "token_norm_pure_wide":   pure_wide.norm(dim=-1),
-                "token_norm_contam_w2d":  contam_w2d.norm(dim=-1),
-                "token_norm_contam_d2w":  contam_d2w.norm(dim=-1),
+                "gate_logit_wide_std": logits[..., 1].std(),
+                # Send the complete, un-meaned (B, T) norms to the metrics dictionary
+                "token_norm_pure_deep": pure_deep.norm(dim=-1),
+                "token_norm_pure_wide": pure_wide.norm(dim=-1),
+                "token_norm_contam_w2d": contam_w2d.norm(dim=-1),
+                "token_norm_contam_d2w": contam_d2w.norm(dim=-1),
             }
         return blended, gate_deep, gate_wide, aux
 
