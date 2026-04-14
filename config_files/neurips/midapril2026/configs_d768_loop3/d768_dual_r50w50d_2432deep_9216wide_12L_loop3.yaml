@@ -2852,8 +2852,8 @@ model_raw:
     prediction_key: ${loss_fn.config.prediction_key}
     vocab_size: 50304
     n_layer: 12
-    n_head_q: 20
-    n_head_kv: 20
+    n_head_q: 12
+    n_head_kv: 12
     ffn_hidden: 2432
     n_embd: 768
     dropout: 0.0
@@ -2869,7 +2869,7 @@ model_raw:
       qk_norm_config:
         norm_type: pytorch_rms_norm
         config:
-          normalized_shape: 38 # n_embd / n_head_q
+          normalized_shape: 64 # n_embd / n_head_q
           eps: 1.0e-05
     attention_implementation: pytorch_flash
     activation_type: swiglu
