@@ -10,8 +10,8 @@ settings:
     global_rank: ${cuda_env:RANK}
     world_size: ${cuda_env:WORLD_SIZE}
   paths:
-    checkpoint_saving_path: /leonardo_scratch/large/userexternal/mfrey000/experiments_midapril
-    experiments_root_path: /leonardo_scratch/large/userexternal/mfrey000/experiments_midapril
+    checkpoint_saving_path: /capstor/scratch/cscs/markusfrey/experiments
+    experiments_root_path: /capstor/scratch/cscs/markusfrey/experiments
   intervals:
     training_log_interval_in_steps: 1
     checkpointing_interval_in_steps: 1836
@@ -22,8 +22,8 @@ settings:
     enforce_last_step_evaluated: false
     enforce_last_step_checkpointed: false
   step_profile:
-    gradient_accumulation_steps: 4
-    local_train_micro_batch_size: 2
+    gradient_accumulation_steps: 2
+    local_train_micro_batch_size: 4
     sequence_length: 4096
     dp_degree:
       instance_key: dp_degree
@@ -62,2611 +62,2611 @@ train_dataset:
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00000.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00000.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00001.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00001.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00002.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00002.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00003.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00003.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00004.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00004.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00005.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00005.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00006.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00006.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00007.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00007.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00008.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00008.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00009.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00009.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00010.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00010.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00011.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00011.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00012.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00012.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00013.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00013.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00014.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00014.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00015.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00015.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00016.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00016.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00017.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00017.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00018.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00018.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00019.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00019.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00020.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00020.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00021.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00021.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00022.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00022.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00023.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00023.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00024.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00024.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00025.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00025.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00026.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00026.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00027.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00027.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00028.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00028.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00029.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00029.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00030.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00030.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00031.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00031.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00032.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00032.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00033.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00033.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.0-3.5/part-00034.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00034.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00000.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00000.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00001.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00001.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00002.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00002.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00003.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00003.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00004.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00004.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00005.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00005.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00006.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00006.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00007.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00007.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00008.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00008.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00009.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00009.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00010.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00010.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00011.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00011.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00012.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00012.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00013.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00013.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00014.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00014.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00015.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00015.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00016.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00016.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00017.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00017.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00018.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00018.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00019.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00019.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00020.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00020.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00021.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00021.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00022.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00022.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00023.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00023.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00024.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00024.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00025.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00025.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00026.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00026.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00027.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00027.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00028.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00028.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00029.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00029.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00030.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00030.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00031.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00031.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00032.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00032.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00033.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00033.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00034.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00034.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00035.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00035.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00036.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00036.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00037.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00037.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00038.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00038.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00039.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00039.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00040.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00040.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00041.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00041.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00042.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00042.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00043.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00043.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00044.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00044.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00045.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00045.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00046.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00046.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00047.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00047.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00048.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00048.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00049.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00049.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00050.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00050.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00051.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00051.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00052.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00052.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00053.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00053.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00054.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00054.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00055.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00055.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00056.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00056.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00057.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00057.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00058.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00058.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00059.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00059.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00060.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00060.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00061.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00061.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00062.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00062.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00063.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00063.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00064.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00064.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00065.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00065.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00066.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00066.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00067.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00067.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00068.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00068.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00069.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00069.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00070.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00070.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00071.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00071.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00072.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00072.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00073.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00073.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00074.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00074.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00075.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00075.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00076.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00076.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00077.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00077.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00078.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00078.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00079.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00079.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00080.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00080.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00081.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00081.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00082.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00082.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00083.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00083.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00084.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00084.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00085.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00085.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00086.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00086.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00087.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00087.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00088.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00088.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00089.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00089.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00090.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00090.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00091.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00091.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00092.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00092.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00093.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00093.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00094.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00094.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00095.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00095.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00096.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00096.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00097.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00097.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00098.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00098.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00099.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00099.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00100.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00100.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00101.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00101.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00102.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00102.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00103.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00103.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00104.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00104.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00105.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00105.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00106.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00106.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00107.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00107.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00108.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00108.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00109.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00109.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00110.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00110.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00111.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00111.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00112.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00112.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00113.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00113.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00114.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00114.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00115.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00115.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00116.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00116.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00117.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00117.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00118.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00118.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00119.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00119.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00120.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00120.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00121.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00121.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00122.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00122.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00123.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00123.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00124.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00124.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00125.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00125.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score3.5-4.0/part-00126.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.5-4.0/part-00126.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00000.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00000.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00001.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00001.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00002.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00002.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00003.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00003.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00004.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00004.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00005.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00005.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00006.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00006.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00007.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00007.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00008.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00008.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00009.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00009.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00010.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00010.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00011.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00011.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00012.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00012.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00013.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00013.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00014.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00014.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00015.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00015.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00016.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00016.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00017.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00017.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00018.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00018.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00019.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00019.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00020.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00020.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00021.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00021.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00022.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00022.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00023.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00023.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00024.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00024.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00025.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00025.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00026.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00026.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00027.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00027.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00028.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00028.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00029.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00029.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00030.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00030.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00031.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00031.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00032.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00032.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00033.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00033.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00034.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00034.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00035.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00035.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00036.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00036.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00037.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00037.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00038.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00038.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00039.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00039.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00040.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00040.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00041.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00041.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00042.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00042.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00043.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00043.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00044.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00044.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00045.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00045.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00046.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00046.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00047.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00047.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00048.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00048.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00049.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00049.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00050.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00050.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00051.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00051.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00052.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00052.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00053.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00053.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00054.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00054.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00055.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00055.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00056.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00056.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00057.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00057.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00058.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00058.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00059.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00059.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00060.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00060.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00061.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00061.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00062.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00062.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00063.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00063.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00064.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00064.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00065.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00065.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00066.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00066.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00067.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00067.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00068.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00068.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00069.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00069.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00070.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00070.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00071.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00071.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00072.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00072.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00073.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00073.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00074.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00074.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00075.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00075.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00076.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00076.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00077.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00077.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00078.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00078.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00079.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00079.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00080.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00080.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00081.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00081.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00082.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00082.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00083.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00083.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00084.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00084.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00085.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00085.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00086.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00086.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00087.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00087.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00088.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00088.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00089.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00089.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00090.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00090.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00091.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00091.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00092.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00092.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00093.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00093.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00094.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00094.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00095.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00095.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00096.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00096.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00097.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00097.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00098.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00098.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00099.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00099.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00100.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00100.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00101.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00101.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00102.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00102.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00103.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00103.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00104.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00104.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00105.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00105.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00106.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00106.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00107.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00107.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00108.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00108.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00109.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00109.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00110.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00110.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00111.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00111.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00112.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00112.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00113.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00113.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00114.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00114.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00115.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00115.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00116.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00116.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00117.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00117.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00118.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00118.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00119.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00119.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00120.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00120.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00121.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00121.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00122.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00122.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00123.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00123.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00124.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00124.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00125.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00125.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.0-4.5/part-00126.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.0-4.5/part-00126.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00000.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00000.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00001.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00001.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00002.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00002.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00003.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00003.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00004.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00004.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00005.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00005.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00006.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00006.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00007.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00007.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00008.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00008.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00009.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00009.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00010.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00010.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00011.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00011.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00012.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00012.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00013.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00013.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00014.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00014.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00015.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00015.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00016.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00016.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00017.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00017.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00018.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00018.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00019.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00019.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00020.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00020.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00021.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00021.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00022.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00022.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00023.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00023.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00024.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00024.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00025.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00025.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00026.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00026.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00027.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00027.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00028.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00028.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00029.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00029.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00030.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00030.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00031.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00031.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00032.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00032.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00033.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00033.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00034.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00034.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00035.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00035.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00036.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00036.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00037.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00037.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00038.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00038.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00039.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00039.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00040.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00040.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00041.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00041.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00042.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00042.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00043.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00043.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00044.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00044.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00045.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00045.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00046.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00046.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00047.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00047.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00048.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00048.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00049.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00049.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00050.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00050.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00051.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00051.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00052.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00052.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00053.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00053.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00054.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00054.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00055.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00055.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00056.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00056.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00057.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00057.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00058.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00058.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00059.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00059.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00060.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00060.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00061.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00061.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00062.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00062.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00063.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00063.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00064.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00064.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00065.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00065.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00066.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00066.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00067.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00067.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00068.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00068.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00069.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00069.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00070.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00070.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00071.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00071.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00072.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00072.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00073.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00073.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00074.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00074.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00075.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00075.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00076.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00076.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00077.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00077.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00078.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00078.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00079.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00079.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00080.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00080.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00081.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00081.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00082.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00082.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00083.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00083.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00084.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00084.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00085.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00085.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00086.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00086.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00087.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00087.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00088.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00088.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00089.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00089.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00090.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00090.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00091.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00091.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00092.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00092.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00093.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00093.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00094.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00094.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00095.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00095.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00096.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00096.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00097.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00097.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00098.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00098.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00099.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00099.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00100.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00100.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00101.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00101.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00102.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00102.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00103.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00103.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00104.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00104.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00105.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00105.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00106.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00106.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00107.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00107.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00108.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00108.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00109.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00109.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00110.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00110.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00111.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00111.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00112.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00112.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00113.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00113.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00114.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00114.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00115.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00115.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00116.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00116.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00117.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00117.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00118.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00118.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00119.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00119.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00120.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00120.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00121.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00121.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00122.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00122.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00123.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00123.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00124.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00124.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00125.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00125.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /data/score4.5+/part-00126.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score4.5+/part-00126.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part1.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part1.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part2.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part2.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part3.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part3.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part4.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part4.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part5.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part5.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part6.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part6.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part7.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part7.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part8.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part8.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part9.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part9.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part10.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part10.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part11.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part11.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part12.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part12.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part13.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part13.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part14.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part14.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part15.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part15.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part16.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part16.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part17.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part17.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part18.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part18.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
     - component_key: dataset
       variant_key: packed_mem_map_dataset_continuous
       config:
-        raw_data_path: /leonardo_scratch/large/userexternal/mfrey000/tokenized/nemotron_math_gpt2/part19.pbin
+        raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/nemotron_math_gpt2/part19.pbin
         sequence_length: ${settings.step_profile.sequence_length}
         sample_key: ${settings.referencing_keys.sample_key}
 
@@ -2706,7 +2706,7 @@ eval_dataset:
   component_key: dataset
   variant_key: packed_mem_map_dataset_continuous
   config:
-    raw_data_path: /data/score3.0-3.5/part-00021.pbin
+    raw_data_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/score3.0-3.5/part-00021.pbin
     sequence_length: ${settings.step_profile.sequence_length}
     sample_key: ${settings.referencing_keys.sample_key}
 eval_dataloader:
@@ -2851,10 +2851,10 @@ model_raw:
     sequence_length: ${settings.step_profile.sequence_length}
     prediction_key: ${loss_fn.config.prediction_key}
     vocab_size: 50304
-    n_layer: 12
+    n_layer: 60
     n_head_q: 12
     n_head_kv: 12
-    ffn_hidden: 704
+    ffn_hidden: 3072
     n_embd: 768
     dropout: 0.0
     bias: false
@@ -2890,13 +2890,14 @@ model_raw:
         eps: 1.0e-05
     adaptive_config:
       enable_adaptive: true
-      max_loops: 3
+      max_loops: 1
       halt_threshold: 1.00
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
-      wide_ffn_hidden: 14336
+      wide_ffn_hidden: 64
       wide_gate_init_bias: 0.0
       deep_gate_init_bias: 0.0
+      layer_types: ["loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop"]
       use_cross: true
 lr_scheduler:
   component_key: scheduler
@@ -2957,7 +2958,7 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: dualcross
     mode: OFFLINE
-    experiment_id: d768_dual_r75w25d_704deep_14336wide_12L_loop3
+    experiment_id: d768_dense_isoflop_60L
     directory: ${settings.paths.experiments_root_path}/wandb
     config_file_path: ${settings.config_file_path}
     tokenizer:
@@ -2968,6 +2969,6 @@ tokenizer:
   component_key: tokenizer
   variant_key: pretrained_hf_tokenizer
   config:
-    pretrained_model_name_or_path: /leonardo_work/EUHPC_D21_101/mfrey/tokenizer/local_gpt2_tokenizer/
+    pretrained_model_name_or_path: /capstor/store/cscs/swissai/a0164/markusfrey/tokenized/local_gpt2_tokenizer
     padding: false
     truncation: false
