@@ -2851,11 +2851,11 @@ model_raw:
     sequence_length: ${settings.step_profile.sequence_length}
     prediction_key: ${loss_fn.config.prediction_key}
     vocab_size: 50304
-    n_layer: 12
-    n_head_q: 20
-    n_head_kv: 20
-    ffn_hidden: 1664
-    n_embd: 1280
+    n_layer: 36
+    n_head_q: 12
+    n_head_kv: 12
+    ffn_hidden: 341
+    n_embd: 768
     dropout: 0.0
     bias: false
     attention_config:
@@ -2894,9 +2894,10 @@ model_raw:
       halt_threshold: 1.00
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
-      wide_ffn_hidden: 21632
+      wide_ffn_hidden: 64
       wide_gate_init_bias: 0.0
       deep_gate_init_bias: 0.0
+      layer_types: ["loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop", "loop"]
       use_cross: true
 lr_scheduler:
   component_key: scheduler
@@ -2957,7 +2958,7 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: dualcross
     mode: OFFLINE
-    experiment_id: d1280_dual_r70w30d_1728deep_22208wide_12L_loop3_cross_scheduler
+    experiment_id: d768_pure_loop3_341deep_36L
     directory: ${settings.paths.experiments_root_path}/wandb
     config_file_path: ${settings.config_file_path}
     tokenizer:

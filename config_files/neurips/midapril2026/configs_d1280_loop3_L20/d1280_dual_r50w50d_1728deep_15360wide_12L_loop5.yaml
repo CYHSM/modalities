@@ -2854,7 +2854,7 @@ model_raw:
     n_layer: 12
     n_head_q: 20
     n_head_kv: 20
-    ffn_hidden: 1664
+    ffn_hidden: 1728
     n_embd: 1280
     dropout: 0.0
     bias: false
@@ -2890,11 +2890,11 @@ model_raw:
         eps: 1.0e-05
     adaptive_config:
       enable_adaptive: true
-      max_loops: 3
+      max_loops: 5
       halt_threshold: 1.00
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
-      wide_ffn_hidden: 21632
+      wide_ffn_hidden: 15360
       wide_gate_init_bias: 0.0
       deep_gate_init_bias: 0.0
       use_cross: true
@@ -2957,7 +2957,7 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: dualcross
     mode: OFFLINE
-    experiment_id: d1280_dual_r70w30d_1728deep_22208wide_12L_loop3_cross_scheduler
+    experiment_id: d1280_dual_r50w50d_1728deep_15360wide_12L_loop5
     directory: ${settings.paths.experiments_root_path}/wandb
     config_file_path: ${settings.config_file_path}
     tokenizer:

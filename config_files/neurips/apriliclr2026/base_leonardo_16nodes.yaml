@@ -15,7 +15,7 @@ settings:
   intervals:
     training_log_interval_in_steps: 1
     checkpointing_interval_in_steps: 1836
-    evaluation_interval_in_steps: 500
+    evaluation_interval_in_steps: 1836
   consistency_enforcement:
     enforce_tokens_per_step_consistency: false
     enforce_last_step_logged: false
@@ -2844,7 +2844,7 @@ model_raw:
   component_key: model
   variant_key: gpt2
   config:
-    use_meta_device: true
+    use_meta_device: false
     use_weight_tying: false
     sample_key: ${settings.referencing_keys.sample_key}
     poe_type: NOPE
@@ -2852,8 +2852,8 @@ model_raw:
     prediction_key: ${loss_fn.config.prediction_key}
     vocab_size: 50304
     n_layer: 12
-    n_head_q: 20
-    n_head_kv: 20
+    n_head_q: 12
+    n_head_kv: 12
     ffn_hidden: 1664
     n_embd: 1280
     dropout: 0.0
@@ -2895,9 +2895,9 @@ model_raw:
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
       wide_ffn_hidden: 21632
-      wide_gate_init_bias: 0.0
-      deep_gate_init_bias: 0.0
-      use_cross: true
+      gate_init_bias: 0.0
+      loop_scale_init: -7.0
+      wide_scale_init: -7.0
 lr_scheduler:
   component_key: scheduler
   variant_key: linear_warmup_cosine_annealing_lr

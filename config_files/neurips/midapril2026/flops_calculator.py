@@ -5,38 +5,6 @@ Iso-FLOP calculator for asymmetric Dual-Path (Wide + Deep loop) transformer.
 Computes the FFN hidden sizes for Wide and Deep paths so that the total
 per-token FLOPs match a dense baseline, then optionally writes out YAML
 config files ready for training.
-
-Usage examples:
-  # Print FLOP tables
-  python flops_calculator.py table
-
-  # Generate YAML configs for a specific scenario (custom ratios)
-  python flops_calculator.py yaml \\
-      --template base.yaml \\
-      --output-dir configs/ \\
-      --baseline-layers 60 \\
-      --our-layers 12 \\
-      --max-loops 5 \\
-      --ratios 0.3 0.5 0.7
-
-  # Generate the full paper grid:
-  #   dense iso-FLOP, pure loop, pure wide, ratios + max-wide
-  #
-  # Small base (~370M):
-  python flops_calculator.py paper \\
-      --template base_leonardo_16nodes.yaml \\
-      --output-dir configs_d768 \\
-      --d-model 768 --n-head-q 12 --n-head-kv 12 \\
-      --baseline-layers 60 --our-layers 12 --max-loops 5 \\
-      --ratios 0.3 0.5 0.7
-  #
-  # 3x scaled base (~1B):
-  python flops_calculator.py paper \\
-      --template base_leonardo_16nodes.yaml \\
-      --output-dir configs_d1280 \\
-      --d-model 1280 --n-head-q 20 --n-head-kv 20 \\
-      --baseline-layers 60 --our-layers 12 --max-loops 5 \\
-      --ratios 0.3 0.5 0.7
 """
 
 import argparse
@@ -59,7 +27,7 @@ def asymmetric_dual_config(
     capacity_ratio: float = 0.5,
     n_head_q: int | None = None,
     n_head_kv: int | None = None,
-    ffn_round_multiple: int = 64,
+    ffn_round_multiple: int = 16,
 ):
     """
     Calculates exact FFN sizes for an asymmetric FLOP split between Wide
@@ -130,6 +98,103 @@ def asymmetric_dual_config(
     }
 
 
+def mixed_sandwich_config(
+    d_model: int,
+    target_dense_layers: int,
+    dense_ffn_mult: int,
+    our_layers: int,
+    max_loops: int,
+    capacity_ratio: float = 0.5,
+    n_head_q: int | None = None,
+    n_head_kv: int | None = None,
+    ffn_round_multiple: int = 16,
+):
+    """
+    Calculates exact FFN sizes for a mixed sandwich architecture:
+    ~33% Loop layers, ~33% Dual layers, ~33% Wide layers.
+    """
+    assert 0.0 <= capacity_ratio <= 1.0, "Capacity ratio must be between 0 and 1"
+
+    if n_head_q is not None and n_head_kv is not None:
+        n_rep = n_head_q // n_head_kv
+    else:
+        n_rep = 1
+
+    attn_flops = 4 * (d_model ** 2) + 4 * (d_model ** 2) // n_rep
+    dual_gate_flops = 2 * d_model * 2
+    router_flops_total = max_loops * 2 * (d_model + 1)
+
+    dense_ffn = d_model * dense_ffn_mult
+    dense_block_flops = attn_flops + (6 * d_model * dense_ffn)
+    total_budget_flops = target_dense_layers * dense_block_flops
+
+    # Calculate layer distributions
+    L_loop = our_layers // 3
+    L_wide = our_layers // 3
+    L_dual = our_layers - L_loop - L_wide
+
+    layer_types = (["loop"] * L_loop) + (["dual"] * L_dual) + (["wide"] * L_wide)
+
+    # Fixed FLOPs for Attention and Gates across all layers
+    loop_layer_fixed = max_loops * attn_flops + router_flops_total
+    dual_layer_fixed = max_loops * attn_flops + attn_flops + dual_gate_flops + router_flops_total
+    wide_layer_fixed = attn_flops
+
+    total_fixed_flops = (L_loop * loop_layer_fixed) + (L_dual * dual_layer_fixed) + (L_wide * wide_layer_fixed)
+    ffn_budget = total_budget_flops - total_fixed_flops
+
+    if ffn_budget < 0:
+        return {"error": f"Fixed FLOPs (attention+gates) exceed total budget!"}
+
+    wide_budget = ffn_budget * capacity_ratio
+    deep_budget = ffn_budget * (1.0 - capacity_ratio)
+
+    # The fixed budget already accounts for ALL attention passes.
+    # Therefore, the remaining budget strictly targets the 6*d*ffn hidden projections.
+    
+    # Total wide FFN executions: L_dual + L_wide
+    if (L_dual + L_wide) > 0 and capacity_ratio > 0:
+        wide_flops_per_exec = wide_budget / (L_dual + L_wide)
+        ffn_wide_exact = wide_flops_per_exec / (6 * d_model)  # Bug fixed: removed double - attn_flops
+        if ffn_wide_exact < 0: ffn_wide_exact = 0
+        ffn_wide = max(ffn_round_multiple, math.ceil(ffn_wide_exact / ffn_round_multiple) * ffn_round_multiple)
+    else:
+        ffn_wide = 0
+
+    # Total deep FFN executions: (L_loop + L_dual) * max_loops
+    deep_execs = (L_loop + L_dual) * max_loops
+    if deep_execs > 0 and (1.0 - capacity_ratio) > 0:
+        deep_flops_per_exec = deep_budget / deep_execs
+        ffn_deep_exact = deep_flops_per_exec / (6 * d_model)  # Bug fixed: removed double - attn_flops
+        if ffn_deep_exact < 0: ffn_deep_exact = 0
+        ffn_deep = max(ffn_round_multiple, math.ceil(ffn_deep_exact / ffn_round_multiple) * ffn_round_multiple)
+    else:
+        ffn_deep = 0
+
+    # Recalculate actual FLOPs based on rounded FFN sizes
+    actual_total_flops = total_fixed_flops + \
+                         (L_dual + L_wide) * (6 * d_model * ffn_wide) + \
+                         deep_execs * (6 * d_model * ffn_deep)
+
+    match_ratio = actual_total_flops / total_budget_flops
+
+    return {
+        "Capacity Ratio": f"{capacity_ratio*100:.0f}% Wide / {(1-capacity_ratio)*100:.0f}% Deep",
+        "Target ffn_wide": ffn_wide,
+        "Target ffn_deep": ffn_deep,
+        "FLOP Match": f"{match_ratio * 100:.2f}%",
+        "actual_total_flops": actual_total_flops,
+        "total_budget_flops": total_budget_flops,
+        "capacity_ratio": capacity_ratio,
+        "our_layers": our_layers,
+        "max_loops": max_loops,
+        "d_model": d_model,
+        "target_dense_layers": target_dense_layers,
+        "match_ratio": match_ratio,
+        "_layer_types": layer_types,
+    }
+
+
 # =====================================================================
 # Parameter counting
 # =====================================================================
@@ -140,12 +205,7 @@ def _attn_params(d_model: int, n_rep: int = 1) -> int:
 
 
 def _swiglu_params(d_model: int, ffn_hidden: int) -> int:
-    """SwiGLU params (no bias): gate + up + down projections.
-
-    NOTE: uses ffn_hidden as-is.  If SwiGLU internally applies a 2/3
-    scaling the absolute count will differ, but the iso-param *ratio*
-    stays valid because both models use the same convention.
-    """
+    """SwiGLU params (no bias): gate + up + down projections."""
     return 3 * d_model * ffn_hidden
 
 
@@ -176,16 +236,24 @@ def count_model_params(
     d_model: int, n_layers: int, max_loops: int,
     ffn_deep: int, ffn_wide: int,
     vocab_size: int = 50304, use_weight_tying: bool = False,
-    layer_type: str = "dual", n_rep: int = 1,
+    layer_types: str | list[str] = "dual", n_rep: int = 1,
 ) -> int:
     """Total parameter count for the full GPT2LLM with adaptive blocks."""
-    per_layer = count_dual_layer_params(d_model, ffn_deep, ffn_wide,
-                                        max_loops, layer_type, n_rep)
+    if isinstance(layer_types, str):
+        per_layer = count_dual_layer_params(d_model, ffn_deep, ffn_wide,
+                                            max_loops, layer_types, n_rep)
+        total_layers_params = n_layers * per_layer
+    else:
+        total_layers_params = sum(
+            count_dual_layer_params(d_model, ffn_deep, ffn_wide, max_loops, lt, n_rep) 
+            for lt in layer_types
+        )
+        
     shared = vocab_size * d_model                      # wte
     if not use_weight_tying:
         shared += d_model * vocab_size                 # lm_head
     shared += d_model                                  # lm_head_norm
-    return n_layers * per_layer + shared
+    return total_layers_params + shared
 
 
 def count_dense_params(
@@ -254,7 +322,6 @@ def run_scenario(our_layers, max_loops, target_dense_layers,
 
 def _make_experiment_id(res: dict) -> str:
     """Build a human-readable experiment_id from a result dict."""
-    # Allow override for special configs (dense baselines, etc.)
     if "_exp_id" in res:
         return res["_exp_id"]
     loops = res["max_loops"]
@@ -271,11 +338,6 @@ def _patch_yaml(template_text: str, res: dict) -> str:
     """
     Patch specific fields in the YAML template by tracking which top-level
     section we're inside and replacing only the intended key-value lines.
-
-    Supports:
-    - Replacing existing scalar values (n_layer, ffn_hidden, etc.)
-    - Inserting a new layer_types list into adaptive_config (if res has "_layer_types")
-    - Toggling enable_adaptive (if res has "_enable_adaptive")
     """
     exp_id = _make_experiment_id(res)
 
@@ -288,22 +350,20 @@ def _patch_yaml(template_text: str, res: dict) -> str:
     }
     if "_enable_adaptive" in res:
         patches[("model_raw", "enable_adaptive")] = str(res["_enable_adaptive"]).lower()
-    # Optional model-size patches (for scaling experiments)
+    
     if res.get("_d_model") is not None:
         patches[("model_raw", "n_embd")] = str(res["_d_model"])
     if res.get("_n_head_q") is not None:
         patches[("model_raw", "n_head_q")] = str(res["_n_head_q"])
     if res.get("_n_head_kv") is not None:
         patches[("model_raw", "n_head_kv")] = str(res["_n_head_kv"])
-    # head_dim = d_model / n_head_q  (qk_norm normalized_shape, only literal one)
+    
     if res.get("_d_model") is not None and res.get("_n_head_q") is not None:
         head_dim = res["_d_model"] // res["_n_head_q"]
         patches[("model_raw", "normalized_shape")] = f"{head_dim} # n_embd / n_head_q"
 
     kv_re = re.compile(r'^(\s*)([\w_]+)(:\s+)(.+)$')
-
-    # What to insert after deep_gate_init_bias (if needed)
-    layer_types = res.get("_layer_types")   # None = don't touch, list = insert
+    layer_types = res.get("_layer_types")   
 
     lines = template_text.splitlines(keepends=True)
     out_lines = []
@@ -320,7 +380,6 @@ def _patch_yaml(template_text: str, res: dict) -> str:
         m = kv_re.match(line)
         if m and current_section:
             indent, key, sep, old_val = m.group(1), m.group(2), m.group(3), m.group(4)
-            # Don't overwrite YAML interpolation refs like `${model_raw.config.n_embd}`
             if not old_val.lstrip().startswith('${'):
                 patch_key = (current_section, key)
                 if patch_key in patches:
@@ -329,11 +388,10 @@ def _patch_yaml(template_text: str, res: dict) -> str:
 
         out_lines.append(line)
 
-        # Insert layer_types after deep_gate_init_bias inside model_raw
         if (layer_types is not None
                 and current_section == "model_raw"
                 and m and m.group(2) == "deep_gate_init_bias"):
-            indent = m.group(1)  # reuse same indentation
+            indent = m.group(1) 
             lt_str = ", ".join(f'"{t}"' for t in layer_types)
             out_lines.append(f"{indent}layer_types: [{lt_str}]\n")
 
@@ -356,7 +414,7 @@ def write_yaml(template_path: str, output_path: str, res: dict):
 
 def generate_yamls(
     template_path, output_dir, baseline_layers, our_layers, max_loops,
-    ratios, d_model=768, dense_ffn_mult=4, ffn_round_multiple=64,
+    ratios, d_model=768, dense_ffn_mult=4, ffn_round_multiple=16,
     n_head_q=None, n_head_kv=None,
 ):
     """Compute configs and write one YAML per ratio."""
@@ -394,7 +452,6 @@ def _write_and_log(template_path, output_dir, res, tag, params=None,
     exp_id = _make_experiment_id(res)
     out_path = os.path.join(output_dir, f"{exp_id}.yaml")
     write_yaml(template_path, out_path, res)
-    # Stash params on res so the summary table can use it
     if params is not None:
         res["_params"] = params
     param_str = ""
@@ -416,9 +473,7 @@ def _find_max_wide_ratio(d_model, baseline_layers, dense_ffn_mult, our_layers,
                          max_loops, ffn_round_multiple, n_head_q, n_head_kv,
                          step=0.01, start=0.99):
     """Walk down from `start` in `step` increments and return the highest
-    capacity_ratio for which the deep path is still feasible (deep budget can
-    afford `max_loops` of attention plus at least one ffn_round_multiple of
-    FFN). Returns (ratio, result_dict) or (None, None)."""
+    capacity_ratio for which the deep path is still feasible."""
     r = start
     while r > 0.0:
         res = asymmetric_dual_config(
@@ -442,7 +497,7 @@ def generate_paper_configs(
     max_loops: int,
     d_model: int = 768,
     dense_ffn_mult: int = 4,
-    ffn_round_multiple: int = 64,
+    ffn_round_multiple: int = 16,
     vocab_size: int = 50304,
     use_weight_tying: bool = False,
     n_head_q: int | None = None,
@@ -452,31 +507,18 @@ def generate_paper_configs(
 ):
     """
     Generate the experiment grid for a single (d_model, baseline_layers) setup.
-
-    Generates:
-      1. Dense iso-FLOP        baseline_layers L dense
-      2. Pure loop             our_layers L, max_loops loops, ratio=0
-      3. Pure wide             our_layers L, loops=1, ratio=1
-      4. Ratio sweep           our_layers L, max_loops loops, default [0.3, 0.5, 0.7]
-                               (capacity_ratio = wide fraction)
-      5. Max-wide              the most wide-heavy ratio still feasible
-                               (search in 0.01 steps)
     """
     n_rep = (n_head_q // n_head_kv) if (n_head_q and n_head_kv) else 1
     dense_ffn = d_model * dense_ffn_mult
     if ratios is None:
         ratios = [0.3, 0.5, 0.7]
 
-    # All results carry the model size so the YAML patcher can write
-    # n_embd / n_head_q / n_head_kv / qk_norm head_dim correctly.
     def _add_size_info(res):
         res["_d_model"] = d_model
         res["_n_head_q"] = n_head_q
         res["_n_head_kv"] = n_head_kv
         return res
 
-    # Tag every experiment id with the model size so configs from the
-    # small and large runs land in disjoint namespaces.
     tag = f"d{d_model}"
     all_results = []
 
@@ -488,12 +530,9 @@ def generate_paper_configs(
     print(f"  Ratios:    {ratios}    +max-wide search: {find_max_wide}")
     print(f"{'='*70}\n")
 
-    # Track baseline for "% vs baseline" — set once dense iso-FLOP succeeds.
     baseline_params = None
 
     # --- 1. Dense iso-FLOP ---
-    # baseline_layers layers, 1 loop, no wide path. Set layer_types=["loop"]*L
-    # so every block is a single-pass deep block (= plain dense).
     dense_iso = asymmetric_dual_config(
         d_model=d_model, target_dense_layers=baseline_layers,
         dense_ffn_mult=dense_ffn_mult, our_layers=baseline_layers,
@@ -502,7 +541,7 @@ def generate_paper_configs(
     )
     if "error" not in dense_iso:
         if dense_iso["Target ffn_wide"] == 0:
-            dense_iso["Target ffn_wide"] = 64   # dummy, ignored by "loop" layers
+            dense_iso["Target ffn_wide"] = 64
         dense_iso["_layer_types"] = ["loop"] * baseline_layers
         dense_iso["_exp_id"] = f"{tag}_dense_isoflop_{baseline_layers}L"
         _add_size_info(dense_iso)
@@ -525,7 +564,7 @@ def generate_paper_configs(
     )
     if "error" not in pure_loop:
         if pure_loop["Target ffn_wide"] == 0:
-            pure_loop["Target ffn_wide"] = 64   # dummy, ignored by "loop" layers
+            pure_loop["Target ffn_wide"] = 64
         pure_loop["_layer_types"] = ["loop"] * our_layers
         pure_loop["_exp_id"] = (f"{tag}_pure_loop{max_loops}_"
                                 f"{pure_loop['Target ffn_deep']}deep_{our_layers}L")
@@ -594,6 +633,7 @@ def generate_paper_configs(
                                           baseline_params=baseline_params))
 
     # --- 5. Max-wide search (highest feasible wide-heavy ratio) ---
+    best_r = None
     if find_max_wide:
         best_r, best_res = _find_max_wide_ratio(
             d_model=d_model, baseline_layers=baseline_layers,
@@ -630,6 +670,35 @@ def generate_paper_configs(
         else:
             print("\n  ⚠  Max-wide search found no feasible ratio")
 
+    # --- 6. Mixed Sandwich (33% loop, 33% dual, 33% wide) ---
+    sandwich_ratio = best_r if (find_max_wide and best_r is not None) else 0.5
+    mixed_res = mixed_sandwich_config(
+        d_model=d_model, target_dense_layers=baseline_layers,
+        dense_ffn_mult=dense_ffn_mult, our_layers=our_layers,
+        max_loops=max_loops, capacity_ratio=sandwich_ratio,
+        ffn_round_multiple=ffn_round_multiple,
+        n_head_q=n_head_q, n_head_kv=n_head_kv,
+    )
+    if "error" not in mixed_res:
+        wp = int(round(sandwich_ratio * 100))
+        dp = 100 - wp
+        mixed_res["_exp_id"] = (
+            f"{tag}_mixed_sandwich_r{wp:02d}w{dp:02d}d_"
+            f"{mixed_res['Target ffn_deep']}deep_{mixed_res['Target ffn_wide']}wide_"
+            f"{our_layers}L_loop{max_loops}"
+        )
+        _add_size_info(mixed_res)
+        params = count_model_params(
+            d_model, our_layers, max_loops,
+            mixed_res["Target ffn_deep"], mixed_res["Target ffn_wide"],
+            vocab_size, use_weight_tying, mixed_res["_layer_types"], n_rep,
+        )
+        all_results.append(_write_and_log(template_path, output_dir,
+                                          mixed_res, f"Mixed Sandwich {wp}w/{dp}d", params,
+                                          baseline_params=baseline_params))
+    else:
+        print(f"\n  ⚠  Skipping mixed sandwich: {mixed_res['error']}")
+
     # =================================================================
     # Summary
     # =================================================================
@@ -639,7 +708,6 @@ def generate_paper_configs(
         print(f"  Baseline (dense iso-FLOP) = {baseline_params/1e6:.1f}M params")
     print(f"{'='*70}\n")
 
-    # Print a compact table for copy-paste
     print(f"  {'Experiment ID':<58s} {'L':>3s} {'Lp':>3s} "
           f"{'FFN_d':>6s} {'FFN_w':>6s} {'Match':>7s} "
           f"{'Params':>9s} {'vs base':>9s}")
@@ -676,7 +744,6 @@ def build_parser():
     )
     sub = p.add_subparsers(dest="command")
 
-    # Shared args helper
     def add_common(sp):
         sp.add_argument("--d-model", type=int, default=768)
         sp.add_argument("--dense-ffn-mult", type=int, default=4)
@@ -684,12 +751,10 @@ def build_parser():
         sp.add_argument("--n-head-q", type=int, default=None)
         sp.add_argument("--n-head-kv", type=int, default=None)
 
-    # --- "table" ---
     t = sub.add_parser("table", help="Print FLOP tables to stdout (default)")
     add_common(t)
     t.add_argument("--baseline-layers", type=int, nargs="+", default=[60, 36])
 
-    # --- "yaml" ---
     y = sub.add_parser("yaml", help="Generate YAML config files")
     add_common(y)
     y.add_argument("--template", required=True)
@@ -699,7 +764,6 @@ def build_parser():
     y.add_argument("--max-loops", type=int, required=True)
     y.add_argument("--ratios", type=float, nargs="+", required=True)
 
-    # --- "paper" ---
     pp = sub.add_parser("paper", help="Generate ALL configs for Table 1 + Table 2")
     add_common(pp)
     pp.add_argument("--template", required=True)
