@@ -76,40 +76,14 @@ class AdaptiveComputationConfig(BaseModel):
     # ---- Gate mode ---------------------------------------------------------
     # "convex":     output = g * h_deep + (1-g) * h_wide  (single gate)
     # "two_gates":  output = g_d * h_deep_eff + g_w * h_wide_eff
-    #               with g_d, g_w independent sigmoids on x. This is the
-    #               formulation from the original old code: each branch is
-    #               independently scaled and they sum. It's strictly more
-    #               expressive than convex (g_d + g_w is unconstrained) but
-    #               loses the "fraction of capacity routed to deep" reading.
     gate_mode: Literal["convex", "two_gates"] = "two_gates"
-
-    # ---- Convex-mode gate init --------------------------------------------
-    # Bias on the pre-sigmoid logit. 0.0 => neutral 0.5 start.
-    # Positive bias => start biased toward deep; negative => toward wide.
     gate_init_bias: float = 0.0
-
-    # ---- Two-gates-mode gate inits ----------------------------------------
-    # Pre-sigmoid bias on each independent gate. 0.0 => 0.5 at init for that
-    # branch (i.e. each branch contributes ~half-strength initially).
     deep_gate_init_bias: float = 0.0
     wide_gate_init_bias: float = 0.0
-
-    # ---- Per-iteration loop / wide scales (shared across both modes) ------
-    # Softplus-raw inits. -1.5 gives softplus ≈ 0.20.
     loop_scale_init: float = -7
     wide_scale_init: float = -7
-
     scheduler_type: str = "constant"
     layer_types: Optional[list[str]] = None
-
-    # ---- Cross-path mixing (works in either gate mode) --------------------
-    # When True, each branch receives a learnable, zero-initialized leak from
-    # the other branch BEFORE the gates combine them:
-    #   h_deep_eff = h_deep + softplus(cross_scale_deep) * proj_w2d(h_wide)
-    #   h_wide_eff = h_wide + softplus(cross_scale_wide) * proj_d2w(h_deep)
-    # Projections are zero-initialized and scales start near zero
-    # (softplus(-7) ≈ 9e-4), so initial behavior matches use_cross=False; the
-    # model only ramps up cross-flow if it's useful.
     use_cross: bool = True
     cross_scale_deep_init: float = -7.0
     cross_scale_wide_init: float = -7.0
