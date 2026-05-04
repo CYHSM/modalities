@@ -2,39 +2,67 @@
 """Match olmes eval results to wandb runs by yaml+timestamp, then sync to wandb."""
 import os, re, json
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
-WANDB_DIR = Path("/leonardo_scratch/large/userexternal/mfrey000/experiments/wandb/wandb")
-EXPERIMENTS_DIR = Path("/leonardo_scratch/large/userexternal/mfrey000/experiments")
+# ---------- Updated Paths for Clariden / Alps ----------
+EXPERIMENTS_DIR = Path("/capstor/scratch/cscs/markusfrey/experiments")
+WANDB_DIR = EXPERIMENTS_DIR / "wandb" / "wandb"
+
 WANDB_ENTITY = "cyhsm"
-WANDB_PROJECT = "widedeep"
+WANDB_PROJECT = "onegate"
 
 # ---------- parse wandb offline runs ----------
 def parse_wandb_runs():
     runs = []
+    if not WANDB_DIR.exists():
+        print(f"Warning: WANDB_DIR {WANDB_DIR} does not exist.")
+        return runs
+        
+    print(f"Scanning {WANDB_DIR} for offline runs...")
     for run_dir in sorted(WANDB_DIR.glob("offline-run-*")):
         run_id = run_dir.name.split("-")[-1]
         meta_file = run_dir / "files" / "wandb-metadata.json"
         if not meta_file.exists():
+            print(f"  [DEBUG] Skipping {run_dir.name}: missing files/wandb-metadata.json")
             continue
+            
         try:
             meta = json.loads(meta_file.read_text())
-        except Exception:
+        except Exception as e:
+            print(f"  [DEBUG] Skipping {run_dir.name}: invalid JSON - {e}")
             continue
+            
         args = meta.get("args", [])
         yaml_name = None
+        
+        # Robust argument parsing (handles both '--arg val' and '--arg=val')
         for i, a in enumerate(args):
             if a == "--config_file_path" and i + 1 < len(args):
                 yaml_name = Path(args[i + 1]).name
                 break
+            elif a.startswith("--config_file_path="):
+                yaml_name = Path(a.split("=", 1)[1]).name
+                break
+                
         if not yaml_name:
+            print(f"  [DEBUG] Skipping {run_dir.name}: '--config_file_path' not found in args: {args}")
             continue
-        started = meta.get("started_at")
+            
+        # Check both possible wandb timestamp keys
+        started = meta.get("startedAt") or meta.get("started_at")
+        if not started:
+            print(f"  [DEBUG] Skipping {run_dir.name}: missing startedAt/started_at timestamp in metadata")
+            continue
+            
         try:
             ts = datetime.fromisoformat(started.replace("Z", "+00:00"))
-        except Exception:
+        except Exception as e:
+            print(f"  [DEBUG] Skipping {run_dir.name}: timestamp parse error '{started}' - {e}")
             continue
+            
         runs.append({"run_id": run_id, "yaml": yaml_name, "started": ts})
+        print(f"  [OK] Found valid run: {run_dir.name} (yaml={yaml_name})")
+        
     return runs
 
 # ---------- parse experiment folders ----------
@@ -48,11 +76,13 @@ def parse_experiment_folders():
         m = FOLDER_RE.match(d.name)
         if not m:
             continue
-        # Folder timestamp is LOCAL (CEST = UTC+2 in April). Treat as UTC+2, convert to UTC.
+        
+        # Folder timestamp is LOCAL. Clariden (Switzerland) is Europe/Zurich.
+        # April = CEST = UTC+2. 
         y, mo, da, h, mi, s = map(int, m.groups())
-        # Leonardo is Europe/Rome; April = CEST = UTC+2
         local = datetime(y, mo, da, h, mi, s)
-        ts_utc = local.replace(tzinfo=timezone.utc) - __import__("datetime").timedelta(hours=2)
+        ts_utc = local.replace(tzinfo=timezone.utc) - timedelta(hours=2)
+        
         yamls = [y.name for y in d.glob("*.yaml") if not y.name.endswith(".resolved")]
         if not yamls:
             continue
@@ -113,25 +143,25 @@ def main():
     import wandb
     runs = parse_wandb_runs()
     exps = parse_experiment_folders()
-    print(f"Found {len(runs)} wandb runs, {len(exps)} experiment folders")
+    print(f"\nFound {len(runs)} wandb offline runs, {len(exps)} experiment folders")
     matches = match(runs, exps)
     print(f"\nMatched {len(matches)} folders")
 
     for folder, run_id in matches.items():
-        if run_id != "a1l1s3xo":
-            print(f"!! skipping {folder.name} → {run_id} (not the target run)")
-            continue
         metrics_list = collect_metrics(folder)
         if not metrics_list:
             print(f"   [{run_id}] no metrics yet, skip")
             continue
+            
         print(f"\n== Syncing {len(metrics_list)} steps to {run_id} ({folder.name}) ==")
         run = wandb.init(id=run_id, project=WANDB_PROJECT, entity=WANDB_ENTITY,
                          resume="allow", reinit=True)
         run.define_metric("seen_steps")
         run.define_metric("eval/*", step_metric="seen_steps")
+        
         for m in metrics_list:
             run.log(m)
+            
         run.finish()
         print(f"   done")
 

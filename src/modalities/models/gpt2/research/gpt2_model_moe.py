@@ -50,22 +50,36 @@ logger.setLevel(logging.WARNING)
 # =============================================================================
 
 class AdaptiveComputationConfig(BaseModel):
+    enable_adaptive: bool = False
     max_loops: int = 10
-    path_mode: str = "dual"
-    use_cross: bool = False
     halt_threshold: float = 0.99
     ponder_penalty_weight: float = 0.00
     wide_ffn_hidden: int = 0
-    wide_ffn_gate_init_bias: float = 0.0
-    deep_gate_init_bias: float = 0.0  # Added for decoupled gate symmetry
+
+    # --- Gate Bias Inits ---
+    deep_gate_init_bias: float = 0.0
+    wide_gate_init_bias: float = 0.0
+
+    # --- Softplus Scale Inits ---
+    # One shared init for both first_loop_scale and rest_loop_scales.
+    # First loop is always overridden to ~1.0 (0.5413 pre-softplus) regardless
+    # of this value, so `loop_scale_init` only governs the rest.
+    loop_scale_init: float = -7.0
+    wide_scale_init: float = -7.0
+    cross_scale_deep_init: float = -7.0
+    cross_scale_wide_init: float = -7.0
+
     scheduler_type: str = "constant"
     layer_types: Optional[list[str]] = None
+    use_cross: bool = False
+
+    # --- MoE (wide path) ---
     use_moe_wide: bool = False
     n_experts: int = 8
     top_k: int = 2
     expert_ffn_hidden: Optional[int] = None
     moe_bias_update_speed: float = 0.001
-    moe_execution: str = "loop"
+    moe_execution: str = "loop"  # "loop" (torch.compile safe) or "scatter" (FLOP accurate)
 
 
 class LayerNorms(LookupEnum):
@@ -374,6 +388,15 @@ class GPT2Block(nn.Module):
 # =============================================================================
 
 class ExpertRouter(nn.Module):
+    """DeepSeek-V3-style aux-loss-free router.
+
+    - Routing decisions use `logits + expert_bias` (top-k selection).
+    - Gating weights are softmax over `logits.gather(top_k_indices)` — the
+      bias shifts routing but does NOT leak into gradients.
+    - `expert_bias` is nudged by `update_bias()`, which is called externally
+      from the trainer after `optimizer.step()` (with all-reduce across ranks).
+    """
+
     def __init__(
         self,
         n_embd: int,
@@ -385,20 +408,23 @@ class ExpertRouter(nn.Module):
         self.n_experts = n_experts
         self.top_k = top_k
         self.bias_update_speed = bias_update_speed
-        
+
         self.gate = nn.Linear(n_embd, n_experts, bias=False)
+        # Buffers are fp32 by default; keep them fp32 to avoid bf16 underflow
+        # when accumulating tiny bias_update_speed increments.
         self.register_buffer("expert_bias", torch.zeros(n_experts))
         self.register_buffer("expert_counts", torch.zeros(n_experts))
         self.register_buffer("total_tokens", torch.tensor(0.0))
-    
+
     def forward(self, x: torch.Tensor):
         B, T, D = x.shape
         logits = self.gate(x)
-        biased_logits = logits + self.expert_bias.to(logits.dtype)
+        # Cast to fp32 for the bias add so bf16 underflow doesn't eat the bias.
+        biased_logits = (logits.float() + self.expert_bias).to(logits.dtype)
         top_k_biased, top_k_indices = biased_logits.topk(self.top_k, dim=-1)
         top_k_logits = logits.gather(-1, top_k_indices)
         top_k_weights = F.softmax(top_k_logits, dim=-1)
-        
+
         if self.training:
             with torch.no_grad():
                 flat_indices = top_k_indices.reshape(-1)
@@ -406,11 +432,13 @@ class ExpertRouter(nn.Module):
                 counts.scatter_add_(0, flat_indices, torch.ones_like(flat_indices, dtype=counts.dtype))
                 self.expert_counts += counts
                 self.total_tokens += B * T
-        
+
         return top_k_indices, top_k_weights, logits
-    
+
     @torch.no_grad()
     def update_bias(self):
+        """Called externally by the trainer after optimizer.step().
+        Expects `expert_counts` and `total_tokens` to already be all-reduced."""
         if self.total_tokens == 0:
             return
         avg_count = self.total_tokens * self.top_k / self.n_experts
@@ -418,6 +446,7 @@ class ExpertRouter(nn.Module):
         self.expert_bias -= self.bias_update_speed * (relative_usage - 1.0)
         self.expert_counts.zero_()
         self.total_tokens.zero_()
+
 
 class MoEFFN(nn.Module):
     def __init__(
@@ -436,14 +465,14 @@ class MoEFFN(nn.Module):
         self.top_k = top_k
         self.n_embd = n_embd
         self.execution = execution
-        
+
         self.router = ExpertRouter(
             n_embd=n_embd,
             n_experts=n_experts,
             top_k=top_k,
             bias_update_speed=bias_update_speed,
         )
-        
+
         self.experts = nn.ModuleList([
             SwiGLU(
                 n_embd=n_embd,
@@ -453,16 +482,20 @@ class MoEFFN(nn.Module):
             )
             for _ in range(n_experts)
         ])
-    
+
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict]:
         B, T, D = x.shape
         top_k_indices, top_k_weights, router_logits = self.router(x)
-        
+
         if self.execution == "loop":
+            # NOTE: loop mode runs ALL experts on ALL tokens (mask zeros out
+            # non-selected contributions). Actual FLOPs = n_experts * SwiGLU,
+            # not top_k * SwiGLU. Used when torch.compile is required.
             output = self._forward_loop(x, top_k_indices, top_k_weights)
         else:
+            # scatter mode: true top_k execution, FLOP-accurate.
             output = self._forward_scatter(x, top_k_indices, top_k_weights)
-        
+
         with torch.no_grad():
             expert_usage = torch.zeros(self.n_experts, device=x.device)
             expert_usage.scatter_add_(
@@ -471,38 +504,37 @@ class MoEFFN(nn.Module):
                 torch.ones(B * T * self.top_k, device=x.device)
             )
             expert_usage = expert_usage / (B * T)
-            
+
             metrics = {
                 "expert_usage": expert_usage,
                 "router_entropy": -(F.softmax(router_logits, -1) * F.log_softmax(router_logits, -1)).sum(-1).mean(),
-                "top1_expert_frac": expert_usage.max() / expert_usage.sum(),
+                "top1_expert_frac": expert_usage.max() / expert_usage.sum().clamp(min=1e-8),
                 "expert_bias_std": self.router.expert_bias.std(),
             }
-        
+
         return output, metrics
-    
+
     def _forward_loop(self, x, top_k_indices, top_k_weights):
         B, T, D = x.shape
         output = torch.zeros_like(x)
-        
+
         for expert_idx in range(self.n_experts):
             mask = (top_k_indices == expert_idx)
-            # if not mask.any():
-            #     continue
             weight = (top_k_weights * mask.to(x.dtype)).sum(dim=-1, keepdim=True)
             expert_out = self.experts[expert_idx](x)
             output = output + weight * expert_out
-        
+
         return output
-    
+
     def _forward_scatter(self, x, top_k_indices, top_k_weights):
         B, T, D = x.shape
         k = self.top_k
         flat_x = x.reshape(B * T, D)
         flat_indices = top_k_indices.reshape(B * T, k)
         flat_weights = top_k_weights.reshape(B * T, k)
-        output = torch.zeros(B * T, D, device=x.device, dtype=x.dtype)
-        
+        # Accumulate in fp32 to avoid bf16 index_add_ precision loss.
+        output = torch.zeros(B * T, D, device=x.device, dtype=torch.float32)
+
         for expert_idx in range(self.n_experts):
             token_mask = (flat_indices == expert_idx).any(dim=-1)
             if not token_mask.any():
@@ -512,9 +544,10 @@ class MoEFFN(nn.Module):
             expert_out = self.experts[expert_idx](expert_input)
             slot_mask = (flat_indices[token_ids] == expert_idx)
             weights = (flat_weights[token_ids] * slot_mask.to(x.dtype)).sum(-1, keepdim=True)
-            output.index_add_(0, token_ids, weights * expert_out.to(dtype=x.dtype))
-        
-        return output.reshape(B, T, D)
+            output.index_add_(0, token_ids, (weights * expert_out).float())
+
+        return output.to(x.dtype).reshape(B, T, D)
+
 
 class GPT2BlockMoE(nn.Module):
     def __init__(
@@ -539,13 +572,13 @@ class GPT2BlockMoE(nn.Module):
         super().__init__()
         self.attention_norm = attention_norm
         self.ffn_norm = ffn_norm
-        
+
         self.attn = CausalSelfAttention(
             n_head_q=n_head_q, n_head_kv=n_head_kv, n_embd=n_embd,
             attention_config=attention_config, attention_impl=attention_impl,
             bias=bias, dropout=dropout,
         )
-        
+
         self.mlp = MoEFFN(
             n_embd=n_embd,
             expert_ffn_hidden=expert_ffn_hidden,
@@ -556,12 +589,13 @@ class GPT2BlockMoE(nn.Module):
             execution=execution,
             bias_update_speed=bias_update_speed,
         )
-    
+
     def forward(self, x, scale=1.0):
         x = x + scale * self.attn(self.attention_norm(x))
         mlp_out, moe_metrics = self.mlp(self.ffn_norm(x))
         x = x + scale * mlp_out
         return x, moe_metrics
+
 
 # =============================================================================
 # Adaptive Computation Components
@@ -569,10 +603,9 @@ class GPT2BlockMoE(nn.Module):
 
 @dataclass
 class HaltingState:
-    """Tracks ACT halting: prob_remain, weighted output, and expected steps."""
-    prob_remain: torch.Tensor       # (B, T)
-    output: torch.Tensor            # (B, T, D)
-    expected_steps: torch.Tensor    # (B, T)
+    prob_remain: torch.Tensor
+    output: torch.Tensor
+    expected_steps: torch.Tensor
 
     @staticmethod
     def init(B: int, T: int, D: int, *, device: torch.device, dtype: torch.dtype) -> "HaltingState":
@@ -594,8 +627,6 @@ class HaltingState:
 
 
 class StepMetrics:
-    """Collects per-step scalars, pads/stacks to (max_loops,) for logging."""
-
     def __init__(self, max_loops: int, device: torch.device):
         self.max_loops = max_loops
         self.device = device
@@ -615,6 +646,20 @@ class StepMetrics:
         return out
 
 
+def _displacement_stats(
+    h: torch.Tensor, x: torch.Tensor, eps: float = 1e-6
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Relative-norm and cosine-similarity of `h` w.r.t. input `x`, per token."""
+    diff = h - x
+    x_norm = x.norm(dim=-1).clamp(min=eps)
+    rel_norm = diff.norm(dim=-1) / x_norm
+
+    h_norm = h.norm(dim=-1).clamp(min=eps)
+    cos_sim = (h * x).sum(dim=-1) / (h_norm * x_norm)
+
+    return rel_norm, cos_sim
+
+
 class AdaptiveRouter(nn.Module):
     """Per-token halting: [h; t_normalized] -> sigmoid -> halt_prob."""
 
@@ -622,58 +667,108 @@ class AdaptiveRouter(nn.Module):
         super().__init__()
         self.linear = nn.Linear(n_embd + 1, 1, bias=bias)
 
-    def forward(self, h: torch.Tensor, step_normalized: float) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, step_normalized: float, x: torch.Tensor = None) -> torch.Tensor:
         B, T, _ = h.shape
         step_feat = torch.full((B, T, 1), step_normalized, device=h.device, dtype=h.dtype)
         logit = self.linear(torch.cat([h, step_feat], dim=-1))
         return torch.sigmoid(logit).squeeze(-1)
 
 
-class DecoupledDualPathGate(nn.Module):
-    def __init__(self, n_embd, init_bias_deep=0.0, init_bias_wide=0.0):
+class DualPathGate(nn.Module):
+    """Blends deep + wide paths. Optional cross-projections (disabled by default).
+
+    Output decomposition (for diagnostics):
+        pure_deep     = gate_deep * h_deep
+        pure_wide     = gate_wide * h_wide
+        contam_w2d    = gate_deep * softplus(cross_scale_deep) * proj_w2d(h_wide)
+        contam_d2w    = gate_wide * softplus(cross_scale_wide) * proj_d2w(h_deep)
+        output        = pure_deep + pure_wide + contam_w2d + contam_d2w
+    """
+
+    def __init__(
+        self,
+        n_embd: int,
+        init_bias_deep: float = 0.0,
+        init_bias_wide: float = 0.0,
+        cross_scale_deep_init: float = -7.0,
+        cross_scale_wide_init: float = -7.0,
+    ):
         super().__init__()
+        self.init_bias_deep = init_bias_deep
+        self.init_bias_wide = init_bias_wide
+        self.cross_scale_deep_init = cross_scale_deep_init
+        self.cross_scale_wide_init = cross_scale_wide_init
+
         self.gate_proj = nn.Linear(n_embd, 2, bias=True)
         self.proj_w2d = nn.Linear(n_embd, n_embd, bias=False)
         self.proj_d2w = nn.Linear(n_embd, n_embd, bias=False)
-        self.cross_scale_wide = nn.Parameter(torch.tensor([-7.0]))
-        self.cross_scale_deep = nn.Parameter(torch.tensor([-7.0]))
-        self.init_bias_deep = init_bias_deep
-        self.init_bias_wide = init_bias_wide
+
+        # Allocate empty; reset_parameters fills them.
+        self.cross_scale_wide = nn.Parameter(torch.empty(1))
+        self.cross_scale_deep = nn.Parameter(torch.empty(1))
+
         self.reset_parameters()
 
     def reset_parameters(self):
+        """Re-applied against framework-level global init sweeps."""
         nn.init.zeros_(self.gate_proj.weight)
         with torch.no_grad():
             self.gate_proj.bias[0] = self.init_bias_deep
             self.gate_proj.bias[1] = self.init_bias_wide
         nn.init.zeros_(self.proj_w2d.weight)
         nn.init.zeros_(self.proj_d2w.weight)
+        nn.init.constant_(self.cross_scale_wide, self.cross_scale_wide_init)
+        nn.init.constant_(self.cross_scale_deep, self.cross_scale_deep_init)
 
-    def forward(self, routing_input, h_deep, h_wide, use_cross=True):
-        logits = self.gate_proj(routing_input)
+    def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor, use_cross: bool = False):
+        logits = self.gate_proj(x)
         gates = torch.sigmoid(logits)
+
         gate_deep = gates[..., 0:1]
         gate_wide = gates[..., 1:2]
+
+        pure_deep = gate_deep * h_deep
+        pure_wide = gate_wide * h_wide
 
         if use_cross:
             scale_deep = F.softplus(self.cross_scale_deep)
             scale_wide = F.softplus(self.cross_scale_wide)
-            h_deep_out = h_deep + scale_deep * self.proj_w2d(h_wide)
-            h_wide_out = h_wide + scale_wide * self.proj_d2w(h_deep)
-        else:
-            h_deep_out = h_deep
-            h_wide_out = h_wide
 
-        blended = gate_deep * h_deep_out + gate_wide * h_wide_out
-        return blended, gate_deep, gate_wide
+            cross_w_into_d = scale_deep * self.proj_w2d(h_wide)
+            cross_d_into_w = scale_wide * self.proj_d2w(h_deep)
+
+            contam_w2d = gate_deep * cross_w_into_d
+            contam_d2w = gate_wide * cross_d_into_w
+
+            h_deep_out = pure_deep + contam_w2d
+            h_wide_out = pure_wide + contam_d2w
+        else:
+            contam_w2d = torch.zeros_like(pure_deep)
+            contam_d2w = torch.zeros_like(pure_wide)
+            h_deep_out = pure_deep
+            h_wide_out = pure_wide
+
+        blended = h_deep_out + h_wide_out
+
+        with torch.no_grad():
+            aux = {
+                "gate_logit_deep_mean": logits[..., 0].mean(),
+                "gate_logit_deep_std":  logits[..., 0].std(),
+                "gate_logit_wide_mean": logits[..., 1].mean(),
+                "gate_logit_wide_std":  logits[..., 1].std(),
+                "token_norm_pure_deep":   pure_deep.norm(dim=-1),
+                "token_norm_pure_wide":   pure_wide.norm(dim=-1),
+                "token_norm_contam_w2d":  contam_w2d.norm(dim=-1),
+                "token_norm_contam_d2w":  contam_d2w.norm(dim=-1),
+            }
+        return blended, gate_deep, gate_wide, aux
+
 
 # =============================================================================
-# Adaptive Recursive Block (Dual Full-Block Paths)
+# Adaptive Recursive Block
 # =============================================================================
 
 class AdaptiveRecursiveBlock(nn.Module):
-    _INIT_SCALE_RAW: float = -7.0
-
     def __init__(
         self,
         block: Optional[GPT2Block],
@@ -681,7 +776,7 @@ class AdaptiveRecursiveBlock(nn.Module):
         n_embd: int,
         layer_idx: int,
         n_layers: int,
-        wide_block: Optional[GPT2Block] = None,
+        wide_block: Optional[nn.Module] = None,      # GPT2Block OR GPT2BlockMoE
         layer_type: str = "dual",
     ):
         super().__init__()
@@ -695,19 +790,40 @@ class AdaptiveRecursiveBlock(nn.Module):
         self.has_loop_path = layer_type in ["loop", "dual"]
         if self.has_loop_path:
             self.router = AdaptiveRouter(n_embd)
-            self.loop_scales = nn.Parameter(torch.full((self.max_loops,), self._INIT_SCALE_RAW))
+            # Split: first loop is initialized alive (~1.0), rest at config default.
+            self.first_loop_scale = nn.Parameter(torch.empty(1))
+            if self.max_loops > 1:
+                self.rest_loop_scales = nn.Parameter(torch.empty((self.max_loops - 1,)))
+            else:
+                self.rest_loop_scales = None
 
         self.has_wide_path = layer_type in ["wide", "dual"]
         if self.has_wide_path:
             self.wide_block = wide_block
-            self.wide_scale = nn.Parameter(torch.tensor([self._INIT_SCALE_RAW]))
+            self.wide_scale = nn.Parameter(torch.empty(1))
 
         if layer_type == "dual":
-            self.dual_gate = DecoupledDualPathGate(
-                n_embd=n_embd, 
+            self.dual_gate = DualPathGate(
+                n_embd=n_embd,
                 init_bias_deep=adaptive_config.deep_gate_init_bias,
-                init_bias_wide=adaptive_config.wide_ffn_gate_init_bias
+                init_bias_wide=adaptive_config.wide_gate_init_bias,
+                cross_scale_deep_init=adaptive_config.cross_scale_deep_init,
+                cross_scale_wide_init=adaptive_config.cross_scale_wide_init,
             )
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        """Secures scale parameters against framework-level global zeroing."""
+        if self.has_loop_path:
+            # First loop alive: softplus(0.5413) ≈ 1.0
+            nn.init.constant_(self.first_loop_scale, 0.5413)
+            if self.rest_loop_scales is not None:
+                nn.init.constant_(self.rest_loop_scales, self.config.loop_scale_init)
+
+        if self.has_wide_path:
+            # Wide path alive at init: softplus(0.5413) ≈ 1.0
+            nn.init.constant_(self.wide_scale, 0.5413)
 
     def forward(
         self, x: torch.Tensor, token_ids: torch.Tensor = None,
@@ -715,12 +831,12 @@ class AdaptiveRecursiveBlock(nn.Module):
         B, T, D = x.shape
         device = x.device
 
-        # =================================================================
-        # 1) Compute path: full block looped with ACT
-        # =================================================================
         state = HaltingState.init(B, T, D, device=device, dtype=x.dtype)
         metrics = StepMetrics(self.max_loops, device)
 
+        # =================================================================
+        # 1) Deep path: dense block, ACT-looped
+        # =================================================================
         if self.has_loop_path:
             step_denom = max(1, self.max_loops - 1)
             h_loop = x
@@ -729,34 +845,47 @@ class AdaptiveRecursiveBlock(nn.Module):
             for step in range(self.max_loops):
                 actual_steps = step + 1
 
-                scale = F.softplus(self.loop_scales[step])
-                metrics.log("loop_scale", scale.detach())
+                if step == 0:
+                    scale = F.softplus(self.first_loop_scale[0])
+                else:
+                    scale = F.softplus(self.rest_loop_scales[step - 1])
+
                 h_prev = h_loop
                 h_loop = self.block(h_loop, scale=scale)
 
-                halt_prob = self.router(h_loop, step_normalized=step / step_denom)
+                halt_prob = self.router(h_loop, step_normalized=step / step_denom, x=x)
                 state.update(h_loop, halt_prob, step)
 
-                rel_change = (h_loop - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)
+                with torch.no_grad():
+                    metrics.log("loop_scale", scale.detach())
 
-                metrics.log("halt_prob_mean", halt_prob.detach().mean())
-                metrics.log("halt_prob_std", halt_prob.detach().std())
-                metrics.log("halt_prob_min", halt_prob.detach().min())
-                metrics.log("halt_prob_max", halt_prob.detach().max())
-                metrics.log("rel_change", rel_change.mean())
-                metrics.log("prob_remain_max", state.prob_remain.max().detach())
-                metrics.log("prob_remain_mean", state.prob_remain.mean().detach())
+                    rel_change = (h_loop - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)
+                    metrics.log("step_h_norm", h_loop.norm(dim=-1).mean())
+
+                    rel_norm_to_input, cos_sim_to_input = _displacement_stats(h_loop, x)
+                    metrics.log("step_cos_sim_to_input", cos_sim_to_input.mean())
+                    metrics.log("step_rel_norm_to_input", rel_norm_to_input.mean())
+
+                    metrics.log("halt_prob_mean", halt_prob.mean())
+                    metrics.log("halt_prob_std", halt_prob.std())
+                    metrics.log("halt_prob_min", halt_prob.min())
+                    metrics.log("halt_prob_max", halt_prob.max())
+                    metrics.log("rel_change", rel_change.mean())
+                    metrics.log("prob_remain_max", state.prob_remain.max())
+                    metrics.log("prob_remain_mean", state.prob_remain.mean())
 
             state.finalize(h_loop, actual_steps)
             h_deep = state.output
-            frac_alive = (state.prob_remain.detach() > 0.01).float().mean()
+
+            with torch.no_grad():
+                frac_alive = (state.prob_remain > 0.01).float().mean()
         else:
             h_deep = torch.zeros_like(x)
             actual_steps = 0
             frac_alive = torch.tensor(0.0, device=device)
 
         # =================================================================
-        # 2) Capacity path: wide block, single pass
+        # 2) Wide path: dense OR MoE block, single pass
         # =================================================================
         moe_metrics = {}
         if self.has_wide_path:
@@ -770,10 +899,13 @@ class AdaptiveRecursiveBlock(nn.Module):
             wide_scale_val = torch.tensor(0.0, device=device)
 
         # =================================================================
-        # 3) Gating and Output
+        # 3) Gate
         # =================================================================
+        gate_aux: dict[str, torch.Tensor] = {}
         if self.layer_type == "dual":
-            output, gate_deep, gate_wide = self.dual_gate(x, h_deep, h_wide, use_cross=self.config.use_cross)
+            output, gate_deep, gate_wide, gate_aux = self.dual_gate(
+                x, h_deep, h_wide, use_cross=self.config.use_cross
+            )
         elif self.layer_type == "loop":
             output = h_deep
             gate_deep = torch.ones(B, T, 1, device=device, dtype=x.dtype)
@@ -786,13 +918,14 @@ class AdaptiveRecursiveBlock(nn.Module):
             raise ValueError(f"Unknown layer type: {self.layer_type}")
 
         # =================================================================
-        # 4) Build layer metrics
+        # 4) Build layer_metrics dict
         # =================================================================
         step_metrics = metrics.finalize()
 
-        es = state.expected_steps.detach()
-        gate_deep_d = gate_deep.detach()
-        gate_wide_d = gate_wide.detach()
+        with torch.no_grad():
+            es = state.expected_steps.detach()
+            gate_deep_d = gate_deep.detach()
+            gate_wide_d = gate_wide.detach()
 
         layer_metrics = {
             "expected_steps": state.expected_steps,
@@ -804,8 +937,6 @@ class AdaptiveRecursiveBlock(nn.Module):
             "expected_steps_std": es.std(),
             "expected_steps_min": es.min(),
             "expected_steps_max": es.max(),
-            
-            # Updated Gate Metrics
             "gate_deep_mean": gate_deep_d.mean(),
             "gate_deep_std": gate_deep_d.std(),
             "gate_deep_min": gate_deep_d.min(),
@@ -816,27 +947,44 @@ class AdaptiveRecursiveBlock(nn.Module):
             "gate_wide_max": gate_wide_d.max(),
             "gate_deep_token_probs": gate_deep_d.squeeze(-1),
             "gate_wide_token_probs": gate_wide_d.squeeze(-1),
-            
             "deep_block_norm": h_deep.detach().norm(dim=-1).mean(),
             "wide_block_norm": (
                 h_wide.detach().norm(dim=-1).mean()
                 if self.has_wide_path else torch.tensor(0.0, device=device)
             ),
-            "step_halt_probs": step_metrics.get("halt_prob_mean", torch.zeros(self.max_loops, device=device)),
-            "step_halt_prob_std": step_metrics.get("halt_prob_std", torch.zeros(self.max_loops, device=device)),
-            "step_halt_prob_min": step_metrics.get("halt_prob_min", torch.zeros(self.max_loops, device=device)),
-            "step_halt_prob_max": step_metrics.get("halt_prob_max", torch.zeros(self.max_loops, device=device)),
-            "step_changes": step_metrics.get("rel_change", torch.zeros(self.max_loops, device=device)),
-            "loop_scales": step_metrics.get("loop_scale", torch.zeros(self.max_loops, device=device)),
-            "prob_remain_max": step_metrics.get("prob_remain_max", torch.zeros(self.max_loops, device=device)),
-            "prob_remain_mean": step_metrics.get("prob_remain_mean", torch.zeros(self.max_loops, device=device)),
+
+            "norm_pure_deep_mean":  gate_aux.get("token_norm_pure_deep",  torch.tensor(0.0, device=device)).mean(),
+            "norm_pure_wide_mean":  gate_aux.get("token_norm_pure_wide",  torch.tensor(0.0, device=device)).mean(),
+            "norm_contam_w2d_mean": gate_aux.get("token_norm_contam_w2d", torch.tensor(0.0, device=device)).mean(),
+            "norm_contam_d2w_mean": gate_aux.get("token_norm_contam_d2w", torch.tensor(0.0, device=device)).mean(),
+
+            "token_norm_pure_deep":  gate_aux.get("token_norm_pure_deep",  torch.zeros(B, T, device=device)),
+            "token_norm_pure_wide":  gate_aux.get("token_norm_pure_wide",  torch.zeros(B, T, device=device)),
+            "token_norm_contam_w2d": gate_aux.get("token_norm_contam_w2d", torch.zeros(B, T, device=device)),
+            "token_norm_contam_d2w": gate_aux.get("token_norm_contam_d2w", torch.zeros(B, T, device=device)),
+
+            "step_halt_probs":        step_metrics.get("halt_prob_mean",         torch.zeros(self.max_loops, device=device)),
+            "step_halt_prob_std":     step_metrics.get("halt_prob_std",          torch.zeros(self.max_loops, device=device)),
+            "step_halt_prob_min":     step_metrics.get("halt_prob_min",          torch.zeros(self.max_loops, device=device)),
+            "step_halt_prob_max":     step_metrics.get("halt_prob_max",          torch.zeros(self.max_loops, device=device)),
+            "step_changes":           step_metrics.get("rel_change",             torch.zeros(self.max_loops, device=device)),
+            "loop_scales":            step_metrics.get("loop_scale",             torch.zeros(self.max_loops, device=device)),
+            "prob_remain_max":        step_metrics.get("prob_remain_max",        torch.zeros(self.max_loops, device=device)),
+            "prob_remain_mean":       step_metrics.get("prob_remain_mean",       torch.zeros(self.max_loops, device=device)),
+            "step_h_norm":            step_metrics.get("step_h_norm",            torch.zeros(self.max_loops, device=device)),
+            "step_cos_sim_to_input":  step_metrics.get("step_cos_sim_to_input",  torch.zeros(self.max_loops, device=device)),
+            "step_rel_norm_to_input": step_metrics.get("step_rel_norm_to_input", torch.zeros(self.max_loops, device=device)),
         }
 
+        for k in ["gate_logit_deep_mean", "gate_logit_deep_std",
+                  "gate_logit_wide_mean", "gate_logit_wide_std"]:
+            layer_metrics[k] = gate_aux.get(k, torch.tensor(0.0, device=device))
+
         if getattr(self.config, "use_moe_wide", False):
-            layer_metrics["moe_expert_usage"] = moe_metrics.get("expert_usage", torch.zeros(self.config.n_experts, device=device))
-            layer_metrics["moe_router_entropy"] = moe_metrics.get("router_entropy", torch.tensor(0.0, device=device))
+            layer_metrics["moe_expert_usage"]     = moe_metrics.get("expert_usage",     torch.zeros(self.config.n_experts, device=device))
+            layer_metrics["moe_router_entropy"]   = moe_metrics.get("router_entropy",   torch.tensor(0.0, device=device))
             layer_metrics["moe_top1_expert_frac"] = moe_metrics.get("top1_expert_frac", torch.tensor(0.0, device=device))
-            layer_metrics["moe_expert_bias_std"] = moe_metrics.get("expert_bias_std", torch.tensor(0.0, device=device))
+            layer_metrics["moe_expert_bias_std"]  = moe_metrics.get("expert_bias_std",  torch.tensor(0.0, device=device))
 
         return output, layer_metrics
 
@@ -862,18 +1010,21 @@ class GPT2LLM(NNModel):
                 ".lm_head.weight",
                 ".router.linear.weight",
                 ".dual_gate.gate_proj.weight",
-                ".dual_gate.proj_w2d.weight",   # new
-                ".dual_gate.proj_d2w.weight",   # new
-                ".router.gate.weight",
-                ".experts.",
+                ".dual_gate.proj_w2d.weight",
+                ".dual_gate.proj_d2w.weight",
+                ".router.gate.weight",                       # MoE router
+                ".experts.",                                 # MoE expert weights
             ],
             "embedding": [".wte", ".wpe"],
             "layernorm": [
                 ".attention_norm", ".ffn_norm", ".lm_head_norm",
                 ".q_norm", ".k_norm",
-                ".loop_scales", ".wide_scale", ".dual_gate.gate_proj.bias", # Skips bias decay
-                ".router.linear.bias", ".dual_gate.cross_scale",
-                ".expert_bias",
+                ".first_loop_scale", ".rest_loop_scales", ".wide_scale",
+                ".dual_gate.gate_proj.bias",
+                ".router.linear.bias",
+                ".dual_gate.cross_scale_wide",
+                ".dual_gate.cross_scale_deep",
+                ".expert_bias",                              # MoE router bias buffer
             ],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
@@ -900,67 +1051,78 @@ class GPT2LLM(NNModel):
         ]:
             raise ValueError('Use "RotaryTransform" together with "NOPE".')
 
-        assert adaptive_config is not None, "adaptive_config must be provided as the model only runs in adaptive mode"
+        self.use_adaptive = adaptive_config is not None and adaptive_config.enable_adaptive
         self.adaptive_config = adaptive_config
 
         def create_block(ffn_hidden_override=None, is_wide=False):
-            if is_wide and getattr(adaptive_config, "use_moe_wide", False):
-                return GPT2BlockMoE(
-                    n_embd=n_embd, bias=bias, n_head_q=n_head_q, n_head_kv=n_head_kv,
-                    activation_type=activation_type, attention_impl=attention_implementation,
-                    attention_config=attention_config, dropout=dropout,
-                    expert_ffn_hidden=adaptive_config.expert_ffn_hidden if adaptive_config.expert_ffn_hidden is not None else adaptive_config.wide_ffn_hidden,
-                    n_experts=adaptive_config.n_experts,
-                    top_k=adaptive_config.top_k,
-                    attention_norm=attention_norm_config.norm_type.value(**dict(attention_norm_config.config)),
-                    ffn_norm=ffn_norm_config.norm_type.value(**dict(ffn_norm_config.config)),
-                    enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
-                    execution=adaptive_config.moe_execution,
-                    bias_update_speed=adaptive_config.moe_bias_update_speed,
-                )
-            else:
-                return GPT2Block(
-                    n_embd=n_embd, bias=bias, n_head_q=n_head_q, n_head_kv=n_head_kv,
-                    activation_type=activation_type, attention_impl=attention_implementation,
-                    attention_config=attention_config, dropout=dropout,
-                    ffn_hidden=ffn_hidden_override if ffn_hidden_override is not None else ffn_hidden,
-                    attention_norm=attention_norm_config.norm_type.value(**dict(attention_norm_config.config)),
-                    ffn_norm=ffn_norm_config.norm_type.value(**dict(ffn_norm_config.config)),
-                    enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
-                )
+            """Dense GPT2 block. Used for deep (always) and wide when not MoE."""
+            return GPT2Block(
+                n_embd=n_embd, bias=bias, n_head_q=n_head_q, n_head_kv=n_head_kv,
+                activation_type=activation_type, attention_impl=attention_implementation,
+                attention_config=attention_config, dropout=dropout,
+                ffn_hidden=ffn_hidden_override if ffn_hidden_override is not None else ffn_hidden,
+                attention_norm=attention_norm_config.norm_type.value(**dict(attention_norm_config.config)),
+                ffn_norm=ffn_norm_config.norm_type.value(**dict(ffn_norm_config.config)),
+                enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
+            )
 
-        layer_types_list = []
-        if adaptive_config.layer_types is not None:
-            layer_types_list = adaptive_config.layer_types
-            if len(layer_types_list) != n_layer:
-                raise ValueError(f"layer_types length {len(layer_types_list)} must match n_layer {n_layer}")
-        else:
-            p_mode = adaptive_config.path_mode
-            if p_mode == "dense" or p_mode == "loop":
-                layer_types_list = ["loop"] * n_layer
-                if p_mode == "dense":
-                    adaptive_config.max_loops = 1
-            elif p_mode == "wide":
-                layer_types_list = ["wide"] * n_layer
-            elif p_mode == "dual":
-                layer_types_list = ["dual"] * n_layer
-            else:
-                raise ValueError(f"Unknown path_mode {p_mode}")
+        def create_wide_moe_block():
+            """MoE wide block."""
+            expert_hidden = (
+                adaptive_config.expert_ffn_hidden
+                if adaptive_config.expert_ffn_hidden is not None
+                else adaptive_config.wide_ffn_hidden
+            )
+            return GPT2BlockMoE(
+                n_embd=n_embd, bias=bias, n_head_q=n_head_q, n_head_kv=n_head_kv,
+                activation_type=activation_type, attention_impl=attention_implementation,
+                attention_config=attention_config, dropout=dropout,
+                expert_ffn_hidden=expert_hidden,
+                n_experts=adaptive_config.n_experts,
+                top_k=adaptive_config.top_k,
+                attention_norm=attention_norm_config.norm_type.value(**dict(attention_norm_config.config)),
+                ffn_norm=ffn_norm_config.norm_type.value(**dict(ffn_norm_config.config)),
+                enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
+                execution=adaptive_config.moe_execution,
+                bias_update_speed=adaptive_config.moe_bias_update_speed,
+            )
 
+        # Determine per-layer types
+        layer_types_list: list[str] = []
+        if self.use_adaptive:
+            assert adaptive_config is not None
+            if adaptive_config.layer_types is not None:
+                layer_types_list = adaptive_config.layer_types
+                if len(layer_types_list) != n_layer:
+                    raise ValueError(f"layer_types length {len(layer_types_list)} must match n_layer {n_layer}")
+            else:
+                has_wide = adaptive_config.wide_ffn_hidden > 0
+                layer_types_list = ["dual" if has_wide else "loop"] * n_layer
+
+        # Build layers
         layers = {}
         for layer_idx in range(n_layer):
-            l_type = layer_types_list[layer_idx]
-            narrow_block = create_block() if l_type in ["loop", "dual"] else None
-            wide_block = create_block(ffn_hidden_override=adaptive_config.wide_ffn_hidden, is_wide=True) if l_type in ["wide", "dual"] else None
-            layers[str(layer_idx)] = AdaptiveRecursiveBlock(
-                block=narrow_block,
-                adaptive_config=adaptive_config,
-                n_embd=n_embd,
-                layer_idx=layer_idx,
-                n_layers=n_layer,
-                wide_block=wide_block,
-                layer_type=l_type,
-            )
+            if self.use_adaptive:
+                l_type = layer_types_list[layer_idx]
+                narrow_block = create_block() if l_type in ["loop", "dual"] else None
+                if l_type in ["wide", "dual"]:
+                    if getattr(adaptive_config, "use_moe_wide", False):
+                        wide_block = create_wide_moe_block()
+                    else:
+                        wide_block = create_block(ffn_hidden_override=adaptive_config.wide_ffn_hidden, is_wide=True)
+                else:
+                    wide_block = None
+                layers[str(layer_idx)] = AdaptiveRecursiveBlock(
+                    block=narrow_block,
+                    adaptive_config=adaptive_config,
+                    n_embd=n_embd,
+                    layer_idx=layer_idx,
+                    n_layers=n_layer,
+                    wide_block=wide_block,
+                    layer_type=l_type,
+                )
+            else:
+                layers[str(layer_idx)] = create_block()
 
         self.transformer = nn.ModuleDict(dict(
             wte=nn.Embedding(vocab_size, n_embd),
@@ -974,6 +1136,8 @@ class GPT2LLM(NNModel):
         if use_weight_tying:
             self.transformer.wte.weight = self.transformer.lm_head.weight
 
+        self._layer_order = sorted(layers.keys(), key=int)
+
     # ------------------------------------------------------------------
     # Metrics bag construction
     # ------------------------------------------------------------------
@@ -981,6 +1145,7 @@ class GPT2LLM(NNModel):
     _VECTOR_KEYS = [
         "step_halt_probs", "step_halt_prob_std", "step_halt_prob_min", "step_halt_prob_max",
         "step_changes", "loop_scales", "prob_remain_max", "prob_remain_mean",
+        "step_h_norm", "step_cos_sim_to_input", "step_rel_norm_to_input",
     ]
 
     _PER_LAYER_SCALAR_KEYS = [
@@ -989,6 +1154,10 @@ class GPT2LLM(NNModel):
         "gate_deep_mean", "gate_deep_std", "gate_deep_min", "gate_deep_max",
         "gate_wide_mean", "gate_wide_std", "gate_wide_min", "gate_wide_max",
         "deep_block_norm", "wide_block_norm",
+        "gate_logit_deep_mean", "gate_logit_deep_std",
+        "gate_logit_wide_mean", "gate_logit_wide_std",
+        "norm_pure_deep_mean", "norm_pure_wide_mean",
+        "norm_contam_w2d_mean", "norm_contam_d2w_mean",
     ]
 
     def _build_metrics_bag(
@@ -1013,13 +1182,13 @@ class GPT2LLM(NNModel):
             return torch.stack([m[key] for m in all_layer_metrics])
 
         scalars = {
-            "ponder_cost_unweighted": total_ponder_cost,
-            "expected_steps": avg_ponder_cost,
-            "normalized_steps": normalized_steps,
+            "ponder_cost_unweighted": total_ponder_cost.detach(),
+            "expected_steps": avg_ponder_cost.detach(),
+            "normalized_steps": normalized_steps.detach(),
         }
 
         per_layer_scalars = {
-            "ponder_cost": torch.stack([m["expected_steps"].mean() for m in all_layer_metrics]),
+            "ponder_cost": torch.stack([m["expected_steps"].mean().detach() for m in all_layer_metrics]),
         }
         for key in self._PER_LAYER_SCALAR_KEYS:
             per_layer_scalars[key] = stack_key(key)
@@ -1029,10 +1198,10 @@ class GPT2LLM(NNModel):
             per_layer_vectors[key] = stack_key(key)
 
         if getattr(self.adaptive_config, "use_moe_wide", False):
-            per_layer_vectors["moe_expert_usage"] = stack_key("moe_expert_usage")
-            per_layer_scalars["moe_router_entropy"] = stack_key("moe_router_entropy")
+            per_layer_vectors["moe_expert_usage"]     = stack_key("moe_expert_usage")
+            per_layer_scalars["moe_router_entropy"]   = stack_key("moe_router_entropy")
             per_layer_scalars["moe_top1_expert_frac"] = stack_key("moe_top1_expert_frac")
-            per_layer_scalars["moe_expert_bias_std"] = stack_key("moe_expert_bias_std")
+            per_layer_scalars["moe_expert_bias_std"]  = stack_key("moe_expert_bias_std")
 
         return weighted_ponder_loss, {
             "scalars": scalars,
@@ -1071,25 +1240,56 @@ class GPT2LLM(NNModel):
         all_layer_metrics: list[dict[str, torch.Tensor]] = []
         total_ponder_cost = torch.tensor(0.0, device=device, dtype=h.dtype)
 
-        sorted_keys = sorted(self.transformer.h.keys(), key=lambda k: int(k))
-        for layer_key in sorted_keys:
+        for layer_key in self._layer_order:
             layer_module = self.transformer.h[layer_key]
-            h, layer_metrics = layer_module(h, token_ids=inputs)
-            total_ponder_cost = total_ponder_cost + layer_metrics["expected_steps"].mean()
-            all_layer_metrics.append(layer_metrics)
+
+            if self.use_adaptive:
+                h, layer_metrics = layer_module(h, token_ids=inputs)
+                total_ponder_cost = total_ponder_cost + layer_metrics["expected_steps"].mean()
+                all_layer_metrics.append(layer_metrics)
+            else:
+                h = layer_module(h, scale=1.0)
 
         h = self.transformer.lm_head_norm(h)
         logits = self.transformer.lm_head(h)
+
+        if not self.use_adaptive:
+            return logits
 
         weighted_ponder_loss, metrics_bag = self._build_metrics_bag(
             all_layer_metrics, total_ponder_cost, device, logits.dtype,
         )
 
         if not self.training:
-            metrics_bag["eval_tokens"] = inputs.detach()
-            # Split out both gate probs for eval logging
-            metrics_bag["eval_gate_deep_probs"] = torch.stack([m.get("gate_deep_token_probs", torch.ones_like(inputs, dtype=logits.dtype)) for m in all_layer_metrics])
-            metrics_bag["eval_gate_wide_probs"] = torch.stack([m.get("gate_wide_token_probs", torch.zeros_like(inputs, dtype=logits.dtype)) for m in all_layer_metrics])
+            with torch.no_grad():
+                metrics_bag["eval_tokens"] = inputs
+                metrics_bag["eval_gate_deep_probs"] = torch.stack([
+                    m.get("gate_deep_token_probs", torch.ones_like(inputs, dtype=logits.dtype))
+                    for m in all_layer_metrics
+                ])
+                metrics_bag["eval_gate_wide_probs"] = torch.stack([
+                    m.get("gate_wide_token_probs", torch.zeros_like(inputs, dtype=logits.dtype))
+                    for m in all_layer_metrics
+                ])
+                metrics_bag["eval_expected_steps"] = torch.stack([
+                    m["expected_steps"] for m in all_layer_metrics
+                ])
+                metrics_bag["eval_norm_pure_deep"] = torch.stack([
+                    m.get("token_norm_pure_deep", torch.zeros_like(inputs, dtype=logits.dtype))
+                    for m in all_layer_metrics
+                ])
+                metrics_bag["eval_norm_pure_wide"] = torch.stack([
+                    m.get("token_norm_pure_wide", torch.zeros_like(inputs, dtype=logits.dtype))
+                    for m in all_layer_metrics
+                ])
+                metrics_bag["eval_norm_contam_w2d"] = torch.stack([
+                    m.get("token_norm_contam_w2d", torch.zeros_like(inputs, dtype=logits.dtype))
+                    for m in all_layer_metrics
+                ])
+                metrics_bag["eval_norm_contam_d2w"] = torch.stack([
+                    m.get("token_norm_contam_d2w", torch.zeros_like(inputs, dtype=logits.dtype))
+                    for m in all_layer_metrics
+                ])
 
         return {
             "logits": logits,

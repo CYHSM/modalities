@@ -34,16 +34,51 @@ class AdaptiveGPTConfig(PretrainedConfig):
         use_weight_tying: bool = False,
         use_qk_norm: bool = False,
         qk_norm_dim: Optional[int] = None,
+        # ---- Adaptive computation ------------------------------------------
         enable_adaptive: bool = False,
         max_loops: int = 10,
         ponder_penalty_weight: float = 0.0,
         wide_ffn_hidden: int = 0,
+        # ---- Gate mode -----------------------------------------------------
+        # "convex":    output = g * h_deep + (1 - g) * h_wide  (single gate)
+        # "two_gates": output = g_d * h_deep_eff + g_w * h_wide_eff
+        #              with g_d, g_w independent sigmoids on x.
+        gate_mode: str = "two_gates",
+        # ---- Convex-mode gate init ----------------------------------------
+        gate_init_bias: float = 0.0,
+        # ---- Two-gates-mode gate inits ------------------------------------
         deep_gate_init_bias: float = 0.0,
         wide_gate_init_bias: float = 0.0,
-        layer_types: Optional[list] = None,
+        # ---- Per-iteration loop / wide scales -----------------------------
+        loop_scale_init: float = -7,
+        wide_scale_init: float = -7,
+        # ---- Cross-path mixing --------------------------------------------
+        # Learnable, zero-initialized leak between branches BEFORE gating.
+        # In convex mode:
+        #     h_deep_eff = h_deep + softplus(s_d) * proj_w2d(h_wide)
+        #     h_wide_eff = h_wide + softplus(s_w) * proj_d2w(h_deep)
+        #     output     = g * h_deep_eff + (1-g) * h_wide_eff
+        # In two_gates mode (post-gate contamination, original formulation):
+        #     contam_w2d = g_d * (softplus(s_d) * proj_w2d(h_wide))
+        #     contam_d2w = g_w * (softplus(s_w) * proj_d2w(h_deep))
+        #     output     = (g_d * h_deep + contam_w2d) + (g_w * h_wide + contam_d2w)
+        use_cross: bool = True,
+        cross_scale_deep_init: float = -7.0,
+        cross_scale_wide_init: float = -7.0,
+        # ---- Layer-type schedule ------------------------------------------
+        # Per-layer choice of {"loop", "wide", "dual"}. Note: this is renamed
+        # from "layer_types" to avoid colliding with HF's PretrainedConfig,
+        # which validates a same-named field against an attention-type enum.
+        adaptive_layer_types: Optional[list] = None,
         **kwargs,
     ):
         kwargs["tie_word_embeddings"] = use_weight_tying
+        # Back-compat: accept the old "layer_types" kwarg if someone passes it
+        # (e.g. from a serialized config saved before the rename), but route
+        # it to our own attribute so HF's validator never sees it.
+        legacy = kwargs.pop("layer_types", None)
+        if legacy is not None and adaptive_layer_types is None:
+            adaptive_layer_types = legacy
         super().__init__(**kwargs)
         self.vocab_size = vocab_size
         self.sequence_length = sequence_length
@@ -70,12 +105,24 @@ class AdaptiveGPTConfig(PretrainedConfig):
         self.max_loops = max_loops
         self.ponder_penalty_weight = ponder_penalty_weight
         self.wide_ffn_hidden = wide_ffn_hidden
+        self.gate_mode = gate_mode
+        self.gate_init_bias = gate_init_bias
         self.deep_gate_init_bias = deep_gate_init_bias
         self.wide_gate_init_bias = wide_gate_init_bias
-        self.layer_types = layer_types
+        self.loop_scale_init = loop_scale_init
+        self.wide_scale_init = wide_scale_init
+        self.use_cross = use_cross
+        self.cross_scale_deep_init = cross_scale_deep_init
+        self.cross_scale_wide_init = cross_scale_wide_init
+        self.adaptive_layer_types = adaptive_layer_types
+        # HF compatibility aliases
         self.num_hidden_layers = n_layer
         self.num_attention_heads = n_head_q
         self.hidden_size = n_embd
+
+        if gate_mode not in ("convex", "two_gates"):
+            raise ValueError(f"gate_mode must be 'convex' or 'two_gates', got {gate_mode}")
+
 
 class RMSLayerNorm(nn.Module):
     def __init__(self, ndim: int, bias: bool = True, epsilon: float = 1e-5):
@@ -146,7 +193,7 @@ class RotaryTransform(nn.Module):
 
     def _update_cos_sin_tables(self, x: torch.Tensor):
         seq_len = x.shape[self.seq_length_dim]
-        if (seq_len != self._seq_len_cached or self._cos_cached is None 
+        if (seq_len != self._seq_len_cached or self._cos_cached is None
             or self._cos_cached.device != x.device or self._cos_cached.dtype != x.dtype):
             self._seq_len_cached = seq_len
             t = torch.arange(seq_len, device=x.device, dtype=torch.float32)
@@ -263,31 +310,172 @@ class AdaptiveRouter(nn.Module):
         super().__init__()
         self.linear = nn.Linear(n_embd + 1, 1, bias=bias)
 
-    def forward(self, h: torch.Tensor, step_normalized: float) -> torch.Tensor:
+    def forward(self, h: torch.Tensor, step_normalized: float, x: Optional[torch.Tensor] = None) -> torch.Tensor:
         B, T, _ = h.shape
         step_feat = torch.full((B, T, 1), step_normalized, device=h.device, dtype=h.dtype)
         logit = self.linear(torch.cat([h, step_feat], dim=-1))
         return torch.sigmoid(logit).squeeze(-1)
 
 
-class DualPathGate(nn.Module):
-    def __init__(self, n_embd: int, init_bias_deep: float = 0.0, init_bias_wide: float = 0.0):
+class DualPathGateConvex(nn.Module):
+    """Single-gate convex combination, optionally with cross-path mixing.
+
+    Without cross-path:
+        g      = sigmoid(gate_proj(x))
+        output = g * h_deep + (1 - g) * h_wide
+
+    With cross-path:
+        h_deep_eff = h_deep + softplus(s_d) * proj_w2d(h_wide)
+        h_wide_eff = h_wide + softplus(s_w) * proj_d2w(h_deep)
+        output     = g * h_deep_eff + (1 - g) * h_wide_eff
+    """
+
+    def __init__(
+        self,
+        n_embd: int,
+        gate_init_bias: float = 0.0,
+        use_cross: bool = False,
+        cross_scale_deep_init: float = -7.0,
+        cross_scale_wide_init: float = -7.0,
+    ):
         super().__init__()
-        self.gate_proj = nn.Linear(n_embd, 2, bias=True)
+        self.gate_init_bias = gate_init_bias
+        self.use_cross = use_cross
+        self.cross_scale_deep_init = cross_scale_deep_init
+        self.cross_scale_wide_init = cross_scale_wide_init
+
+        self.gate_proj = nn.Linear(n_embd, 1, bias=True)
+
+        if use_cross:
+            self.proj_w2d = nn.Linear(n_embd, n_embd, bias=False)
+            self.proj_d2w = nn.Linear(n_embd, n_embd, bias=False)
+            self.cross_scale_deep = nn.Parameter(torch.empty(1))
+            self.cross_scale_wide = nn.Parameter(torch.empty(1))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
         nn.init.zeros_(self.gate_proj.weight)
         with torch.no_grad():
-            self.gate_proj.bias[0] = init_bias_deep
-            self.gate_proj.bias[1] = init_bias_wide
+            self.gate_proj.bias.fill_(self.gate_init_bias)
 
-    def forward(self, x, h_deep, h_wide):
-        logits = self.gate_proj(x)
-        gates = torch.softmax(logits, dim=-1)
-        return gates[..., 0:1] * h_deep + gates[..., 1:2] * h_wide
+        if self.use_cross:
+            nn.init.zeros_(self.proj_w2d.weight)
+            nn.init.zeros_(self.proj_d2w.weight)
+            nn.init.constant_(self.cross_scale_deep, self.cross_scale_deep_init)
+            nn.init.constant_(self.cross_scale_wide, self.cross_scale_wide_init)
+
+    def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor) -> torch.Tensor:
+        gate = torch.sigmoid(self.gate_proj(x))
+
+        if self.use_cross:
+            s_d = F.softplus(self.cross_scale_deep)
+            s_w = F.softplus(self.cross_scale_wide)
+            h_deep_eff = h_deep + s_d * self.proj_w2d(h_wide)
+            h_wide_eff = h_wide + s_w * self.proj_d2w(h_deep)
+        else:
+            h_deep_eff = h_deep
+            h_wide_eff = h_wide
+
+        return gate * h_deep_eff + (1.0 - gate) * h_wide_eff
+
+
+class DualPathGateTwoGates(nn.Module):
+    """Two independent sigmoid gates, optionally with cross-path mixing.
+
+    Without cross-path:
+        logits   = gate_proj(x)                  # (B, T, 2)
+        g_d, g_w = sigmoid(logits[..., 0:1]), sigmoid(logits[..., 1:2])
+        output   = g_d * h_deep + g_w * h_wide
+
+    With cross-path (post-gate contamination):
+        cross_w2d = softplus(s_d) * proj_w2d(h_wide)   # gated by g_d
+        cross_d2w = softplus(s_w) * proj_d2w(h_deep)   # gated by g_w
+        output    = (g_d * h_deep + g_d * cross_w2d) + (g_w * h_wide + g_w * cross_d2w)
+
+    The gates are independent: g_d + g_w is unconstrained.
+    """
+
+    def __init__(
+        self,
+        n_embd: int,
+        deep_gate_init_bias: float = 0.0,
+        wide_gate_init_bias: float = 0.0,
+        use_cross: bool = False,
+        cross_scale_deep_init: float = -7.0,
+        cross_scale_wide_init: float = -7.0,
+    ):
+        super().__init__()
+        self.deep_gate_init_bias = deep_gate_init_bias
+        self.wide_gate_init_bias = wide_gate_init_bias
+        self.use_cross = use_cross
+        self.cross_scale_deep_init = cross_scale_deep_init
+        self.cross_scale_wide_init = cross_scale_wide_init
+
+        self.gate_proj = nn.Linear(n_embd, 2, bias=True)
+
+        if use_cross:
+            self.proj_w2d = nn.Linear(n_embd, n_embd, bias=False)
+            self.proj_d2w = nn.Linear(n_embd, n_embd, bias=False)
+            self.cross_scale_deep = nn.Parameter(torch.empty(1))
+            self.cross_scale_wide = nn.Parameter(torch.empty(1))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.zeros_(self.gate_proj.weight)
+        with torch.no_grad():
+            self.gate_proj.bias[0] = self.deep_gate_init_bias
+            self.gate_proj.bias[1] = self.wide_gate_init_bias
+
+        if self.use_cross:
+            nn.init.zeros_(self.proj_w2d.weight)
+            nn.init.zeros_(self.proj_d2w.weight)
+            nn.init.constant_(self.cross_scale_deep, self.cross_scale_deep_init)
+            nn.init.constant_(self.cross_scale_wide, self.cross_scale_wide_init)
+
+    def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor) -> torch.Tensor:
+        gates = torch.sigmoid(self.gate_proj(x))           # (B, T, 2)
+        gate_deep = gates[..., 0:1]
+        gate_wide = gates[..., 1:2]
+
+        if self.use_cross:
+            s_d = F.softplus(self.cross_scale_deep)
+            s_w = F.softplus(self.cross_scale_wide)
+            cross_w2d = s_d * self.proj_w2d(h_wide)
+            cross_d2w = s_w * self.proj_d2w(h_deep)
+            h_deep_branch = gate_deep * h_deep + gate_deep * cross_w2d
+            h_wide_branch = gate_wide * h_wide + gate_wide * cross_d2w
+        else:
+            h_deep_branch = gate_deep * h_deep
+            h_wide_branch = gate_wide * h_wide
+
+        return h_deep_branch + h_wide_branch
+
+
+def _build_dual_gate(config: AdaptiveGPTConfig) -> nn.Module:
+    if config.gate_mode == "convex":
+        return DualPathGateConvex(
+            n_embd=config.n_embd,
+            gate_init_bias=config.gate_init_bias,
+            use_cross=config.use_cross,
+            cross_scale_deep_init=config.cross_scale_deep_init,
+            cross_scale_wide_init=config.cross_scale_wide_init,
+        )
+    elif config.gate_mode == "two_gates":
+        return DualPathGateTwoGates(
+            n_embd=config.n_embd,
+            deep_gate_init_bias=config.deep_gate_init_bias,
+            wide_gate_init_bias=config.wide_gate_init_bias,
+            use_cross=config.use_cross,
+            cross_scale_deep_init=config.cross_scale_deep_init,
+            cross_scale_wide_init=config.cross_scale_wide_init,
+        )
+    else:
+        raise ValueError(f"Unknown gate_mode: {config.gate_mode}")
 
 
 class AdaptiveRecursiveBlock(nn.Module):
-    _INIT_SCALE_RAW: float = -7.0
-
     def __init__(self, config: AdaptiveGPTConfig, layer_type: str = "dual"):
         super().__init__()
         self.layer_type = layer_type
@@ -298,15 +486,17 @@ class AdaptiveRecursiveBlock(nn.Module):
         if self.has_loop_path:
             self.block = GPT2Block(config)
             self.router = AdaptiveRouter(n_embd)
-            self.loop_scales = nn.Parameter(torch.full((self.max_loops,), self._INIT_SCALE_RAW))
+            self.loop_scales = nn.Parameter(
+                torch.full((self.max_loops,), config.loop_scale_init)
+            )
 
         self.has_wide_path = layer_type in ("wide", "dual")
         if self.has_wide_path:
             self.wide_block = GPT2Block(config, ffn_hidden_override=config.wide_ffn_hidden)
-            self.wide_scale = nn.Parameter(torch.tensor([self._INIT_SCALE_RAW]))
+            self.wide_scale = nn.Parameter(torch.tensor([config.wide_scale_init]))
 
         if layer_type == "dual":
-            self.dual_gate = DualPathGate(n_embd, config.deep_gate_init_bias, config.wide_gate_init_bias)
+            self.dual_gate = _build_dual_gate(config)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         B, T, D = x.shape
@@ -319,15 +509,20 @@ class AdaptiveRecursiveBlock(nn.Module):
             step_denom = max(1, self.max_loops - 1)
             h_loop = x
             actual_steps = 0
+
             for step in range(self.max_loops):
                 actual_steps = step + 1
+
                 scale = F.softplus(self.loop_scales[step])
                 h_loop = self.block(h_loop, scale=scale)
-                halt_prob = self.router(h_loop, step_normalized=step / step_denom)
+
+                halt_prob = self.router(h_loop, step_normalized=step / step_denom, x=x)
                 p_stop = prob_remain * halt_prob
                 prob_remain = prob_remain * (1.0 - halt_prob)
+
                 output_acc = output_acc + h_loop * p_stop.unsqueeze(-1)
                 expected_steps = expected_steps + p_stop * (step + 1)
+
             output_acc = output_acc + h_loop * prob_remain.unsqueeze(-1)
             expected_steps = expected_steps + prob_remain * actual_steps
             h_deep = output_acc
@@ -365,6 +560,10 @@ class AdaptiveGPTPreTrainedModel(PreTrainedModel):
                 nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        # NOTE: We do NOT dispatch DualPathGate* here. HF's smart-apply may
+        # skip parent modules whose parameters were already initialized via
+        # their child Linears. We instead call `reset_parameters()` on the
+        # gate modules explicitly after `post_init()` (see _reset_dual_gates).
 
 
 class AdaptiveGPTModel(AdaptiveGPTPreTrainedModel):
@@ -379,10 +578,14 @@ class AdaptiveGPTModel(AdaptiveGPTPreTrainedModel):
         self.drop = nn.Dropout(config.dropout)
 
         if config.enable_adaptive:
-            layer_types = config.layer_types
+            layer_types = config.adaptive_layer_types
             if not layer_types:
                 has_wide = config.wide_ffn_hidden > 0
                 layer_types = ["dual" if has_wide else "loop"] * config.n_layer
+            elif len(layer_types) != config.n_layer:
+                raise ValueError(
+                    f"adaptive_layer_types length {len(layer_types)} must match n_layer {config.n_layer}"
+                )
 
         layers: dict = {}
         for i in range(config.n_layer):
@@ -406,7 +609,7 @@ class AdaptiveGPTModel(AdaptiveGPTPreTrainedModel):
 
         h = self.drop(h)
         total_ponder_cost = torch.tensor(0.0, device=device, dtype=h.dtype)
-        
+
         for key in self._layer_order:
             layer = self.h[key]
             if self.config.enable_adaptive:
@@ -429,6 +632,15 @@ class AdaptiveGPTForCausalLM(AdaptiveGPTPreTrainedModel, GenerationMixin):
             self.lm_head.weight = self.transformer.wte.weight
 
         self.post_init()
+
+        # Re-run reset_parameters() on every dual-path gate. The HF init
+        # path may skip these modules (their direct parameters get marked
+        # initialized via their child Linears first), so the carefully-chosen
+        # zero-init for gate_proj weights and bias values would otherwise be
+        # overwritten by the default Linear init.
+        for module in self.modules():
+            if isinstance(module, (DualPathGateConvex, DualPathGateTwoGates)):
+                module.reset_parameters()
 
     def get_input_embeddings(self): return self.transformer.wte
     def set_input_embeddings(self, new_embeddings): self.transformer.wte = new_embeddings
@@ -466,6 +678,7 @@ class AdaptiveGPTForCausalLM(AdaptiveGPTPreTrainedModel, GenerationMixin):
             return (loss, logits) if loss is not None else (logits,)
 
         return CausalLMOutput(loss=loss, logits=logits)
+
 
 AdaptiveGPTConfig.register_for_auto_class()
 AdaptiveGPTForCausalLM.register_for_auto_class("AutoModelForCausalLM")

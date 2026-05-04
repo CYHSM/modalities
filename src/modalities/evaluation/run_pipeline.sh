@@ -4,9 +4,10 @@ set -u
 # Ensure we're in the correct directory (the directory of this script)
 cd "$(dirname "$0")"
 
-MY_ROOT="/leonardo_work/EUHPC_D21_101/mfrey"
-SCRATCH_ROOT="/leonardo_scratch/large/userexternal/mfrey000"
-EXPERIMENTS_DIR="${SCRATCH_ROOT}/experiments"
+MY_ROOT="/users/markusfrey"
+MODALITIES_DIR="${MY_ROOT}/Github/modalities"
+EXPERIMENTS_DIR="/capstor/scratch/cscs/markusfrey/experiments"
+OLMES_VENV="${MY_ROOT}/venvs/olmes"
 export LIST_FILE="$(pwd)/checkpoints_to_eval.txt"
 
 echo "=== 0. Checking for checkpoints needing conversion ==="
@@ -82,13 +83,11 @@ fi
 echo ""
 
 echo "=== 4. Syncing to Weights & Biases ==="
-# Internet is required here on Leonardo, so we run this directly on the login node
-CONTAINER="${MY_ROOT}/containers/image_34c40a6bbdb8dcbb6d674d06caaa93af68d5692fb744eeb0e28908eea6158b13.sif"
-OLMES_VENV="${MY_ROOT}/venvs/olmes"
-
-singularity exec --bind "${MY_ROOT}:${MY_ROOT}" --bind "${SCRATCH_ROOT}:${SCRATCH_ROOT}" "$CONTAINER" bash -c "
+# We use uenv run here so the venv's Python symlinks resolve correctly on the login node
+uenv run pytorch/v2.9.1 --view=default -- bash -c "
+    set -e -u
     source ${OLMES_VENV}/bin/activate
-    python ${MY_ROOT}/modalities/src/modalities/evaluation/python_scripts/sync_evals_to_wandb.py
+    python ${MODALITIES_DIR}/src/modalities/evaluation/python_scripts/sync_evals_to_wandb.py
 "
 
 echo "=== Pipeline Finished ==="

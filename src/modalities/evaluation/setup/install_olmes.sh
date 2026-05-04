@@ -1,25 +1,27 @@
+#!/bin/bash
+set -u
+
 # Run on a login node or interactive session
-MY_ROOT="/leonardo_work/EUHPC_D21_101/mfrey"
-CONTAINER="${MY_ROOT}/containers/image_34c40a6bbdb8dcbb6d674d06caaa93af68d5692fb744eeb0e28908eea6158b13.sif"
+MY_ROOT="/users/markusfrey"
 OLMES_VENV="${MY_ROOT}/venvs/olmes"
 
 mkdir -p "${MY_ROOT}/venvs"
 
-# Create venv using container's python, with access to container site-packages
-singularity exec --nv \
-    --bind "${MY_ROOT}:${MY_ROOT}" \
-    "$CONTAINER" \
-    python -m venv --system-site-packages "$OLMES_VENV"
+# We MUST recreate this venv using --system-site-packages so it adopts the exact uenv Torch operators
+if [ ! -d "$OLMES_VENV" ]; then
+    python3 -m venv --system-site-packages "$OLMES_VENV"
+fi
 
-# Clone olmes somewhere stable
+# Clone olmes somewhere stable if it does not exist
 cd "$MY_ROOT"
-git clone https://github.com/allenai/olmes.git
+if [ ! -d "olmes" ]; then
+    git clone https://github.com/allenai/olmes.git
+fi
 cd olmes
 
-# Install into the venv, from inside the container
-singularity exec --nv \
-    --bind "${MY_ROOT}:${MY_ROOT}" \
-    "$CONTAINER" bash -c "
-        source ${OLMES_VENV}/bin/activate
-        pip install --no-build-isolation -e '.[gpu]'
-    "
+# Install into the olmes venv natively
+source "${OLMES_VENV}/bin/activate"
+pip install --upgrade pip setuptools wheel
+pip install .
+
+echo "OLMES securely installed into dedicated venv at ${OLMES_VENV}"

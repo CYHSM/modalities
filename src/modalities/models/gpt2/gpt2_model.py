@@ -3,7 +3,7 @@ import math
 from abc import abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Annotated, Optional, overload
+from typing import Annotated, Literal, Optional, Union, overload
 
 import torch._dynamo
 torch._dynamo.config.cache_size_limit = 64
@@ -41,20 +41,24 @@ logger.setLevel(logging.WARNING)
 #     "scalars":              dict[str, Tensor],   # shape ()    — accumulated & reduced
 #     "per_layer_scalars":    dict[str, Tensor],   # shape (L,)  — accumulated & reduced
 #     "per_layer_vectors":    dict[str, Tensor],   # shape (L,max_loops) — ACT step-wise
-#     "per_layer_histograms": dict[str, Tensor],   # shape (L,n_bins)    — distributions
 # }
 #
-# Per-layer vectors and histograms are split because they have different
-# shapes (max_loops vs n_bins) and different semantics in the formatter.
-# Histograms are accumulated across batches; per-layer vectors are last-batch.
-#
-# At eval time (not self.training) the bag additionally carries per-token
-# tensors useful for offline analysis and HTML visualization:
+# Eval-time per-token attachments (only when not self.training):
 #     "eval_tokens":              (B, T)
-#     "eval_gate":                (L, B, T)   single gate, [0,1]
-#     "eval_expected_steps":      (L, B, T)   ACT steps used, deep path
+#     "eval_expected_steps":      (L, B, T)
 #     "eval_delta_deep_norm":     (L, B, T)
 #     "eval_delta_wide_norm":     (L, B, T)
+#
+#   In gate_mode = "convex":
+#     "eval_gate":                (L, B, T)   single convex gate, [0,1]
+#
+#   In gate_mode = "two_gates":
+#     "eval_gate_deep":           (L, B, T)   deep gate, [0,1] (independent)
+#     "eval_gate_wide":           (L, B, T)   wide gate, [0,1] (independent)
+#
+#   In either mode, when use_cross is True:
+#     "eval_cross_w2d_norm":      (L, B, T)
+#     "eval_cross_d2w_norm":      (L, B, T)
 # =============================================================================
 
 
@@ -69,22 +73,52 @@ class AdaptiveComputationConfig(BaseModel):
     ponder_penalty_weight: float = 0.00
     wide_ffn_hidden: int = 0
 
-    # Single-gate formulation: output = g * h_deep + (1-g) * h_wide.
+    # ---- Gate mode ---------------------------------------------------------
+    # "convex":     output = g * h_deep + (1-g) * h_wide  (single gate)
+    # "two_gates":  output = g_d * h_deep_eff + g_w * h_wide_eff
+    #               with g_d, g_w independent sigmoids on x. This is the
+    #               formulation from the original old code: each branch is
+    #               independently scaled and they sum. It's strictly more
+    #               expressive than convex (g_d + g_w is unconstrained) but
+    #               loses the "fraction of capacity routed to deep" reading.
+    gate_mode: Literal["convex", "two_gates"] = "two_gates"
+
+    # ---- Convex-mode gate init --------------------------------------------
     # Bias on the pre-sigmoid logit. 0.0 => neutral 0.5 start.
     # Positive bias => start biased toward deep; negative => toward wide.
     gate_init_bias: float = 0.0
 
-    # Softplus-raw inits for the per-iteration loop scales and the single
-    # wide scale. -1.5 gives softplus ≈ 0.20, which is moderate (neither
-    # dormant nor saturating). Matched across paths for fair-start symmetry.
-    loop_scale_init: float = -1.5
-    wide_scale_init: float = -1.5
+    # ---- Two-gates-mode gate inits ----------------------------------------
+    # Pre-sigmoid bias on each independent gate. 0.0 => 0.5 at init for that
+    # branch (i.e. each branch contributes ~half-strength initially).
+    deep_gate_init_bias: float = 0.0
+    wide_gate_init_bias: float = 0.0
+
+    # ---- Per-iteration loop / wide scales (shared across both modes) ------
+    # Softplus-raw inits. -1.5 gives softplus ≈ 0.20.
+    loop_scale_init: float = -7
+    wide_scale_init: float = -7
 
     scheduler_type: str = "constant"
     layer_types: Optional[list[str]] = None
 
-    # Number of histogram bins for gate/delta-norm distributions (training-time).
-    n_histogram_bins: int = 20
+    # ---- Cross-path mixing (works in either gate mode) --------------------
+    # When True, each branch receives a learnable, zero-initialized leak from
+    # the other branch BEFORE the gates combine them:
+    #   h_deep_eff = h_deep + softplus(cross_scale_deep) * proj_w2d(h_wide)
+    #   h_wide_eff = h_wide + softplus(cross_scale_wide) * proj_d2w(h_deep)
+    # Projections are zero-initialized and scales start near zero
+    # (softplus(-7) ≈ 9e-4), so initial behavior matches use_cross=False; the
+    # model only ramps up cross-flow if it's useful.
+    use_cross: bool = True
+    cross_scale_deep_init: float = -7.0
+    cross_scale_wide_init: float = -7.0
+
+    @model_validator(mode="after")
+    def _check_two_gate_field_use(self) -> "AdaptiveComputationConfig":
+        # Soft sanity check: warn (not error) when fields don't match the mode,
+        # since the *_init_bias fields default to 0.0 and harm nothing.
+        return self
 
 
 class LayerNorms(LookupEnum):
@@ -464,9 +498,6 @@ def _batch_corr(a: torch.Tensor, b: torch.Tensor, eps: float = 1e-8) -> torch.Te
     return (a * b).sum() / denom
 
 
-
-
-
 class AdaptiveRouter(nn.Module):
     """Per-token halting: [h; t_normalized] -> sigmoid -> halt_prob."""
 
@@ -482,31 +513,58 @@ class AdaptiveRouter(nn.Module):
 
 
 # =============================================================================
-# Dual Path Gate — single gate, convex combination
+# Dual Path Gate — convex (single gate) variant
 # =============================================================================
 
-class DualPathGate(nn.Module):
-    """Single-gate convex combination:
+class DualPathGateConvex(nn.Module):
+    """Single-gate convex combination, optionally with cross-path mixing.
 
+    Without cross-path (use_cross=False):
         g      = sigmoid(gate_proj(x))        shape (B, T, 1)
         output = g * h_deep + (1 - g) * h_wide
 
-    g = 1 selects pure deep. g = 0 selects pure wide. The gate is driven by
-    the *input* x (not by h_deep or h_wide), so it represents a decision made
-    before seeing either branch's output — useful for intervention, since
-    freezing g doesn't create feedback loops.
+    With cross-path (use_cross=True):
+        s_d = softplus(cross_scale_deep)
+        s_w = softplus(cross_scale_wide)
+        h_deep_eff = h_deep + s_d * proj_w2d(h_wide)
+        h_wide_eff = h_wide + s_w * proj_d2w(h_deep)
+        output     = g * h_deep_eff + (1 - g) * h_wide_eff
     """
 
-    def __init__(self, n_embd: int, gate_init_bias: float = 0.0):
+    def __init__(
+        self,
+        n_embd: int,
+        gate_init_bias: float = 0.0,
+        use_cross: bool = False,
+        cross_scale_deep_init: float = -7.0,
+        cross_scale_wide_init: float = -7.0,
+    ):
         super().__init__()
         self.gate_init_bias = gate_init_bias
+        self.use_cross = use_cross
+        self.cross_scale_deep_init = cross_scale_deep_init
+        self.cross_scale_wide_init = cross_scale_wide_init
+
         self.gate_proj = nn.Linear(n_embd, 1, bias=True)
+
+        if use_cross:
+            self.proj_w2d = nn.Linear(n_embd, n_embd, bias=False)
+            self.proj_d2w = nn.Linear(n_embd, n_embd, bias=False)
+            self.cross_scale_deep = nn.Parameter(torch.empty(1))
+            self.cross_scale_wide = nn.Parameter(torch.empty(1))
+
         self.reset_parameters()
 
     def reset_parameters(self):
         nn.init.zeros_(self.gate_proj.weight)
         with torch.no_grad():
             self.gate_proj.bias.fill_(self.gate_init_bias)
+
+        if self.use_cross:
+            nn.init.zeros_(self.proj_w2d.weight)
+            nn.init.zeros_(self.proj_d2w.weight)
+            nn.init.constant_(self.cross_scale_deep, self.cross_scale_deep_init)
+            nn.init.constant_(self.cross_scale_wide, self.cross_scale_wide_init)
 
     def forward(
         self,
@@ -515,22 +573,8 @@ class DualPathGate(nn.Module):
         h_wide: torch.Tensor,
         gate_override: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
-        """
-        Args:
-            x:             (B, T, D) input to the layer
-            h_deep:        (B, T, D) output of deep path (residual-shaped)
-            h_wide:        (B, T, D) output of wide path (residual-shaped)
-            gate_override: Optional (B, T) or (B, T, 1) tensor of gate values
-                           in [0, 1]. If provided, replaces the computed gate.
-
-        Returns:
-            output:    (B, T, D) convex combination
-            gate:     (B, T, 1) the gate value actually used (post-override)
-            gate_raw: (B, T, 1) the gate value that would have been used
-            aux:       dict of logging tensors
-        """
-        logit = self.gate_proj(x)                        # (B, T, 1)
-        gate_raw = torch.sigmoid(logit)                  # (B, T, 1)
+        logit = self.gate_proj(x)
+        gate_raw = torch.sigmoid(logit)
 
         if gate_override is not None:
             if gate_override.dim() == 2:
@@ -539,14 +583,194 @@ class DualPathGate(nn.Module):
         else:
             gate = gate_raw
 
-        output = gate * h_deep + (1.0 - gate) * h_wide
+        if self.use_cross:
+            s_d = F.softplus(self.cross_scale_deep)
+            s_w = F.softplus(self.cross_scale_wide)
+            cross_w2d = s_d * self.proj_w2d(h_wide)
+            cross_d2w = s_w * self.proj_d2w(h_deep)
+            h_deep_eff = h_deep + cross_w2d
+            h_wide_eff = h_wide + cross_d2w
+        else:
+            cross_w2d = None
+            cross_d2w = None
+            h_deep_eff = h_deep
+            h_wide_eff = h_wide
+
+        output = gate * h_deep_eff + (1.0 - gate) * h_wide_eff
 
         with torch.no_grad():
             aux = {
                 "gate_logit_mean": logit.mean(),
                 "gate_logit_std":  logit.std(),
             }
+            if self.use_cross:
+                aux["cross_w2d_norm_per_token"] = cross_w2d.norm(dim=-1)
+                aux["cross_d2w_norm_per_token"] = cross_d2w.norm(dim=-1)
+                aux["cross_scale_deep"] = s_d.detach().squeeze()
+                aux["cross_scale_wide"] = s_w.detach().squeeze()
         return output, gate, gate_raw, aux
+
+
+# =============================================================================
+# Dual Path Gate — two-gates variant (original old-code formulation)
+# =============================================================================
+
+class DualPathGateTwoGates(nn.Module):
+    """Two independent sigmoid gates, optionally with cross-path mixing.
+
+    Without cross-path:
+        logits = gate_proj(x)                        # (B, T, 2)
+        g_d, g_w = sigmoid(logits[..., 0:1]), sigmoid(logits[..., 1:2])
+        output   = g_d * h_deep + g_w * h_wide
+
+    With cross-path (faithful to the old code):
+        cross_w2d = scale_d * proj_w2d(h_wide)       # gated by g_d
+        cross_d2w = scale_w * proj_d2w(h_deep)       # gated by g_w
+        contam_w2d = g_d * cross_w2d
+        contam_d2w = g_w * cross_d2w
+        output     = (g_d * h_deep + contam_w2d) + (g_w * h_wide + contam_d2w)
+
+    The gates are independent: g_d + g_w is unconstrained, so the layer can
+    lean hard on both paths or near-zero out either independently. Compared
+    with convex mode, this gives strictly more expressive capacity but loses
+    the "fraction routed to deep" reading of g.
+    """
+
+    def __init__(
+        self,
+        n_embd: int,
+        deep_gate_init_bias: float = 0.0,
+        wide_gate_init_bias: float = 0.0,
+        use_cross: bool = False,
+        cross_scale_deep_init: float = -7.0,
+        cross_scale_wide_init: float = -7.0,
+    ):
+        super().__init__()
+        self.deep_gate_init_bias = deep_gate_init_bias
+        self.wide_gate_init_bias = wide_gate_init_bias
+        self.use_cross = use_cross
+        self.cross_scale_deep_init = cross_scale_deep_init
+        self.cross_scale_wide_init = cross_scale_wide_init
+
+        # Single Linear projecting to 2 logits — matches old code's gate_proj.
+        self.gate_proj = nn.Linear(n_embd, 2, bias=True)
+
+        if use_cross:
+            self.proj_w2d = nn.Linear(n_embd, n_embd, bias=False)
+            self.proj_d2w = nn.Linear(n_embd, n_embd, bias=False)
+            self.cross_scale_deep = nn.Parameter(torch.empty(1))
+            self.cross_scale_wide = nn.Parameter(torch.empty(1))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        # Zero-init weight (gate is driven only by bias at init), match old code.
+        nn.init.zeros_(self.gate_proj.weight)
+        with torch.no_grad():
+            self.gate_proj.bias[0] = self.deep_gate_init_bias
+            self.gate_proj.bias[1] = self.wide_gate_init_bias
+
+        if self.use_cross:
+            nn.init.zeros_(self.proj_w2d.weight)
+            nn.init.zeros_(self.proj_d2w.weight)
+            nn.init.constant_(self.cross_scale_deep, self.cross_scale_deep_init)
+            nn.init.constant_(self.cross_scale_wide, self.cross_scale_wide_init)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        h_deep: torch.Tensor,
+        h_wide: torch.Tensor,
+        gate_override: Optional[
+            Union[torch.Tensor, tuple[Optional[torch.Tensor], Optional[torch.Tensor]]]
+        ] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+        """
+        Args:
+            gate_override: one of:
+                - None: use computed gates (default)
+                - Tensor of shape (B, T) or (B, T, 1): overrides gate_deep ONLY,
+                  gate_wide is left as-computed. (Most common intervention:
+                  "force deep path on/off".)
+                - tuple (deep_override, wide_override) of (B, T) | (B, T, 1) | None:
+                  selectively override either or both. Use None for "leave
+                  this gate alone".
+
+        Returns:
+            output:        (B, T, D)
+            gate_deep:     (B, T, 1) post-override
+            gate_wide:     (B, T, 1) post-override
+            gate_deep_raw: (B, T, 1) pre-override
+            gate_wide_raw: (B, T, 1) pre-override
+            aux:           dict
+        """
+        logits = self.gate_proj(x)                       # (B, T, 2)
+        gates_raw = torch.sigmoid(logits)                # (B, T, 2)
+        gate_deep_raw = gates_raw[..., 0:1]
+        gate_wide_raw = gates_raw[..., 1:2]
+
+        # Resolve overrides
+        deep_ovr, wide_ovr = self._unpack_override(gate_override)
+        gate_deep = self._apply_override(gate_deep_raw, deep_ovr)
+        gate_wide = self._apply_override(gate_wide_raw, wide_ovr)
+
+        if self.use_cross:
+            s_d = F.softplus(self.cross_scale_deep)
+            s_w = F.softplus(self.cross_scale_wide)
+            cross_w2d_full = s_d * self.proj_w2d(h_wide)
+            cross_d2w_full = s_w * self.proj_d2w(h_deep)
+            contam_w2d = gate_deep * cross_w2d_full
+            contam_d2w = gate_wide * cross_d2w_full
+            h_deep_branch = gate_deep * h_deep + contam_w2d
+            h_wide_branch = gate_wide * h_wide + contam_d2w
+        else:
+            cross_w2d_full = None
+            cross_d2w_full = None
+            contam_w2d = None
+            contam_d2w = None
+            h_deep_branch = gate_deep * h_deep
+            h_wide_branch = gate_wide * h_wide
+
+        output = h_deep_branch + h_wide_branch
+
+        with torch.no_grad():
+            aux = {
+                "gate_logit_deep_mean": logits[..., 0].mean(),
+                "gate_logit_deep_std":  logits[..., 0].std(),
+                "gate_logit_wide_mean": logits[..., 1].mean(),
+                "gate_logit_wide_std":  logits[..., 1].std(),
+            }
+            if self.use_cross:
+                # Use post-gate contamination magnitudes — that's the actual
+                # signal the next layer sees. Matches old-code convention.
+                aux["cross_w2d_norm_per_token"] = contam_w2d.norm(dim=-1)
+                aux["cross_d2w_norm_per_token"] = contam_d2w.norm(dim=-1)
+                aux["cross_scale_deep"] = s_d.detach().squeeze()
+                aux["cross_scale_wide"] = s_w.detach().squeeze()
+
+        return output, gate_deep, gate_wide, gate_deep_raw, gate_wide_raw, aux
+
+    @staticmethod
+    def _unpack_override(
+        ovr,
+    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        if ovr is None:
+            return None, None
+        if isinstance(ovr, tuple):
+            assert len(ovr) == 2, "tuple override must be (deep, wide)"
+            return ovr[0], ovr[1]
+        # Bare tensor → applies to deep only (most common intervention).
+        return ovr, None
+
+    @staticmethod
+    def _apply_override(
+        gate: torch.Tensor, override: Optional[torch.Tensor]
+    ) -> torch.Tensor:
+        if override is None:
+            return gate
+        if override.dim() == 2:
+            override = override.unsqueeze(-1)
+        return override.to(dtype=gate.dtype, device=gate.device)
 
 
 # =============================================================================
@@ -571,6 +795,7 @@ class AdaptiveRecursiveBlock(nn.Module):
         self.max_loops = adaptive_config.max_loops
         self.layer_idx = layer_idx
         self.n_layers = n_layers
+        self.gate_mode = adaptive_config.gate_mode
 
         self.has_loop_path = layer_type in ["loop", "dual"]
         if self.has_loop_path:
@@ -587,24 +812,40 @@ class AdaptiveRecursiveBlock(nn.Module):
             )
 
         if layer_type == "dual":
-            self.dual_gate = DualPathGate(
-                n_embd=n_embd,
-                gate_init_bias=adaptive_config.gate_init_bias,
-            )
+            if self.gate_mode == "convex":
+                self.dual_gate = DualPathGateConvex(
+                    n_embd=n_embd,
+                    gate_init_bias=adaptive_config.gate_init_bias,
+                    use_cross=adaptive_config.use_cross,
+                    cross_scale_deep_init=adaptive_config.cross_scale_deep_init,
+                    cross_scale_wide_init=adaptive_config.cross_scale_wide_init,
+                )
+            elif self.gate_mode == "two_gates":
+                self.dual_gate = DualPathGateTwoGates(
+                    n_embd=n_embd,
+                    deep_gate_init_bias=adaptive_config.deep_gate_init_bias,
+                    wide_gate_init_bias=adaptive_config.wide_gate_init_bias,
+                    use_cross=adaptive_config.use_cross,
+                    cross_scale_deep_init=adaptive_config.cross_scale_deep_init,
+                    cross_scale_wide_init=adaptive_config.cross_scale_wide_init,
+                )
+            else:
+                raise ValueError(f"Unknown gate_mode: {self.gate_mode}")
 
     def forward(
         self,
         x: torch.Tensor,
         token_ids: torch.Tensor = None,
-        gate_override: Optional[torch.Tensor] = None,
+        gate_override=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """
         Args:
             x:             (B, T, D) input to the layer
             token_ids:     (B, T) unused here, kept for interface compatibility
-            gate_override: Optional (B, T) tensor of gate values in [0, 1]
-                           for causal intervention. 1 = force pure deep,
-                           0 = force pure wide. None = use computed gate.
+            gate_override: see DualPathGateConvex/TwoGates for signature.
+                           In convex mode: a tensor in [0,1] overrides g.
+                           In two_gates mode: tensor (overrides deep) or
+                           tuple (deep_override, wide_override).
         """
         B, T, D = x.shape
         device = x.device
@@ -673,116 +914,131 @@ class AdaptiveRecursiveBlock(nn.Module):
         # Gate / combine
         # ---------------------------------------------------------------
         gate_aux: dict[str, torch.Tensor] = {}
+        # gate_deep_flat / gate_wide_flat are the per-token gate tensors used
+        # for downstream logging. In convex mode, gate_wide_flat = 1 - gate_deep_flat.
         if self.layer_type == "dual":
-            output, gate, gate_raw, gate_aux = self.dual_gate(
-                x, h_deep, h_wide, gate_override=gate_override
-            )
+            if self.gate_mode == "convex":
+                output, gate, gate_raw, gate_aux = self.dual_gate(
+                    x, h_deep, h_wide, gate_override=gate_override
+                )
+                gate_deep_flat = gate.detach().squeeze(-1)
+                gate_wide_flat = (1.0 - gate).detach().squeeze(-1)
+                gate_deep_raw_flat = gate_raw.detach().squeeze(-1)
+                gate_wide_raw_flat = (1.0 - gate_raw).detach().squeeze(-1)
+            else:  # two_gates
+                output, gate_deep, gate_wide, gate_deep_raw, gate_wide_raw, gate_aux = (
+                    self.dual_gate(x, h_deep, h_wide, gate_override=gate_override)
+                )
+                gate_deep_flat = gate_deep.detach().squeeze(-1)
+                gate_wide_flat = gate_wide.detach().squeeze(-1)
+                gate_deep_raw_flat = gate_deep_raw.detach().squeeze(-1)
+                gate_wide_raw_flat = gate_wide_raw.detach().squeeze(-1)
         elif self.layer_type == "loop":
             output = h_deep
-            gate = torch.ones(B, T, 1, device=device, dtype=x.dtype)
-            gate_raw = gate
+            gate_deep_flat = torch.ones(B, T, device=device, dtype=x.dtype)
+            gate_wide_flat = torch.zeros(B, T, device=device, dtype=x.dtype)
+            gate_deep_raw_flat = gate_deep_flat
+            gate_wide_raw_flat = gate_wide_flat
         elif self.layer_type == "wide":
             output = h_wide
-            gate = torch.zeros(B, T, 1, device=device, dtype=x.dtype)
-            gate_raw = gate
+            gate_deep_flat = torch.zeros(B, T, device=device, dtype=x.dtype)
+            gate_wide_flat = torch.ones(B, T, device=device, dtype=x.dtype)
+            gate_deep_raw_flat = gate_deep_flat
+            gate_wide_raw_flat = gate_wide_flat
         else:
             raise ValueError(f"Unknown layer type: {self.layer_type}")
 
         # ---------------------------------------------------------------
-        # Diagnostics — inlined and Dynamo-traceable. All ops here are
-        # pure tensor ops with no Python-scalar extraction (.item(),
-        # .tolist(), data-dependent control flow). Wrapped in no_grad
-        # to keep these out of the autograd graph; the values are pure
-        # logging side products of the forward.
+        # Diagnostics — Dynamo-traceable, no_grad-wrapped.
         # ---------------------------------------------------------------
         step_metrics = metrics.finalize()
 
-        n_bins = self.config.n_histogram_bins
         with torch.no_grad():
-            # Per-token branch magnitudes
-            h_deep_norm = h_deep.norm(dim=-1)                      # (B, T)
-            h_wide_norm = h_wide.norm(dim=-1)                      # (B, T)
+            h_deep_norm = h_deep.norm(dim=-1)
+            h_wide_norm = h_wide.norm(dim=-1)
             delta_deep  = h_deep - x
             delta_wide  = h_wide - x
-            delta_deep_norm = delta_deep.norm(dim=-1)              # (B, T)
-            delta_wide_norm = delta_wide.norm(dim=-1)              # (B, T)
+            delta_deep_norm = delta_deep.norm(dim=-1)
+            delta_wide_norm = delta_wide.norm(dim=-1)
 
-            # Per-token cosine similarity between branch deltas
             dd_n = delta_deep_norm.clamp(min=1e-6)
             dw_n = delta_wide_norm.clamp(min=1e-6)
             delta_cos_sim = (delta_deep * delta_wide).sum(dim=-1) / (dd_n * dw_n)
 
-            # Residual magnitude
-            residual_norm = x.norm(dim=-1)                         # (B, T)
+            residual_norm = x.norm(dim=-1)
 
-            # Gate (single value, post- and pre-override)
-            gate_flat     = gate.detach().squeeze(-1)              # (B, T)
-            gate_raw_flat = gate_raw.detach().squeeze(-1)
+            # Confound diagnostics use gate_deep (in either mode).
+            corr_gate_delta_deep = _batch_corr(gate_deep_flat, delta_deep_norm)
+            corr_gate_delta_wide = _batch_corr(gate_deep_flat, delta_wide_norm)
 
-            # Confound-diagnostic correlations
-            corr_gate_delta_deep = _batch_corr(gate_flat, delta_deep_norm)
-            corr_gate_delta_wide = _batch_corr(gate_flat, delta_wide_norm)
-
-            # Histograms removed — Inductor crashes on bucketize and
-            # quantile under dynamic shapes. Keeping zero placeholders so
-            # downstream key shapes stay stable.
-            gate_hist       = torch.zeros(n_bins, device=device)
-            delta_deep_hist = torch.zeros(n_bins, device=device)
-            delta_wide_hist = torch.zeros(n_bins, device=device)
+            zero_bt = torch.zeros(B, T, device=device, dtype=x.dtype)
+            cross_w2d_norm_per_token = gate_aux.get("cross_w2d_norm_per_token", zero_bt)
+            cross_d2w_norm_per_token = gate_aux.get("cross_d2w_norm_per_token", zero_bt)
+            zero_scalar = torch.tensor(0.0, device=device)
+            cross_scale_deep_val = gate_aux.get("cross_scale_deep", zero_scalar)
+            cross_scale_wide_val = gate_aux.get("cross_scale_wide", zero_scalar)
 
             es = state.expected_steps.detach()
 
-        layer_metrics = {
-            # expected_steps keeps gradients for ponder loss
+        layer_metrics: dict[str, torch.Tensor] = {
+            # ACT
             "expected_steps": state.expected_steps,
             "actual_steps": torch.tensor(float(actual_steps), device=device),
             "residual_mass": state.prob_remain.mean().detach(),
             "frac_alive": frac_alive,
             "wide_scale": wide_scale_val.squeeze().detach(),
-
-            # Expected-steps distribution
             "expected_steps_mean": es.mean(),
             "expected_steps_std":  es.std(),
             "expected_steps_min":  es.min(),
             "expected_steps_max":  es.max(),
 
-            # Gate (single value now)
-            "gate_mean": gate_flat.mean(),
-            "gate_std":  gate_flat.std(),
-            "gate_min":  gate_flat.min(),
-            "gate_max":  gate_flat.max(),
-            "gate_raw_mean": gate_raw_flat.mean(),  # identical to gate unless override active
-            "gate_raw_std":  gate_raw_flat.std(),
+            # Gates — ALWAYS log both deep and wide stats, regardless of mode.
+            # Convex mode reports gate_wide as (1 - gate_deep), so plots stay
+            # consistent across modes.
+            "gate_deep_mean": gate_deep_flat.mean(),
+            "gate_deep_std":  gate_deep_flat.std(),
+            "gate_deep_min":  gate_deep_flat.min(),
+            "gate_deep_max":  gate_deep_flat.max(),
+            "gate_wide_mean": gate_wide_flat.mean(),
+            "gate_wide_std":  gate_wide_flat.std(),
+            "gate_wide_min":  gate_wide_flat.min(),
+            "gate_wide_max":  gate_wide_flat.max(),
+            "gate_deep_raw_mean": gate_deep_raw_flat.mean(),
+            "gate_wide_raw_mean": gate_wide_raw_flat.mean(),
 
-            # Pre-sigmoid logit
-            "gate_logit_mean": gate_aux.get("gate_logit_mean", torch.tensor(0.0, device=device)),
-            "gate_logit_std":  gate_aux.get("gate_logit_std",  torch.tensor(0.0, device=device)),
+            # Logits — convex mode has 1 logit (deep), two_gates has 2.
+            # We log both keys in either mode; absent ones default to 0.
+            "gate_logit_deep_mean": gate_aux.get(
+                "gate_logit_deep_mean",
+                gate_aux.get("gate_logit_mean", torch.tensor(0.0, device=device)),
+            ),
+            "gate_logit_deep_std": gate_aux.get(
+                "gate_logit_deep_std",
+                gate_aux.get("gate_logit_std",  torch.tensor(0.0, device=device)),
+            ),
+            "gate_logit_wide_mean": gate_aux.get("gate_logit_wide_mean", torch.tensor(0.0, device=device)),
+            "gate_logit_wide_std":  gate_aux.get("gate_logit_wide_std",  torch.tensor(0.0, device=device)),
 
-            # Branch output magnitudes
+            # Branch magnitudes
             "h_deep_norm_mean": h_deep_norm.mean(),
             "h_wide_norm_mean": h_wide_norm.mean() if self.has_wide_path else torch.tensor(0.0, device=device),
-
-            # Branch delta magnitudes (key for confound diagnosis)
             "delta_deep_norm_mean": delta_deep_norm.mean(),
             "delta_deep_norm_std":  delta_deep_norm.std(),
             "delta_wide_norm_mean": delta_wide_norm.mean() if self.has_wide_path else torch.tensor(0.0, device=device),
             "delta_wide_norm_std":  delta_wide_norm.std()  if self.has_wide_path else torch.tensor(0.0, device=device),
-
-            # Branch similarity
             "delta_cos_sim_mean": delta_cos_sim.mean() if (self.has_loop_path and self.has_wide_path) else torch.tensor(0.0, device=device),
             "delta_cos_sim_std":  delta_cos_sim.std()  if (self.has_loop_path and self.has_wide_path) else torch.tensor(0.0, device=device),
-
-            # Residual
             "residual_norm_mean": residual_norm.mean(),
 
-            # Confound-diagnostic correlations
+            # Confound diagnostics
             "corr_gate_delta_deep": corr_gate_delta_deep,
             "corr_gate_delta_wide": corr_gate_delta_wide,
 
-            # Histograms (n_bins,) — will be split into their own bucket
-            "gate_histogram":       gate_hist,
-            "delta_deep_histogram": delta_deep_hist,
-            "delta_wide_histogram": delta_wide_hist if self.has_wide_path else torch.zeros(self.config.n_histogram_bins, device=device),
+            # Cross-path
+            "cross_scale_deep": cross_scale_deep_val,
+            "cross_scale_wide": cross_scale_wide_val,
+            "cross_w2d_norm_mean": cross_w2d_norm_per_token.mean(),
+            "cross_d2w_norm_mean": cross_d2w_norm_per_token.mean(),
 
             # Per-step ACT scalars (max_loops,)
             "step_halt_probs":        step_metrics.get("halt_prob_mean",         torch.zeros(self.max_loops, device=device)),
@@ -797,12 +1053,13 @@ class AdaptiveRecursiveBlock(nn.Module):
             "step_cos_sim_to_input":  step_metrics.get("step_cos_sim_to_input",  torch.zeros(self.max_loops, device=device)),
             "step_rel_norm_to_input": step_metrics.get("step_rel_norm_to_input", torch.zeros(self.max_loops, device=device)),
 
-            # Per-token signals — kept here so the top-level forward can
-            # stack them into (L, B, T) tensors at eval time. Negligible
-            # training cost (just references to already-computed tensors).
-            "gate_token_probs":          gate_flat,                   # (B, T)
-            "delta_deep_norm_per_token": delta_deep_norm,             # (B, T)
+            # Per-token (B, T) — stacked at top-level for eval-time bag.
+            "gate_deep_token_probs":     gate_deep_flat,
+            "gate_wide_token_probs":     gate_wide_flat,
+            "delta_deep_norm_per_token": delta_deep_norm,
             "delta_wide_norm_per_token": delta_wide_norm if self.has_wide_path else torch.zeros_like(delta_deep_norm),
+            "cross_w2d_norm_per_token":  cross_w2d_norm_per_token,
+            "cross_d2w_norm_per_token":  cross_d2w_norm_per_token,
         }
 
         return output, layer_metrics
@@ -829,6 +1086,8 @@ class GPT2LLM(NNModel):
                 ".lm_head.weight",
                 ".router.linear.weight",
                 ".dual_gate.gate_proj.weight",
+                ".dual_gate.proj_w2d.weight",
+                ".dual_gate.proj_d2w.weight",
             ],
             "embedding": [".wte", ".wpe"],
             "layernorm": [
@@ -837,6 +1096,8 @@ class GPT2LLM(NNModel):
                 ".loop_scales", ".wide_scale",
                 ".dual_gate.gate_proj.bias",
                 ".router.linear.bias",
+                ".dual_gate.cross_scale_deep",
+                ".dual_gate.cross_scale_wide",
             ],
         }
         super().__init__(weight_decay_groups=weight_decay_groups, seed=seed)
@@ -924,25 +1185,21 @@ class GPT2LLM(NNModel):
     # Metrics bag construction
     # ------------------------------------------------------------------
 
-    # Per-layer vectors indexed over the ACT loop dimension (max_loops,)
     _LOOP_VECTOR_KEYS = [
         "step_halt_probs", "step_halt_prob_std", "step_halt_prob_min", "step_halt_prob_max",
         "step_changes", "loop_scales", "prob_remain_max", "prob_remain_mean",
         "step_h_norm", "step_cos_sim_to_input", "step_rel_norm_to_input",
     ]
 
-    # Per-layer vectors indexed over histogram bins (n_bins,)
-    _HIST_VECTOR_KEYS = [
-        "gate_histogram", "delta_deep_histogram", "delta_wide_histogram",
-    ]
-
     _PER_LAYER_SCALAR_KEYS = [
         "actual_steps", "residual_mass", "frac_alive", "wide_scale",
         "expected_steps_mean", "expected_steps_std", "expected_steps_min", "expected_steps_max",
-        # Gate summary
-        "gate_mean", "gate_std", "gate_min", "gate_max",
-        "gate_raw_mean", "gate_raw_std",
-        "gate_logit_mean", "gate_logit_std",
+        # Gates — both deep and wide always logged (in convex mode wide = 1-deep)
+        "gate_deep_mean", "gate_deep_std", "gate_deep_min", "gate_deep_max",
+        "gate_wide_mean", "gate_wide_std", "gate_wide_min", "gate_wide_max",
+        "gate_deep_raw_mean", "gate_wide_raw_mean",
+        "gate_logit_deep_mean", "gate_logit_deep_std",
+        "gate_logit_wide_mean", "gate_logit_wide_std",
         # Branch magnitudes
         "h_deep_norm_mean", "h_wide_norm_mean",
         "delta_deep_norm_mean", "delta_deep_norm_std",
@@ -951,6 +1208,9 @@ class GPT2LLM(NNModel):
         "residual_norm_mean",
         # Confound diagnostics
         "corr_gate_delta_deep", "corr_gate_delta_wide",
+        # Cross-path
+        "cross_scale_deep", "cross_scale_wide",
+        "cross_w2d_norm_mean", "cross_d2w_norm_mean",
     ]
 
     def _build_metrics_bag(
@@ -986,20 +1246,14 @@ class GPT2LLM(NNModel):
         for key in self._PER_LAYER_SCALAR_KEYS:
             per_layer_scalars[key] = stack_key(key)
 
-        # Split per-layer vectors: loop-indexed (max_loops,) vs bin-indexed (n_bins,)
         per_layer_vectors: dict[str, torch.Tensor] = {}
         for key in self._LOOP_VECTOR_KEYS:
             per_layer_vectors[key] = stack_key(key)
-
-        per_layer_histograms: dict[str, torch.Tensor] = {}
-        for key in self._HIST_VECTOR_KEYS:
-            per_layer_histograms[key] = stack_key(key)
 
         return weighted_ponder_loss, {
             "scalars": scalars,
             "per_layer_scalars": per_layer_scalars,
             "per_layer_vectors": per_layer_vectors,
-            "per_layer_histograms": per_layer_histograms,
         }
 
     # ------------------------------------------------------------------
@@ -1011,14 +1265,14 @@ class GPT2LLM(NNModel):
     @overload
     def forward(self, inputs: torch.Tensor) -> torch.Tensor: ...
 
-    def forward(self, inputs, gate_overrides: Optional[dict[int, torch.Tensor]] = None):
+    def forward(self, inputs, gate_overrides: Optional[dict[int, object]] = None):
         """
         Args:
             inputs: either a dict {sample_key: tensor} or a bare tensor.
-            gate_overrides: optional dict mapping layer_idx -> (B, T) tensor
-                of gate values in [0, 1]. Layers not in the dict use their
-                computed gate. 1 = force pure deep, 0 = force pure wide.
-                Used for causal intervention experiments.
+            gate_overrides: optional dict mapping layer_idx -> override.
+                Convex mode: override is a (B, T) tensor in [0,1].
+                Two-gates mode: override is either a (B, T) tensor (overrides
+                deep gate only) or a (deep, wide) tuple of (B, T) | None.
         """
         if isinstance(inputs, dict):
             result = self.forward_impl(inputs[self.sample_key], gate_overrides=gate_overrides)
@@ -1028,7 +1282,7 @@ class GPT2LLM(NNModel):
     def forward_impl(
         self,
         inputs: torch.Tensor,
-        gate_overrides: Optional[dict[int, torch.Tensor]] = None,
+        gate_overrides: Optional[dict[int, object]] = None,
     ) -> dict[str, torch.Tensor] | torch.Tensor:
         device = inputs.device
         seq_len = inputs.size(1)
@@ -1071,14 +1325,14 @@ class GPT2LLM(NNModel):
             all_layer_metrics, total_ponder_cost, device, logits.dtype,
         )
 
-        # Lightweight eval-time per-token attachments. Small and cheap — the
-        # tensors already exist from the per-layer diagnostics.
-        # Shapes: eval_tokens (B, T); all others (L, B, T).
         if not self.training:
             with torch.no_grad():
                 metrics_bag["eval_tokens"] = inputs
-                metrics_bag["eval_gate"] = torch.stack([
-                    m["gate_token_probs"] for m in all_layer_metrics
+                metrics_bag["eval_gate_deep"] = torch.stack([
+                    m["gate_deep_token_probs"] for m in all_layer_metrics
+                ])
+                metrics_bag["eval_gate_wide"] = torch.stack([
+                    m["gate_wide_token_probs"] for m in all_layer_metrics
                 ])
                 metrics_bag["eval_expected_steps"] = torch.stack([
                     m["expected_steps"].detach() for m in all_layer_metrics
@@ -1088,6 +1342,12 @@ class GPT2LLM(NNModel):
                 ])
                 metrics_bag["eval_delta_wide_norm"] = torch.stack([
                     m["delta_wide_norm_per_token"] for m in all_layer_metrics
+                ])
+                metrics_bag["eval_cross_w2d_norm"] = torch.stack([
+                    m["cross_w2d_norm_per_token"] for m in all_layer_metrics
+                ])
+                metrics_bag["eval_cross_d2w_norm"] = torch.stack([
+                    m["cross_d2w_norm_per_token"] for m in all_layer_metrics
                 ])
 
         return {

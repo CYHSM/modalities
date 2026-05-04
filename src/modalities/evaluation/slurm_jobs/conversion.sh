@@ -1,41 +1,36 @@
 #!/bin/bash
 #SBATCH --job-name=hf-convert
-#SBATCH --partition=boost_usr_prod
-#SBATCH --account=euhpc_e05_119
+#SBATCH --account=a0164
+#SBATCH --partition=normal
 #SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --gres=gpu:1
-#SBATCH --time=24:00:00
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=16
+#SBATCH --gpus-per-node=1
+#SBATCH --time=01:00:00
 #SBATCH --mem=16G
+#SBATCH --uenv=pytorch/v2.9.1:/user-environment
+#SBATCH --view=default
+#SBATCH -C thp_never&nvidia_vboost_enabled
 #SBATCH --output=logs/%x.%j.out
 #SBATCH --error=logs/%x.%j.out
 
 set -u
 
-MY_ROOT="/leonardo_work/EUHPC_D21_101/mfrey"
-SCRATCH_ROOT="/leonardo_scratch/large/userexternal/mfrey000"
-CONTAINER="${MY_ROOT}/containers/image_34c40a6bbdb8dcbb6d674d06caaa93af68d5692fb744eeb0e28908eea6158b13.sif"
-EXPERIMENTS_DIR="${SCRATCH_ROOT}/experiments"
+MY_ROOT="/users/markusfrey"
+MODALITIES_DIR="${MY_ROOT}/Github/modalities"
+EXPERIMENTS_DIR="/capstor/scratch/cscs/markusfrey/experiments"
 
-CONVERT_SCRIPT="src/modalities/conversion/loop/convert_adaptive_gpt.py"
-VERIFY_SCRIPT="src/modalities/conversion/loop/verify_logits.py"  # adjust if elsewhere
+CONVERT_SCRIPT="src/modalities/evaluation/python_scripts/convert_adaptive_gpt.py"
+VERIFY_SCRIPT="src/modalities/evaluation/python_scripts/verify_logits.py"  # adjust if elsewhere
 
 DO_VERIFY=1
 
 run_py() {
-    # $1 = script path (relative to /opt/repos/modalities)
-    # remaining args passed to python script
     local script="$1"; shift
-    singularity exec --nv \
-        --bind "${MY_ROOT}:${MY_ROOT}" \
-        --bind "${SCRATCH_ROOT}:${SCRATCH_ROOT}" \
-        --bind "${MY_ROOT}/modalities:/opt/repos/modalities" \
-        "$CONTAINER" bash -c "
-            export PYTHONPATH=/opt/repos/modalities/src:\$PYTHONPATH
-            cd /opt/repos/modalities
-            python '$script' $(printf "'%s' " "$@")
-        "
+    source ${MODALITIES_DIR}/.venv/bin/activate
+    export PYTHONPATH=${MODALITIES_DIR}/src:$PYTHONPATH
+    cd ${MODALITIES_DIR}
+    python "$script" "$@"
 }
 
 total=0; converted=0; skipped=0; failed=0; verified=0; verify_failed=0

@@ -10,7 +10,6 @@ from typing import Any, Optional
 
 import torch
 
-import shutil
 from torch.distributed.checkpoint.default_planner import _EmptyStateDictLoadPlanner
 from torch.distributed.checkpoint.filesystem import FileSystemReader
 from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
@@ -26,39 +25,88 @@ logger = logging.getLogger(__name__)
 
 
 def is_dcp_checkpoint(checkpoint_path: str) -> bool:
-    if not os.path.isdir(checkpoint_path): return False
-    return os.path.exists(os.path.join(checkpoint_path, ".metadata")) or any(f.endswith(".distcp") for f in os.listdir(checkpoint_path))
+    if not os.path.isdir(checkpoint_path):
+        return False
+    return (
+        os.path.exists(os.path.join(checkpoint_path, ".metadata"))
+        or any(f.endswith(".distcp") for f in os.listdir(checkpoint_path))
+    )
+
 
 def find_yaml_config_in_dir(directory: str) -> Optional[str]:
-    if not os.path.isdir(directory) or not os.access(directory, os.R_OK): return None
+    if not os.path.isdir(directory) or not os.access(directory, os.R_OK):
+        return None
     for filename in os.listdir(directory):
-        if filename.endswith(".yaml") or filename.endswith(".yml"): return os.path.join(directory, filename)
+        if filename.endswith(".yaml") or filename.endswith(".yml"):
+            return os.path.join(directory, filename)
     return None
+
 
 def get_modalities_config(checkpoint_path: str, explicit_config_path: Optional[str]) -> dict:
     config_src = explicit_config_path
     if config_src is None and is_dcp_checkpoint(checkpoint_path):
         config_src = find_yaml_config_in_dir(checkpoint_path)
-        if config_src is None: config_src = find_yaml_config_in_dir(str(Path(checkpoint_path).parent))
-        if config_src: logger.info(f"Auto-discovered config at: {config_src}")
-        else: raise FileNotFoundError("No YAML config found. Provide it via --modalities_config")
+        if config_src is None:
+            config_src = find_yaml_config_in_dir(str(Path(checkpoint_path).parent))
+        if config_src:
+            logger.info(f"Auto-discovered config at: {config_src}")
+        else:
+            raise FileNotFoundError("No YAML config found. Provide it via --modalities_config")
     elif config_src is None:
         raise ValueError("You must provide --modalities_config for standard .pt checkpoints.")
 
-    # Critical Fix: Wrap the load in EnvOverride so OmegaConf doesn't crash 
-    # when it looks for ${cuda_env:LOCAL_RANK} in the YAML.
-    with EnvOverride({"LOCAL_RANK": "0", "RANK": "0", "WORLD_SIZE": "1", "MASTER_ADDR": "localhost", "MASTER_PORT": "12345"}):
-        return load_app_config_dict(Path(config_src), experiment_id="-1", experiments_root_path=Path("."))
+    with EnvOverride({
+        "LOCAL_RANK": "0", "RANK": "0", "WORLD_SIZE": "1",
+        "MASTER_ADDR": "localhost", "MASTER_PORT": "12345",
+    }):
+        return load_app_config_dict(
+            Path(config_src), experiment_id="-1", experiments_root_path=Path(".")
+        )
+
+
+def load_raw_state_dict(checkpoint_path: str) -> dict:
+    if is_dcp_checkpoint(checkpoint_path):
+        logger.info(f"Reading Distributed Checkpoint (DCP) from: {checkpoint_path}")
+        sd: dict = {}
+        planner = _EmptyStateDictLoadPlanner(keys=["app.model"], allow_partial_load=True)
+        _load_state_dict(
+            sd,
+            storage_reader=FileSystemReader(checkpoint_path),
+            planner=planner,
+            no_dist=True,
+        )
+        return sd.get("app", {}).get("model", sd)
+    else:
+        logger.info(f"Reading standard PyTorch checkpoint from: {checkpoint_path}")
+        ckpt: Any = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        if isinstance(ckpt, dict):
+            for key in ("model_state_dict", "state_dict", "model"):
+                if key in ckpt and isinstance(ckpt[key], dict):
+                    return ckpt[key]
+        return ckpt
+
+
+def fixup_state_dict(sd: dict) -> dict:
+    out = {}
+    for k, v in sd.items():
+        if k.startswith("module."):
+            k = k[len("module."):]
+        if k == "transformer.lm_head.weight":
+            k = "lm_head.weight"
+        out[k] = v
+    return out
 
 
 def build_config_from_modalities(model_cfg: dict) -> AdaptiveGPTConfig:
-    # CRITICAL FIX: Map pytorch_rms_norm directly to itself so it triggers native torch.nn.RMSNorm
-    norm_type_map = {"layer_norm": "layer_norm", "rms_norm": "rms_norm", "pytorch_rms_norm": "pytorch_rms_norm"}
+    norm_type_map = {
+        "layer_norm": "layer_norm",
+        "rms_norm": "rms_norm",
+        "pytorch_rms_norm": "pytorch_rms_norm",
+    }
     ffn_norm = model_cfg["ffn_norm_config"]
     raw_norm_type = str(ffn_norm["norm_type"]).split(".")[-1]
     norm_type = norm_type_map.get(raw_norm_type, "layer_norm")
     norm_inner = ffn_norm["config"]
-    
     norm_bias = False if raw_norm_type == "pytorch_rms_norm" else norm_inner.get("bias", True)
 
     qkv_transforms = model_cfg.get("attention_config", {}).get("qkv_transforms", [])
@@ -89,7 +137,9 @@ def build_config_from_modalities(model_cfg: dict) -> AdaptiveGPTConfig:
         dropout=model_cfg.get("dropout", 0.0),
         bias=model_cfg["bias"],
         activation_type=str(model_cfg["activation_type"]).split(".")[-1].lower(),
-        enforce_swiglu_hidden_dim_multiple_of=model_cfg.get("enforce_swiglu_hidden_dim_multiple_of", 256),
+        enforce_swiglu_hidden_dim_multiple_of=model_cfg.get(
+            "enforce_swiglu_hidden_dim_multiple_of", 256
+        ),
         poe_type=str(model_cfg["poe_type"]).split(".")[-1].upper(),
         use_rotary=use_rotary,
         rotary_base_freq=rotary_base_freq,
@@ -100,38 +150,35 @@ def build_config_from_modalities(model_cfg: dict) -> AdaptiveGPTConfig:
         use_weight_tying=model_cfg.get("use_weight_tying", False),
         use_qk_norm=use_qk_norm,
         qk_norm_dim=qk_norm_dim,
+        # Adaptive config — Pydantic defaults from AdaptiveComputationConfig:
+        #   gate_mode="two_gates", use_cross=True, *_init_bias=0.0,
+        #   loop_scale_init=-7, wide_scale_init=-7,
+        #   cross_scale_*_init=-7
         enable_adaptive=bool(adaptive_cfg.get("enable_adaptive", False)),
         max_loops=adaptive_cfg.get("max_loops", 10),
         ponder_penalty_weight=adaptive_cfg.get("ponder_penalty_weight", 0.0),
         wide_ffn_hidden=adaptive_cfg.get("wide_ffn_hidden", 0),
+        gate_mode=adaptive_cfg.get("gate_mode", "two_gates"),
+        gate_init_bias=adaptive_cfg.get("gate_init_bias", 0.0),
         deep_gate_init_bias=adaptive_cfg.get("deep_gate_init_bias", 0.0),
         wide_gate_init_bias=adaptive_cfg.get("wide_gate_init_bias", 0.0),
-        layer_types=adaptive_cfg.get("layer_types"),
+        loop_scale_init=adaptive_cfg.get("loop_scale_init", -7.0),
+        wide_scale_init=adaptive_cfg.get("wide_scale_init", -7.0),
+        use_cross=bool(adaptive_cfg.get("use_cross", True)),
+        cross_scale_deep_init=adaptive_cfg.get("cross_scale_deep_init", -7.0),
+        cross_scale_wide_init=adaptive_cfg.get("cross_scale_wide_init", -7.0),
+        adaptive_layer_types=(
+            adaptive_cfg.get("adaptive_layer_types") or adaptive_cfg.get("layer_types")
+        ),
     )
 
 
-def load_raw_state_dict(checkpoint_path: str) -> dict:
-    if is_dcp_checkpoint(checkpoint_path):
-        logger.info(f"Reading Distributed Checkpoint (DCP) from: {checkpoint_path}")
-        sd = {}
-        planner = _EmptyStateDictLoadPlanner(keys=["app.model"], allow_partial_load=True)
-        _load_state_dict(sd, storage_reader=FileSystemReader(checkpoint_path), planner=planner, no_dist=True)
-        return sd.get("app", {}).get("model", sd)
-    else:
-        logger.info(f"Reading standard PyTorch checkpoint from: {checkpoint_path}")
-        ckpt: Any = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        if isinstance(ckpt, dict):
-            for key in ("model_state_dict", "state_dict", "model"):
-                if key in ckpt and isinstance(ckpt[key], dict): return ckpt[key]
-        return ckpt
-
-def fixup_state_dict(sd: dict) -> dict:
-    out = {}
-    for k, v in sd.items():
-        if k.startswith("module."): k = k[len("module."):]
-        if k == "transformer.lm_head.weight": k = "lm_head.weight"
-        out[k] = v
-    return out
+def load_default_hf_tokenizer(model: AdaptiveGPTForCausalLM, output_dir: str):
+    tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
+    tokenizer.save_pretrained(output_dir)
+    model.config.bos_token_id = tokenizer.bos_token_id
+    model.config.eos_token_id = tokenizer.eos_token_id
+    model.config.pad_token_id = tokenizer.pad_token_id
 
 
 def convert(checkpoint_path: str, output_dir: str, config_path: Optional[str] = None):
@@ -151,9 +198,17 @@ def convert(checkpoint_path: str, output_dir: str, config_path: Optional[str] = 
     if hf_config.use_weight_tying:
         missing = [k for k in missing if k != "lm_head.weight"]
 
-    if missing: logger.warning(f"Missing keys: {missing}")
-    if unexpected: logger.warning(f"Unexpected keys: {unexpected}")
-    if not missing and not unexpected: logger.info("✅ All state dict keys matched perfectly.")
+    if missing:
+        logger.warning(f"Missing keys: {missing}")
+    if unexpected:
+        logger.error(f"Unexpected keys: {unexpected}")
+        raise RuntimeError(
+            f"State dict has keys not present in the HF model. This means the "
+            f"YAML config doesn't fully describe the trained architecture. "
+            f"First few unexpected: {unexpected[:6]}"
+        )
+    if not missing and not unexpected:
+        logger.info("✅ All state dict keys matched perfectly.")
 
     logger.info("4. Handling Tokenizer conversion...")
     tokenizer_config_raw = None
@@ -171,7 +226,9 @@ def convert(checkpoint_path: str, output_dir: str, config_path: Optional[str] = 
             model.config.eos_token_id = eos_id
             model.config.pad_token_id = pad_id
         elif variant == "pretrained_hf_tokenizer":
-            hf_path = tokenizer_config_raw["config"].get("pretrained_model_name_or_path", "openai-community/gpt2")
+            hf_path = tokenizer_config_raw["config"].get(
+                "pretrained_model_name_or_path", "openai-community/gpt2"
+            )
             tokenizer = AutoTokenizer.from_pretrained(hf_path)
             tokenizer.save_pretrained(output_dir)
             model.config.bos_token_id = tokenizer.bos_token_id
@@ -183,25 +240,22 @@ def convert(checkpoint_path: str, output_dir: str, config_path: Optional[str] = 
         load_default_hf_tokenizer(model, output_dir)
 
     logger.info(f"5. Saving HF model to {output_dir}...")
-    
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(output_path)
-    
+
     logger.info("✅ Conversion complete!")
 
-def load_default_hf_tokenizer(model: AdaptiveGPTForCausalLM, output_dir: str):
-    tokenizer = AutoTokenizer.from_pretrained("openai-community/gpt2")
-    tokenizer.save_pretrained(output_dir)
-    model.config.bos_token_id = tokenizer.bos_token_id
-    model.config.eos_token_id = tokenizer.eos_token_id
-    model.config.pad_token_id = tokenizer.pad_token_id
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(description="Convert Modalities (DCP or .pt) to HF.")
     parser.add_argument("checkpoint", help="Path to the .pt file or DCP directory")
     parser.add_argument("output_dir", help="Directory to write the HF model to")
-    parser.add_argument("--modalities_config", default=None, help="Path to YAML config (optional if DCP has it inside)")
+    parser.add_argument(
+        "--modalities_config",
+        default=None,
+        help="Path to YAML config (optional if DCP has it inside)",
+    )
     args = parser.parse_args()
     convert(args.checkpoint, args.output_dir, args.modalities_config)

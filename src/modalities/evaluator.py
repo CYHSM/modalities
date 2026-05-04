@@ -175,6 +175,7 @@ class Evaluator:
                 if has_adaptive and metrics_accum.count > 0:
                     (
                         sync_tensor, scalar_names, per_layer_names, per_layer_sizes,
+                        hist_names, hist_shapes,
                     ) = metrics_accum.build_sync_tensor(device)
 
                     reduce_scale = dist.get_world_size() / self.pp_degree
@@ -185,15 +186,19 @@ class Evaluator:
                     )
 
                     (
-                        synced_ce, synced_ponder, synced_scalars, synced_per_layer,
+                        synced_ce, synced_ponder, synced_scalars, synced_per_layer, synced_hists,
                     ) = MetricsAccumulator.unpack_synced_tensor(
                         synced_tensor, scalar_names, per_layer_names, per_layer_sizes,
+                        hist_names, hist_shapes,
                     )
 
                     ponder_weight = 0.0
                     if underlying.adaptive_config is not None:
                         ponder_weight = getattr(underlying.adaptive_config, "ponder_penalty_weight", 0.0)
 
+                    # summary_only=False so per-layer scalar curves (gate_mean
+                    # per layer, corr_gate_delta_* per layer) survive the
+                    # eval path. Cost is many wandb scalars but each is tiny.
                     eval_adaptive_losses, eval_adaptive_metrics = format_metrics(
                         ce_loss=synced_ce,
                         ponder_loss=synced_ponder,
@@ -201,7 +206,8 @@ class Evaluator:
                         per_layer_scalars=synced_per_layer,
                         per_layer_vectors=metrics_accum.last_per_layer_vectors,
                         current_ponder_weight=ponder_weight,
-                        summary_only=True,
+                        summary_only=False,
+                        per_layer_histograms=synced_hists,
                     )
 
                 evaluation_result = EvaluationResultBatch(
@@ -225,6 +231,11 @@ class Evaluator:
 
             # ================================================================
             # Hardcoded examples — token routing visualization
+            #
+            # Runs a single forward on fixed prompts and attaches the per-token
+            # per-layer single gate (plus expected steps and delta norms) for
+            # the HTML subscriber to render. The tensors here are small:
+            # 2 examples × ~60 tokens × L × 4B ≈ a few KB total.
             # ================================================================
             if self.tokenizer is not None and has_adaptive:
                 hardcoded_tag = f"hardcoded_examples{threshold_tag}"
@@ -251,22 +262,26 @@ class Evaluator:
                     scheduled_pipeline=scheduled_pipeline,
                 )
 
+                # Pull the single-gate per-token tensors from the metrics bag.
                 hc_eval_tokens = None
-                hc_eval_gate_deep_probs = None
-                hc_eval_gate_wide_probs = None
+                hc_eval_gate = None
                 hc_eval_expected_steps = None
+                hc_eval_delta_deep = None
+                hc_eval_delta_wide = None
 
                 if hasattr(loss_fun, "get_metrics"):
                     m_bag = loss_fun.get_metrics().get("metrics")
                     if m_bag is not None:
                         if "eval_tokens" in m_bag:
                             hc_eval_tokens = m_bag["eval_tokens"].detach().cpu()
-                        if "eval_gate_deep_probs" in m_bag:
-                            hc_eval_gate_deep_probs = m_bag["eval_gate_deep_probs"].detach().cpu()
-                        if "eval_gate_wide_probs" in m_bag:
-                            hc_eval_gate_wide_probs = m_bag["eval_gate_wide_probs"].detach().cpu()
+                        if "eval_gate" in m_bag:
+                            hc_eval_gate = m_bag["eval_gate"].detach().cpu().float()
                         if "eval_expected_steps" in m_bag:
-                            hc_eval_expected_steps = m_bag["eval_expected_steps"].detach().cpu()
+                            hc_eval_expected_steps = m_bag["eval_expected_steps"].detach().cpu().float()
+                        if "eval_delta_deep_norm" in m_bag:
+                            hc_eval_delta_deep = m_bag["eval_delta_deep_norm"].detach().cpu().float()
+                        if "eval_delta_wide_norm" in m_bag:
+                            hc_eval_delta_wide = m_bag["eval_delta_wide_norm"].detach().cpu().float()
 
                 hc_evaluation_result = EvaluationResultBatch(
                     losses={
@@ -283,12 +298,14 @@ class Evaluator:
 
                 if hc_eval_tokens is not None:
                     hc_evaluation_result.metrics["eval_tokens"] = ResultItem(hc_eval_tokens)
-                if hc_eval_gate_deep_probs is not None:
-                    hc_evaluation_result.metrics["eval_gate_deep_probs"] = ResultItem(hc_eval_gate_deep_probs.float())
-                if hc_eval_gate_wide_probs is not None:
-                    hc_evaluation_result.metrics["eval_gate_wide_probs"] = ResultItem(hc_eval_gate_wide_probs.float())
+                if hc_eval_gate is not None:
+                    hc_evaluation_result.metrics["eval_gate"] = ResultItem(hc_eval_gate)
                 if hc_eval_expected_steps is not None:
-                    hc_evaluation_result.metrics["eval_expected_steps"] = ResultItem(hc_eval_expected_steps.float())
+                    hc_evaluation_result.metrics["eval_expected_steps"] = ResultItem(hc_eval_expected_steps)
+                if hc_eval_delta_deep is not None:
+                    hc_evaluation_result.metrics["eval_delta_deep_norm"] = ResultItem(hc_eval_delta_deep)
+                if hc_eval_delta_wide is not None:
+                    hc_evaluation_result.metrics["eval_delta_wide_norm"] = ResultItem(hc_eval_delta_wide)
 
                 Evaluator._publish_evaluation_result(
                     evaluation_result_publisher=self.evaluation_result_publisher,

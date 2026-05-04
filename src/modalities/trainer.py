@@ -196,6 +196,22 @@ def compute_component_gradient_norms(model_parts: list[FSDPX]) -> dict[str, torc
 # =============================================================================
 
 class MetricsAccumulator:
+    """Accumulates metrics across batches and produces a single flat tensor
+    for cross-rank reduction.
+
+    Bag layout mirrors the model output:
+        scalars:              dict[str, ()]        — averaged across batches
+        per_layer_scalars:    dict[str, (L,)]      — averaged across batches
+        per_layer_vectors:    dict[str, (L, max_loops)] — LAST batch only
+        per_layer_histograms: dict[str, (L, n_bins)]    — averaged across batches
+
+    Vectors (loop-step diagnostics) are "last batch only" because their
+    meaning is step-local and averaging them across batches washes out the
+    per-step signal. Histograms are averaged because they're distributions
+    over tokens and averaging across batches gives you a bigger effective
+    sample of the distribution.
+    """
+
     def __init__(self):
         self.reset()
 
@@ -205,6 +221,7 @@ class MetricsAccumulator:
         self.scalar_sums: dict[str, float] = {}
         self.per_layer_scalar_sums: dict[str, torch.Tensor] = {}
         self.last_per_layer_vectors: dict[str, torch.Tensor] = {}
+        self.per_layer_hist_sums: dict[str, torch.Tensor] = {}
         self.count: int = 0
 
     def accumulate(self, loss_metrics: dict):
@@ -227,9 +244,23 @@ class MetricsAccumulator:
         for name, tensor in bag.get("per_layer_vectors", {}).items():
             self.last_per_layer_vectors[name] = tensor
 
-    def build_sync_tensor(self, device: torch.device) -> tuple[torch.Tensor, list[str], list[str], dict[str, int]]:
+        for name, tensor in bag.get("per_layer_histograms", {}).items():
+            if name not in self.per_layer_hist_sums:
+                self.per_layer_hist_sums[name] = torch.zeros_like(tensor, dtype=torch.float32)
+            self.per_layer_hist_sums[name] += tensor.float()
+
+    def build_sync_tensor(
+        self, device: torch.device
+    ) -> tuple[
+        torch.Tensor,           # flat tensor to reduce
+        list[str],              # scalar names (ordered)
+        list[str],              # per-layer-scalar names (ordered)
+        dict[str, int],         # per-layer-scalar sizes
+        list[str],              # histogram names (ordered)
+        dict[str, tuple],       # histogram shapes (L, n_bins)
+    ]:
         if self.count == 0:
-            return torch.zeros(2, device=device), [], [], {}
+            return torch.zeros(2, device=device), [], [], {}, [], {}
 
         n = self.count
         values = [self.ce_loss_sum / n, self.ponder_loss_sum / n]
@@ -246,11 +277,21 @@ class MetricsAccumulator:
             layer_tensors.append(t.to(device))
             per_layer_sizes[name] = t.numel()
 
+        hist_names = sorted(self.per_layer_hist_sums.keys())
+        hist_shapes: dict[str, tuple] = {}
+        hist_tensors = []
+        for name in hist_names:
+            t = self.per_layer_hist_sums[name] / n
+            hist_shapes[name] = tuple(t.shape)
+            hist_tensors.append(t.to(device).flatten())
+
         combined = torch.tensor(values, device=device, dtype=torch.float32)
         if layer_tensors:
             combined = torch.cat([combined, torch.cat(layer_tensors)])
+        if hist_tensors:
+            combined = torch.cat([combined, torch.cat(hist_tensors)])
 
-        return combined, scalar_names, per_layer_names, per_layer_sizes
+        return combined, scalar_names, per_layer_names, per_layer_sizes, hist_names, hist_shapes
 
     @staticmethod
     def unpack_synced_tensor(
@@ -258,7 +299,15 @@ class MetricsAccumulator:
         scalar_names: list[str],
         per_layer_names: list[str],
         per_layer_sizes: dict[str, int],
-    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        hist_names: list[str] = None,
+        hist_shapes: dict[str, tuple] = None,
+    ) -> tuple[
+        torch.Tensor, torch.Tensor,
+        dict[str, torch.Tensor], dict[str, torch.Tensor], dict[str, torch.Tensor],
+    ]:
+        hist_names = hist_names or []
+        hist_shapes = hist_shapes or {}
+
         idx = 0
         ce_loss = synced[idx]; idx += 1
         ponder_loss = synced[idx]; idx += 1
@@ -272,7 +321,16 @@ class MetricsAccumulator:
             size = per_layer_sizes[name]
             per_layer_scalars[name] = synced[idx : idx + size]; idx += size
 
-        return ce_loss, ponder_loss, scalars, per_layer_scalars
+        per_layer_histograms = {}
+        for name in hist_names:
+            shape = hist_shapes[name]
+            size = 1
+            for dim in shape:
+                size *= dim
+            per_layer_histograms[name] = synced[idx : idx + size].reshape(shape)
+            idx += size
+
+        return ce_loss, ponder_loss, scalars, per_layer_scalars, per_layer_histograms
 
 
 # =============================================================================
@@ -287,18 +345,24 @@ def format_metrics(
     per_layer_vectors: dict[str, torch.Tensor],
     current_ponder_weight: float,
     summary_only: bool = False,
+    per_layer_histograms: Optional[dict[str, torch.Tensor]] = None,
 ) -> tuple[dict[str, ResultItem], dict[str, ResultItem]]:
     """Format metrics for W&B logging.
 
     W&B key hierarchy (full mode, summary_only=False):
         adaptive/       — global scalars (ponder_weight, expected_steps, ...)
-        summary/        — averages across all layers (and loops for vectors)
-        layer_{i}/      — per-layer detail: scalars + per-loop vectors + loop averages
+        summary/        — averages across all layers (and loops/bins for vectors)
+        layer_{i}/      — per-layer detail: scalars + per-loop vectors + per-bin hists
         loop_{j}/       — per-loop-step detail: averaged across all layers
+        hist/           — per-bin distributions, both summary and per-layer
 
-    When summary_only=True (used during evaluation):
-        Only adaptive/ and summary/ are emitted.
+    When summary_only=True:
+        Only adaptive/, summary/, and per-bin histogram summaries (hist/)
+        are emitted. Per-layer scalars and per-loop vectors collapse to their
+        layer-mean under summary/.
     """
+    per_layer_histograms = per_layer_histograms or {}
+
     losses = {
         "loss/ce_avg": ResultItem(ce_loss, decimal_places=2),
         "ponder/loss_avg": ResultItem(ponder_loss, decimal_places=5),
@@ -319,7 +383,8 @@ def format_metrics(
             for i, v in enumerate(vals):
                 metrics[f"layer_{i}/{name}"] = ResultItem(v, 4)
 
-    # per-layer vectors → summary/ (always) + layer_{i}/ + loop_{j}/ (full mode)
+    # per-layer vectors (loop-indexed, max_loops) → summary/ (always) +
+    # layer_{i}/ + loop_{j}/ (full mode)
     for name, tensor in per_layer_vectors.items():
         if tensor.numel() == 0:
             continue
@@ -339,6 +404,26 @@ def format_metrics(
             # loop_{j}/ : average across layers
             for j in range(n_loops):
                 metrics[f"loop_{j}/{name}"] = ResultItem(t[:, j].mean(), 4)
+
+    # per-layer histograms (bin-indexed, n_bins) → hist/{name}/bin_{b}
+    # These carry the distribution story: gate bimodality, delta-norm shape.
+    # Critical: treat bins as bins, not as loops.
+    for name, tensor in per_layer_histograms.items():
+        if tensor.numel() == 0:
+            continue
+        t = tensor.float().cpu()  # (n_layers, n_bins), rows sum to ~1
+        n_layers, n_bins = t.shape
+
+        # summary: distribution averaged across layers (per-bin)
+        # Each key is one wandb scalar; charting them side-by-side gives the
+        # full distribution plot over training steps.
+        for b in range(n_bins):
+            metrics[f"hist/{name}/bin_{b}"] = ResultItem(t[:, b].mean(), 4)
+
+        if not summary_only:
+            for i in range(n_layers):
+                for b in range(n_bins):
+                    metrics[f"hist/{name}/layer_{i}/bin_{b}"] = ResultItem(t[i, b], 4)
 
     return losses, metrics
 
@@ -574,6 +659,7 @@ class Trainer:
 
                     (
                         sync_tensor, scalar_names, per_layer_names, per_layer_sizes,
+                        hist_names, hist_shapes,
                     ) = metrics_accum.build_sync_tensor(device)
 
                     reduce_scale = dist.get_world_size() / self.pp_degree
@@ -584,9 +670,10 @@ class Trainer:
                     )
 
                     (
-                        synced_ce, synced_ponder, synced_scalars, synced_per_layer,
+                        synced_ce, synced_ponder, synced_scalars, synced_per_layer, synced_hists,
                     ) = MetricsAccumulator.unpack_synced_tensor(
                         synced_tensor, scalar_names, per_layer_names, per_layer_sizes,
+                        hist_names, hist_shapes,
                     )
 
                     adaptive_losses, adaptive_metrics = format_metrics(
@@ -596,6 +683,7 @@ class Trainer:
                         per_layer_scalars=synced_per_layer,
                         per_layer_vectors=metrics_accum.last_per_layer_vectors,
                         current_ponder_weight=current_ponder_weight,
+                        per_layer_histograms=synced_hists,
                     )
 
                     losses = {
@@ -637,7 +725,10 @@ class Trainer:
                         metrics=metrics,
                         throughput_metrics={
                             "train samples/s": ResultItem(torch.tensor(global_num_samples_per_second), 1),
-                            "train mfu (16-bit)": ResultItem(torch.tensor(mfu_score), 2),
+                            "train mfu (16-bit)": ResultItem(
+                                mfu_score if isinstance(mfu_score, torch.Tensor) else torch.tensor(mfu_score),
+                                2,
+                            ),
                             "lr mean": ResultItem(torch.tensor(lr_scheduler.get_last_lr()).mean()),
                             "peak memory rank 0 (MB)": ResultItem(torch.tensor(peak_memory_MB), 2),
                         },
