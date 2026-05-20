@@ -6,8 +6,7 @@ CONTAINER="${MY_ROOT}/containers/image_34c40a6bbdb8dcbb6d674d06caaa93af68d5692fb
 OLMES_VENV="${MY_ROOT}/venvs/olmes"
 HF_CACHE="${EXPERIMENTS_DIR}/../hf_cache"
 
-# !! ROTATE THIS TOKEN — the previous value was leaked in a paste.
-HF_ACCESS_TOKEN="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"
+HF_ACCESS_TOKEN=""
 
 mkdir -p "$HF_CACHE"
 
