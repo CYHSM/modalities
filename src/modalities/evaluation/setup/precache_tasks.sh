@@ -1,10 +1,13 @@
 #!/bin/bash
-# RUN THIS ON THE LOGIN NODE
-
-MY_ROOT="/users/markusfrey"
-EXPERIMENTS_DIR="/capstor/scratch/cscs/markusfrey/experiments"
+# RUN THIS ON THE LOGIN NODE (Leonardo HPC)
+MY_ROOT="/leonardo_work/EUHPC_D21_101/mfrey"
+EXPERIMENTS_DIR="/leonardo_scratch/large/userexternal/mfrey000/experiments_emnlp"
+CONTAINER="${MY_ROOT}/containers/image_34c40a6bbdb8dcbb6d674d06caaa93af68d5692fb744eeb0e28908eea6158b13.sif"
 OLMES_VENV="${MY_ROOT}/venvs/olmes"
 HF_CACHE="${EXPERIMENTS_DIR}/../hf_cache"
+
+# !! ROTATE THIS TOKEN — the previous value was leaked in a paste.
+HF_ACCESS_TOKEN="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"
 
 mkdir -p "$HF_CACHE"
 
@@ -31,17 +34,24 @@ socialiqa:rc:bpb::olmes:full \
 piqa:rc:bpb::olmes:full \
 qasper_yesno:rc:bpb::olmes \
 lambada:bpb \
-gsm8k::olmes"
+gsm8k::olmes \
+paloma::paloma"
 
-# Use uenv run to ensure oe_eval has all the right dependencies to load the configs
-uenv run pytorch/v2.9.1 --view=default -- bash -c "
+echo "=== Starting cache download inside Singularity ==="
+singularity exec \
+    --bind "${MY_ROOT}:${MY_ROOT}" \
+    --bind "/leonardo_scratch:/leonardo_scratch" \
+    "$CONTAINER" bash -c "
     set -e -u
+    echo 'Activating OLMES environment...'
     source ${OLMES_VENV}/bin/activate
-    
-    # Notice we DO NOT set the offline flags here
+    export PYTHONPATH=${OLMES_VENV}/lib/python3.12/site-packages:\$PYTHONPATH
     export HF_DATASETS_CACHE=${HF_CACHE}
     export HF_HOME=${HF_CACHE}
+    export HF_TOKEN=\"${HF_ACCESS_TOKEN}\"
 
+    # ---- Part 1: OLMES tasks ----
+    echo '--- Caching OLMES tasks ---'
     python <<PYEOF
 import os, copy
 from oe_eval.configs.tasks import TASK_CONFIGS
@@ -56,7 +66,7 @@ for t in tasks_input:
     except Exception as e:
         print(f'!! could not resolve {t}: {e}')
 
-print(f'Will download {len(all_tasks)} tasks')
+print(f'\nWill download {len(all_tasks)} tasks to {os.environ[\"HF_HOME\"]}')
 for task_name in all_tasks:
     if task_name not in TASK_CONFIGS:
         print(f'?? not in TASK_CONFIGS: {task_name}')
@@ -70,4 +80,25 @@ for task_name in all_tasks:
     except Exception as e:
         print(f'!! failed {task_name}: {e}')
 PYEOF
+
+    # ---- Part 2: pseudo-sources used by paloma_diagnostics.py ----
+    echo ''
+    echo '--- Caching diagnostics pseudo-source datasets (gsm8k, trivia_qa) ---'
+    python <<PYEOF
+from datasets import load_dataset
+
+specs = [
+    ('gsm8k',     'main',         'test'),
+    ('trivia_qa', 'rc.nocontext', 'validation'),
+]
+for path, config, split in specs:
+    try:
+        print(f'-> downloading {path} ({config}, {split})')
+        load_dataset(path, config, split=split)
+        print(f'   done')
+    except Exception as e:
+        print(f'!! failed {path}: {e}')
+PYEOF
 "
+
+echo "=== Precaching complete ==="

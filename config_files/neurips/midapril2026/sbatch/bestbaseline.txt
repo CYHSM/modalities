@@ -1,0 +1,2 @@
+config_files/neurips/midapril2026/bestbaseline/d1280_dual_r75w25d_1152deep_23936wide_12L_loop3_init-7.yaml
+config_files/neurips/midapril2026/bestbaseline/d1280_dual_r75w25d_1152deep_23936wide_12L_loop3_init-3.yaml

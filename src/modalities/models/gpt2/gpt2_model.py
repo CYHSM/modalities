@@ -68,8 +68,8 @@ logger.setLevel(logging.WARNING)
 
 class AdaptiveComputationConfig(BaseModel):
     enable_adaptive: bool = False
-    max_loops: int = 10
-    halt_threshold: float = 0.99
+    max_loops: int = 3
+    halt_threshold: float = 1.00
     ponder_penalty_weight: float = 0.00
     wide_ffn_hidden: int = 0
 
@@ -1302,12 +1302,19 @@ class GPT2LLM(NNModel):
         if not self.training:
             with torch.no_grad():
                 metrics_bag["eval_tokens"] = inputs
-                metrics_bag["eval_gate_deep"] = torch.stack([
+
+                eval_gate_deep = torch.stack([
                     m["gate_deep_token_probs"] for m in all_layer_metrics
                 ])
-                metrics_bag["eval_gate_wide"] = torch.stack([
+                eval_gate_wide = torch.stack([
                     m["gate_wide_token_probs"] for m in all_layer_metrics
                 ])
+                metrics_bag["eval_gate_deep"] = eval_gate_deep
+                metrics_bag["eval_gate_wide"] = eval_gate_wide
+
+                denom = (eval_gate_deep + eval_gate_wide).clamp(min=1e-6)
+                metrics_bag["eval_gate"] = eval_gate_deep / denom
+
                 metrics_bag["eval_expected_steps"] = torch.stack([
                     m["expected_steps"].detach() for m in all_layer_metrics
                 ])

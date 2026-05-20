@@ -1,0 +1,3 @@
+/leonardo_work/EUHPC_D21_101/mfrey/modalities/config_files/neurips/apriliclr2026/configs/dm768_L12_loop1_ffnW8192_purewide_ipMdual.yaml
+/leonardo_work/EUHPC_D21_101/mfrey/modalities/config_files/neurips/apriliclr2026/configs/dm768_L12_loop5_ffnD512_ffnW6656_dual.yaml
+/leonardo_work/EUHPC_D21_101/mfrey/modalities/config_files/neurips/apriliclr2026/configs/dm768_L12_loop5_ffnL8192_pureloop_ipMdual.yaml
