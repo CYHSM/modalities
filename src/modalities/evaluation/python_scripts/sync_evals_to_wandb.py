@@ -27,11 +27,11 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 # ---------- Paths ----------
-EXPERIMENTS_DIR = Path("/leonardo_scratch/large/userexternal/mfrey000/experiments_emnlp")
+EXPERIMENTS_DIR = Path("/leonardo_scratch/large/userexternal/mfrey000/experiments_emnlp_revisions")
 WANDB_DIR = EXPERIMENTS_DIR / "wandb" / "wandb"
 
 WANDB_ENTITY = "cyhsm"
-WANDB_PROJECT = "dualpathflops"
+WANDB_PROJECT = "dualfull"
 
 # Leonardo (CINECA, Bologna, Italy). Experiment-folder names are in this local
 # time; zoneinfo handles CET/CEST automatically so we don't hardcode +1/+2.

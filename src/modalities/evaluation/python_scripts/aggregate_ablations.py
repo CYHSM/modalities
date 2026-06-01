@@ -41,8 +41,21 @@ def main():
             return int(n[1:])
         return None
 
+    def halt_value(r):
+        """Extract threshold T from ablation name like 'halt0p1' -> 0.1, else None."""
+        n = r["ablation"]
+        if n.startswith("halt"):
+            try:
+                return float(n[4:].replace("p", "."))
+            except ValueError:
+                return None
+        return None
+
     k_rows = sorted([r for r in rest if k_value(r) is not None], key=k_value)
-    other_rows = [r for r in rest if k_value(r) is None]
+    halt_rows = sorted([r for r in rest if halt_value(r) is not None],
+                       key=lambda r: -halt_value(r))   # aggressive first
+    other_rows = [r for r in rest
+                  if k_value(r) is None and halt_value(r) is None]
     # Sort other_rows alphabetically for stability.
     other_rows.sort(key=lambda r: r["ablation"])
 
@@ -76,6 +89,16 @@ def main():
         print("  --- compute (force K loops) ---")
         for r in k_rows:
             print(fmt_row(r["ablation"], vals_for(r), deltas_for(r)))
+    if halt_rows:
+        print()
+        print("  --- adaptive halting (early exit at prob_remain <= T) ---")
+        for r in halt_rows:
+            line = fmt_row(r["ablation"], vals_for(r), deltas_for(r))
+            stats = r.get("halt_stats") or {}
+            es = stats.get("mean_expected_steps_global")
+            if es is not None:
+                line += f"   E[steps]={es:.2f}"
+            print(line)
     if other_rows:
         print()
         print("  --- gate overrides ---")
@@ -86,6 +109,8 @@ def main():
     print("Lower mean_loss is better. Delta = ablation − baseline.")
     print("Positive delta = ablation is WORSE than the learned router.")
     print("Near-zero delta on 'shuffle' = router didn't learn meaningful per-token routing.")
+    print("For halt rows: E[steps] is the mean compute spent per token.")
+    print("  Compare against trained max_loops to read off compute saved.")
 
 
 if __name__ == "__main__":

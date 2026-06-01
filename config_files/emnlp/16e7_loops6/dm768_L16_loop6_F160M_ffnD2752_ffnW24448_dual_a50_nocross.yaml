@@ -2851,10 +2851,10 @@ model_raw:
     sequence_length: ${settings.step_profile.sequence_length}
     prediction_key: ${loss_fn.config.prediction_key}
     vocab_size: 50304
-    n_layer: 12
+    n_layer: 16
     n_head_q: 12
     n_head_kv: 12
-    ffn_hidden: 1664
+    ffn_hidden: 2752
     n_embd: 768
     dropout: 0.0
     bias: false
@@ -2890,11 +2890,12 @@ model_raw:
         eps: 1.0e-05
     adaptive_config:
       enable_adaptive: true
-      max_loops: 3
+      max_loops: 6
+      layer_types: ["dual", "dual", "dual", "dual", "dual", "dual", "dual", "dual", "dual", "dual", "dual", "dual", "dual", "dual", "dual", "dual"]
       halt_threshold: 1.00
       ponder_penalty_weight: 0.0
       scheduler_type: "constant"
-      wide_ffn_hidden: 21632
+      wide_ffn_hidden: 24448
       gate_mode: "two_gates"
       gate_init_bias: 0.0
       deep_gate_init_bias: 0.0
@@ -2963,7 +2964,7 @@ evaluation_subscriber:
     global_rank: ${settings.cuda_env.global_rank}
     project: dualcross
     mode: OFFLINE
-    experiment_id: d1280_dual_r70w30d_1728deep_22208wide_12L_loop3_cross_scheduler
+    experiment_id: dm768_L16_loop6_F160M_ffnD2752_ffnW24448_dual_a50_nocross
     directory: ${settings.paths.experiments_root_path}/wandb
     config_file_path: ${settings.config_file_path}
     tokenizer:

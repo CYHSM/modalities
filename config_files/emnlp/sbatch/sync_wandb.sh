@@ -4,7 +4,7 @@ set -u
 SCRATCH_ROOT="/leonardo_scratch/large/userexternal/mfrey000/experiments_emnlp"
 # SCRATCH_ROOT="/leonardo_scratch/large/userexternal/mfrey000"
 WANDB_DIR="${SCRATCH_ROOT}/wandb/wandb"
-TARGET_PROJECT="dualpathflops"
+TARGET_PROJECT="dualfull"
 
 # --- Credentials ---
 if [ -z "${WANDB_API_KEY:-}" ] && ! grep -q "api.wandb.ai" "$HOME/.netrc" 2>/dev/null; then

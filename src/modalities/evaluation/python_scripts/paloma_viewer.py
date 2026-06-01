@@ -2,27 +2,20 @@
 """
 Generate a single-file interactive HTML viewer from paloma_diagnostics parquets.
 
-Section 5 (POS analysis) now has three subsections:
-  5a — POS × layer heatmap with a metric dropdown (the main "is there
-       structure?" view). Layer-collapsed averages hide most of the signal,
-       so this is what you want to look at first.
-  5b — POS-only bars averaged across ALL layers (the original §5 view).
-       Useful as a contrast to show what's lost by collapsing layers.
-  5c — POS-only bars for a SINGLE selected layer, with a layer dropdown.
-       Useful for drilling into a layer flagged by the heatmap.
-
-Per-layer POS aggregates are stored as:
-    pos.by_pos_layer_mean[metric][tag] = [n_layers values]
-    pos.by_pos_layer_max [metric][tag] = [n_layers values]
-plus pos.n_words_per_pos[tag] for sample size.
+This version includes:
+  - Event-Aligned Trajectories (§1b) with dynamic anchor selection.
+  - Cross-Source Aligned Difference (§1c).
+  - Before vs. After Pivot Slopegraphs (§1d) - Summary and Per-Layer.
+  - The "Sequence Routing Grid" (§4b) heatmap.
+  - The cross-layer "mean" view in the token explorer.
 """
 
 import argparse
 import base64
 import json
 import random
-from collections import Counter
 from pathlib import Path
+from collections import Counter
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -63,37 +56,37 @@ def _hist(arr, bins, range_):
     return {"counts": counts.tolist(), "edges": edges.tolist()}
 
 
-def aggregate_source(rows, n_layer, max_loops, pos_map=None, source_name="?"):
-    gd = _stack_3d(rows, "gate_deep")            # (L, total_T)
+def aggregate_source(rows, n_layer, max_loops, pos_map=None, source_name="?", tokenizer=None, align_strings=None):
+    """Build the per-source aggregate payload."""
+    if align_strings is None:
+        align_strings = ["Answer"]
+
+    gd = _stack_3d(rows, "gate_deep")        # (L, total_T)
     gw = _stack_3d(rows, "gate_wide")
     es = _stack_3d(rows, "expected_steps")
     dd = _stack_3d(rows, "delta_deep_norm")
     dw = _stack_3d(rows, "delta_wide_norm")
-    dc = _stack_3d(rows, "delta_cos_sim")
-    cwd = _stack_3d(rows, "cross_w2d_norm")
-    cdw = _stack_3d(rows, "cross_d2w_norm")
     ld = _stack_3d(rows, "loop_displacement")
     loss = _flat_1d(rows, "loss")
 
     if gd is not None and gw is not None:
         denom = (gd + gw)
         denom = np.where(denom < 1e-6, 1e-6, denom)
-        gdr = gd / denom
+        gate_pref = gd / denom
     else:
-        gdr = None
+        gate_pref = None
 
     if gd is not None and dd is not None:
         d_c = gd * dd
         w_c = gw * dw
         denom = d_c + w_c
         denom = np.where(denom < 1e-6, 1e-6, denom)
-        dcs = d_c / denom
+        update_pref = d_c / denom
     else:
-        dcs = None
+        update_pref = None
 
     halt = np.stack([np.array(r["step_halt_probs"], dtype=np.float32) for r in rows])
     halt_mean = halt.mean(axis=0)
-    loop_scales = np.stack([np.array(r["step_loop_scales"], dtype=np.float32) for r in rows]).mean(axis=0)
     step_disp = np.stack([np.array(r["step_displacement"], dtype=np.float32) for r in rows]).mean(axis=0)
 
     summary = {
@@ -101,48 +94,120 @@ def aggregate_source(rows, n_layer, max_loops, pos_map=None, source_name="?"):
         "n_tokens": int(gd.shape[1]) if gd is not None else 0,
         "mean_gate_deep": _safe_mean(gd),
         "mean_gate_wide": _safe_mean(gw),
-        "mean_gate_deep_relative": _safe_mean(gdr),
-        "mean_deep_contribution_share": _safe_mean(dcs),
+        "mean_gate_pref": _safe_mean(gate_pref),
+        "mean_update_pref": _safe_mean(update_pref),
         "mean_expected_steps": _safe_mean(es),
         "mean_loop_displacement": _safe_mean(ld),
         "mean_loss": float(np.nanmean(loss)) if loss is not None else None,
-        "mean_delta_cos_sim": _safe_mean(dc),
     }
 
     per_layer = {
         "gate_deep": _safe_mean(gd, axis=1),
         "gate_wide": _safe_mean(gw, axis=1),
-        "gate_deep_relative": _safe_mean(gdr, axis=1),
-        "deep_contribution_share": _safe_mean(dcs, axis=1),
+        "gate_pref": _safe_mean(gate_pref, axis=1),
+        "update_pref": _safe_mean(update_pref, axis=1),
         "expected_steps": _safe_mean(es, axis=1),
         "loop_displacement": _safe_mean(ld, axis=1),
-        "delta_deep_norm": _safe_mean(dd, axis=1),
-        "delta_wide_norm": _safe_mean(dw, axis=1),
-        "delta_cos_sim": _safe_mean(dc, axis=1),
-        "cross_w2d_norm": _safe_mean(cwd, axis=1),
-        "cross_d2w_norm": _safe_mean(cdw, axis=1),
         "halt_probs": halt_mean.tolist(),
-        "loop_scales": loop_scales.tolist(),
         "step_displacement": step_disp.tolist(),
     }
 
     hist = {
-        "gate_deep": _hist(gd.ravel() if gd is not None else None, 40, (0.0, 1.0)),
-        "gate_wide": _hist(gw.ravel() if gw is not None else None, 40, (0.0, 1.0)),
-        "gate_deep_relative": _hist(gdr.ravel() if gdr is not None else None, 40, (0.0, 1.0)),
-        "deep_contribution_share": _hist(dcs.ravel() if dcs is not None else None, 40, (0.0, 1.0)),
+        "gate_pref":   _hist(gate_pref.ravel()   if gate_pref   is not None else None, 40, (0.0, 1.0)),
+        "update_pref": _hist(update_pref.ravel() if update_pref is not None else None, 40, (0.0, 1.0)),
+        "gate_deep":   _hist(gd.ravel() if gd is not None else None, 40, (0.0, 1.0)),
+        "gate_wide":   _hist(gw.ravel() if gw is not None else None, 40, (0.0, 1.0)),
         "expected_steps": _hist(es.ravel() if es is not None else None, 40, (0.0, float(max_loops))),
-        "loop_displacement": _hist(ld.ravel() if ld is not None else None, 40, (0.0, 2.0)),
-        "delta_cos_sim": _hist(dc.ravel() if dc is not None else None, 40, (-1.0, 1.0)),
         "loss": _hist(loss, 40, (0.0, 15.0)),
     }
 
-    per_layer_hist_gate = []
-    per_layer_hist_steps = []
-    if gd is not None:
-        for li in range(gd.shape[0]):
-            per_layer_hist_gate.append(_hist(gd[li], 30, (0.0, 1.0)))
-            per_layer_hist_steps.append(_hist(es[li], 30, (0.0, float(max_loops))))
+    # ---- Event-Aligned Trajectories (Tracking Tokens + Trajectories) ----
+    aligned_data = {}
+    if tokenizer is not None and update_pref is not None:
+        WINDOW = 25 # Look 25 tokens before and after
+        
+        for anchor in align_strings:
+            aligned_sums = {l: {offset: 0.0 for offset in range(-WINDOW, WINDOW+1)} for l in range(n_layer)}
+            aligned_counts = {l: {offset: 0 for offset in range(-WINDOW, WINDOW+1)} for l in range(n_layer)}
+            aligned_samples = {l: [] for l in range(n_layer)}
+            token_counters = {offset: Counter() for offset in range(-WINDOW, WINDOW+1)}
+            
+            MAX_SAMPLES = 50
+            current_t = 0
+            
+            for chunk_idx, r in enumerate(rows):
+                ids = r["tokens"]
+                T = len(ids)
+                
+                # Find the first token containing the anchor string
+                anchor_idx = -1
+                for i, tid in enumerate(ids):
+                    try:
+                        token_str = tokenizer.decode([tid])
+                        if anchor in token_str:
+                            anchor_idx = i
+                            break
+                    except:
+                        pass
+                
+                if anchor_idx != -1:
+                    chunk_upref = update_pref[:, current_t : current_t + T]
+                    
+                    # Track actual string values at each offset
+                    for i, tid in enumerate(ids):
+                        offset = i - anchor_idx
+                        if -WINDOW <= offset <= WINDOW:
+                            try:
+                                tstr = tokenizer.decode([tid]).replace('\n', '↵')
+                                token_counters[offset][tstr] += 1
+                            except:
+                                pass
+                            
+                    # Track numerical trajectories
+                    for l in range(n_layer):
+                        sample_arr = [None] * (2 * WINDOW + 1)
+                        has_data = False
+                        for i in range(T):
+                            offset = i - anchor_idx
+                            if -WINDOW <= offset <= WINDOW:
+                                val = float(chunk_upref[l, i])
+                                aligned_sums[l][offset] += val
+                                aligned_counts[l][offset] += 1
+                                sample_arr[offset + WINDOW] = val
+                                has_data = True
+                        if has_data and len(aligned_samples[l]) < MAX_SAMPLES:
+                            aligned_samples[l].append([round(v, 3) if v is not None else None for v in sample_arr])
+                current_t += T
+                
+            # Finalize means
+            aligned_means = []
+            for l in range(n_layer):
+                layer_means = []
+                for offset in range(-WINDOW, WINDOW+1):
+                    c = aligned_counts[l][offset]
+                    if c >= 3:
+                        layer_means.append(round(aligned_sums[l][offset] / c, 3))
+                    else:
+                        layer_means.append(None)
+                aligned_means.append(layer_means)
+                
+            # Finalize token frequency strings for hover
+            top_tokens_list = []
+            for offset in range(-WINDOW, WINDOW+1):
+                c = token_counters[offset]
+                if not c:
+                    top_tokens_list.append("n/a")
+                else:
+                    total = sum(c.values())
+                    top = c.most_common(4)
+                    top_str = ", ".join([f"'{k}' ({int(100*v/total)}%)" for k, v in top])
+                    top_tokens_list.append(top_str)
+                    
+            aligned_data[anchor] = {
+                "means": aligned_means,
+                "samples": aligned_samples,
+                "top_tokens": top_tokens_list
+            }
 
     # ---- POS-grouped aggregates ----
     pos_agg = None
@@ -158,8 +223,6 @@ def aggregate_source(rows, n_layer, max_loops, pos_map=None, source_name="?"):
                 pos_flat.extend(tags)
         pos_arr = np.array(pos_flat)
 
-        # Build word groups (consecutive same-tag tokens become one word,
-        # except PUNCT/SYM/SPECIAL which stay one-per-word).
         pos_for_split = pos_arr.copy()
         punct_mask = np.isin(pos_for_split, ["PUNCT", "SYM", "SPECIAL"])
         if len(pos_for_split) > 0:
@@ -180,35 +243,19 @@ def aggregate_source(rows, n_layer, max_loops, pos_map=None, source_name="?"):
             ends_arr = np.array([], dtype=np.int64)
             tags_per_group = np.array([], dtype=object)
 
-        # Metrics that DO have a layer axis -> per-layer-per-POS aggregates.
-        # We compute per-word mean and max separately at each layer; the word
-        # group boundaries are identical across layers because POS doesn't
-        # change with layer, so the same starts/ends array applies.
-        #
-        # The 'per-layer' metrics here are exactly the ones in `per_layer`
-        # above that have an L axis. Loss has no L axis so it stays
-        # POS-only (handled below).
         layered_metrics_full = {
-            "gate_deep_relative":      gdr,   # (L, total_T)
-            "deep_contribution_share": dcs,
-            "expected_steps":          es,
-            "loop_displacement":       ld,
-            "delta_cos_sim":           dc,
-            "delta_deep_norm":         dd,
-            "delta_wide_norm":         dw,
-            "gate_deep":               gd,
-            "gate_wide":               gw,
+            "gate_pref":         gate_pref,
+            "update_pref":       update_pref,
+            "expected_steps":    es,
+            "loop_displacement": ld,
+            "gate_deep":         gd,
+            "gate_wide":         gw,
         }
 
-        # ---- Per-word aggregates at each layer ----
-        # For each layer, compute per-word mean and max via reduceat, just
-        # like the existing single-layer code does. We end up with
-        # by_pos_layer_<agg>[metric][tag] = list of n_layer values.
         n_layers_actual = gd.shape[0] if gd is not None else n_layer
         lengths = (ends_arr - starts_arr).astype(np.float32) if len(starts_arr) > 0 else np.array([])
 
         def per_word_reduce(flat_1d):
-            """Given (total_T,) array, return per-word (mean, max) over word groups."""
             if len(starts_arr) == 0:
                 return np.array([]), np.array([])
             safe = np.where(np.isfinite(flat_1d), flat_1d, 0.0)
@@ -219,117 +266,69 @@ def aggregate_source(rows, n_layer, max_loops, pos_map=None, source_name="?"):
             maxes = np.where(np.isinf(maxes), np.nan, maxes)
             return means.astype(np.float32), maxes.astype(np.float32)
 
-        # Also need loss handled per-POS (single value per token, no layer axis).
-        loss_means_per_word = loss_maxes_per_word = None
-        if loss is not None and len(starts_arr) > 0:
-            loss_means_per_word, loss_maxes_per_word = per_word_reduce(loss)
+        unique_tags = sorted(set(tags_per_group.tolist())) if len(tags_per_group) else []
+        by_pos_layer_mean = {}
+        by_pos_layer_max = {}
+        for metric_name, full_arr in layered_metrics_full.items():
+            per_tag_layers_mean = {tag: [None] * n_layers_actual for tag in unique_tags}
+            per_tag_layers_max  = {tag: [None] * n_layers_actual for tag in unique_tags}
+            for li in range(n_layers_actual):
+                layer_vals = full_arr[li]
+                word_means, word_maxes = per_word_reduce(layer_vals)
+                for tag in unique_tags:
+                    mask = (tags_per_group == tag)
+                    if mask.sum() == 0:
+                        continue
+                    with np.errstate(all="ignore"):
+                        per_tag_layers_mean[tag][li] = float(np.nanmean(word_means[mask]))
+                        per_tag_layers_max [tag][li] = float(np.nanmean(word_maxes[mask]))
+            by_pos_layer_mean[metric_name] = per_tag_layers_mean
+            by_pos_layer_max [metric_name] = per_tag_layers_max
 
-        # Token-collapsed-over-layers version for the layer-averaged §5b view.
-        # We compute this per-word by averaging the metric across layers FIRST
-        # (giving one value per token), then aggregating per-word. That matches
-        # how the original §5 worked.
-        if gd is not None and len(starts_arr) > 0:
-            buckets_mean = {}   # for §5b
-            buckets_max = {}
-
-            # Per-token average across layers, for each metric.
-            tok_collapsed = {
-                "gate_deep_relative":      np.nanmean(gdr, axis=0),
-                "deep_contribution_share": np.nanmean(dcs, axis=0),
-                "expected_steps":          np.nanmean(es,  axis=0),
-                "loop_displacement":       np.nanmean(ld,  axis=0),
-                "delta_cos_sim":           np.nanmean(dc,  axis=0),
-                "delta_deep_norm":         np.nanmean(dd,  axis=0),
-                "delta_wide_norm":         np.nanmean(dw,  axis=0),
-            }
-            collapsed_means = {}
-            collapsed_maxes = {}
-            for name, tok_vals in tok_collapsed.items():
-                m, mx = per_word_reduce(tok_vals)
-                collapsed_means[name] = m
-                collapsed_maxes[name] = mx
-
-            unique_tags = sorted(set(tags_per_group.tolist()))
+        decisive = {} 
+        if update_pref is not None and len(starts_arr) > 0:
+            per_word_per_layer = np.empty((n_layers_actual, len(starts_arr)), dtype=np.float32)
+            for li in range(n_layers_actual):
+                wm, _ = per_word_reduce(update_pref[li])
+                per_word_per_layer[li] = wm
+            score = np.abs(per_word_per_layer - 0.5)
+            score = np.where(np.isfinite(score), score, -np.inf)
+            decisive_layer_per_word = score.argmax(axis=0) 
+            wcols = np.arange(per_word_per_layer.shape[1])
+            pref_at_decisive = per_word_per_layer[decisive_layer_per_word, wcols]
             for tag in unique_tags:
                 mask = (tags_per_group == tag)
                 n = int(mask.sum())
+                if n == 0:
+                    continue
                 with np.errstate(all="ignore"):
-                    buckets_mean[tag] = {
+                    decisive[tag] = {
+                        "mean_pref_at_decisive": float(np.nanmean(pref_at_decisive[mask])),
+                        "mean_decisive_layer":   float(np.nanmean(decisive_layer_per_word[mask])),
                         "n_words": n,
-                        "gate_deep_relative":      float(np.nanmean(collapsed_means["gate_deep_relative"][mask])),
-                        "deep_contribution_share": float(np.nanmean(collapsed_means["deep_contribution_share"][mask])),
-                        "expected_steps":          float(np.nanmean(collapsed_means["expected_steps"][mask])),
-                        "loop_displacement":       float(np.nanmean(collapsed_means["loop_displacement"][mask])),
-                        "delta_cos_sim":           float(np.nanmean(collapsed_means["delta_cos_sim"][mask])),
-                        "delta_deep_norm":         float(np.nanmean(collapsed_means["delta_deep_norm"][mask])),
-                        "delta_wide_norm":         float(np.nanmean(collapsed_means["delta_wide_norm"][mask])),
-                        "loss": float(np.nanmean(loss_means_per_word[mask])) if loss_means_per_word is not None else None,
                     }
-                    buckets_max[tag] = {
-                        "n_words": n,
-                        "gate_deep_relative":      float(np.nanmean(collapsed_maxes["gate_deep_relative"][mask])),
-                        "deep_contribution_share": float(np.nanmean(collapsed_maxes["deep_contribution_share"][mask])),
-                        "expected_steps":          float(np.nanmean(collapsed_maxes["expected_steps"][mask])),
-                        "loop_displacement":       float(np.nanmean(collapsed_maxes["loop_displacement"][mask])),
-                        "delta_cos_sim":           float(np.nanmean(collapsed_maxes["delta_cos_sim"][mask])),
-                        "delta_deep_norm":         float(np.nanmean(collapsed_maxes["delta_deep_norm"][mask])),
-                        "delta_wide_norm":         float(np.nanmean(collapsed_maxes["delta_wide_norm"][mask])),
-                        "loss": float(np.nanmean(loss_maxes_per_word[mask])) if loss_maxes_per_word is not None else None,
-                    }
-
-            # ---- Per-layer-per-POS aggregates (§5a heatmap & §5c bars) ----
-            # For each (metric, layer), compute per-word reductions then group
-            # by tag. End up with:
-            #   by_pos_layer_mean[metric][tag] = [val_layer_0, ..., val_layer_L-1]
-            # This is the dataset for the heatmap.
-            by_pos_layer_mean = {}
-            by_pos_layer_max  = {}
-            for metric_name, full_arr in layered_metrics_full.items():
-                # full_arr shape (L, total_T)
-                per_tag_layers_mean = {tag: [None] * n_layers_actual for tag in unique_tags}
-                per_tag_layers_max  = {tag: [None] * n_layers_actual for tag in unique_tags}
-                for li in range(n_layers_actual):
-                    layer_vals = full_arr[li]  # (total_T,)
-                    word_means, word_maxes = per_word_reduce(layer_vals)
-                    for tag in unique_tags:
-                        mask = (tags_per_group == tag)
-                        if mask.sum() == 0:
-                            continue
-                        with np.errstate(all="ignore"):
-                            per_tag_layers_mean[tag][li] = float(np.nanmean(word_means[mask]))
-                            per_tag_layers_max [tag][li] = float(np.nanmean(word_maxes[mask]))
-                by_pos_layer_mean[metric_name] = per_tag_layers_mean
-                by_pos_layer_max [metric_name] = per_tag_layers_max
-        else:
-            buckets_mean = {}
-            buckets_max = {}
-            by_pos_layer_mean = {}
-            by_pos_layer_max = {}
 
         coverage = float(np.mean(np.isin(pos_arr, ["UNKNOWN", "SPECIAL"], invert=True)))
 
-        # Word counts per POS (sample size; used to grey out sparse cells).
         n_words_per_pos = {}
         if len(tags_per_group) > 0:
-            for tag in sorted(set(tags_per_group.tolist())):
+            for tag in unique_tags:
                 n_words_per_pos[tag] = int((tags_per_group == tag).sum())
 
         pos_agg = {
             "coverage": coverage,
-            "by_pos_mean": buckets_mean,                 # §5b (layer-averaged)
-            "by_pos_max":  buckets_max,
-            "by_pos_layer_mean": by_pos_layer_mean,      # §5a, §5c (per-layer)
+            "by_pos_layer_mean": by_pos_layer_mean,
             "by_pos_layer_max":  by_pos_layer_max,
             "n_words_per_pos": n_words_per_pos,
+            "decisive": decisive,
         }
 
     return {
         "summary": summary,
         "per_layer": per_layer,
         "hist": hist,
-        "per_layer_hist_gate": per_layer_hist_gate,
-        "per_layer_hist_steps": per_layer_hist_steps,
         "pos": pos_agg,
+        "aligned": aligned_data,
     }
 
 
@@ -364,6 +363,10 @@ def main():
     ap.add_argument("--skip-sources", nargs="*", default=None)
     ap.add_argument("--max-chunks-per-source", type=int, default=0)
     ap.add_argument("--seed", type=int, default=0)
+    
+    # Allow user to define alignment strings from command line
+    ap.add_argument("--align-strings", nargs="+", default=["Answer", "Question", ":", "####"])
+    
     args = ap.parse_args()
 
     in_dir = Path(args.in_dir)
@@ -421,14 +424,15 @@ def main():
             print(f"[{source}]   no POS sidecar found", flush=True)
 
         agg = aggregate_source(rows, n_layer, max_loops, pos_map=pos_map,
-                               source_name=source)
+                               source_name=source, tokenizer=tokenizer, 
+                               align_strings=args.align_strings)
 
         sample = sample_chunks_for_explorer(rows, args.n_explorer_chunks, rng)
 
         N_TOK = args.n_explorer_tokens
         per_layer_keys = ("gate_deep", "gate_wide", "expected_steps",
-                          "delta_deep_norm", "delta_wide_norm", "delta_cos_sim",
-                          "cross_w2d_norm", "cross_d2w_norm", "loop_displacement")
+                          "delta_deep_norm", "delta_wide_norm",
+                          "loop_displacement")
         per_tok_keys = ("loss", "tokens")
 
         for chunk in sample:
@@ -460,9 +464,13 @@ def main():
                     chunk[k] = [[round(x, 3) if x is not None and np.isfinite(x) else None for x in row] for row in val]
                 else:
                     chunk[k] = [round(x, 3) if x is not None and np.isfinite(x) else None for x in val]
+            
             chunk.pop("step_halt_probs", None)
             chunk.pop("step_loop_scales", None)
             chunk.pop("step_displacement", None)
+            chunk.pop("cross_w2d_norm", None)
+            chunk.pop("cross_d2w_norm", None)
+            chunk.pop("delta_cos_sim", None)
 
         sources_data[source] = {
             "agg": agg,
@@ -568,10 +576,7 @@ section h2 {
   color: var(--muted);
   margin: 0 0 4px;
 }
-section h2 .num {
-  color: var(--accent);
-  margin-right: 8px;
-}
+section h2 .num { color: var(--accent); margin-right: 8px; }
 section h3 {
   font-family: var(--serif);
   font-weight: 400;
@@ -615,10 +620,10 @@ section h3 {
 }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .chart { height: 320px; }
 .chart-tall { height: 420px; }
 .chart-heatmap { height: 520px; }
-.chart-small { height: 240px; }
 .token-text {
   font-family: var(--mono);
   font-size: 14px;
@@ -631,16 +636,8 @@ section h3 {
   max-height: 480px;
   overflow-y: auto;
 }
-.tok {
-  padding: 1px 1px;
-  border-radius: 2px;
-  cursor: pointer;
-  transition: outline 0.05s;
-}
-.tok:hover, .tok.selected {
-  outline: 1.5px solid var(--accent);
-  outline-offset: 0px;
-}
+.tok { padding: 1px 1px; border-radius: 2px; cursor: pointer; transition: outline 0.05s; }
+.tok:hover, .tok.selected { outline: 1.5px solid var(--accent); outline-offset: 0px; }
 .detail-panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -650,12 +647,8 @@ section h3 {
   min-height: 200px;
 }
 .detail-panel h4 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
+  margin: 0 0 8px; font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
 }
 .detail-panel table { width: 100%; border-collapse: collapse; font-size: 11px; }
 .detail-panel th, .detail-panel td {
@@ -690,12 +683,15 @@ section h3 {
   gap: 20px;
 }
 @media (max-width: 1000px) {
-  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   .token-explorer-layout { grid-template-columns: 1fr; }
 }
-.note {
-  font-style: italic; color: var(--muted); font-size: 13px; margin: 4px 0 16px;
+.note { font-style: italic; color: var(--muted); font-size: 13px; margin: 4px 0 16px; }
+.glossary {
+  background: var(--panel); border-left: 3px solid var(--accent);
+  padding: 12px 16px; font-size: 13px; margin: 0 0 24px;
 }
+.glossary code { font-family: var(--mono); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -707,19 +703,77 @@ section h3 {
 
 <main>
 
+<div class="glossary">
+  <strong>Two preference metrics:</strong>
+  <code>gate_pref = g_d / (g_d + g_w)</code> &nbsp;— what the router intended (gate-only).
+  <code>update_pref = g_d·‖Δd‖ / (g_d·‖Δd‖ + g_w·‖Δw‖)</code> &nbsp;— what the residual
+  stream actually got (accounts for both gate openness and path output magnitude).
+  Both range [0, 1]; 0 = wide, 1 = deep, 0.5 = balanced.
+</div>
+
 <section>
   <h2><span class="num">§1</span> cross-source overview</h2>
   <h3>How does the model route across Paloma sources?</h3>
-  <p class="note">Each bar is the mean over all tokens in that source, aggregated across all layers and all chunks.</p>
+  <p class="note">Each bar is the mean over all tokens in that source, all layers, all chunks.</p>
   <div class="grid-3">
-    <div id="overview-gate" class="chart"></div>
+    <div id="overview-update-pref" class="chart"></div>
     <div id="overview-steps" class="chart"></div>
     <div id="overview-loss" class="chart"></div>
   </div>
-  <div class="grid-3">
-    <div id="overview-loop-disp" class="chart"></div>
-    <div></div>
-    <div></div>
+</section>
+
+<section>
+  <h2><span class="num">§1b</span> event-aligned trajectories</h2>
+  <h3>How does routing shift before, during, and after a specific string?</h3>
+  <div class="controls">
+    <label>source</label> <select id="source-select-aligned"></select>
+    <label>align to</label> <select id="anchor-select"></select>
+    <label><input type="checkbox" id="show-samples-toggle"> show individual sample lines</label>
+  </div>
+  <div id="aligned-plot" class="chart-tall"></div>
+  <p class="note">X-axis is relative position to the alignment token (0 = match). Hover over any point on the line to see the <strong>actual tokens</strong> most frequently processed at that offset.</p>
+</section>
+
+<section>
+  <h2><span class="num">§1c</span> cross-source aligned difference</h2>
+  <h3>Isolating cognitive bottlenecks by subtracting trajectories (A - B).</h3>
+  <div class="controls">
+    <label>source A (positive)</label> <select id="source-diff-a"></select>
+    <label>source B (negative)</label> <select id="source-diff-b"></select>
+    <label>align to</label> <select id="anchor-select-diff"></select>
+  </div>
+  <div id="aligned-diff-plot" class="chart-tall"></div>
+  <p class="note">Y-axis shows <code>update_pref(A) - update_pref(B)</code>. >0 means Source A uses more Deep path. <0 means Source B uses more Deep path. This perfectly isolates task-specific routing by cancelling out shared structural attention spikes.</p>
+</section>
+
+<section>
+  <h2><span class="num">§1d</span> before vs. after pivot</h2>
+  <h3>How does the cognitive load shift pre- and post-answer across all sources?</h3>
+  <div class="controls">
+    <label>align to</label> <select id="anchor-select-bva"></select>
+    <label>window size</label>
+    <select id="bva-window">
+      <option value="3">3 tokens</option>
+      <option value="5" selected>5 tokens</option>
+      <option value="10">10 tokens</option>
+    </select>
+  </div>
+  <p class="note">Averages the selected window of tokens immediately before the pivot, and the window immediately after the pivot. Slope indicates shift in cognitive load.</p>
+  
+  <div class="subsection">
+    <h4>Summary Panels</h4>
+    <div id="bva-summary-grid" class="grid-4">
+       <div id="bva-sum-overall" class="chart"></div>
+       <div id="bva-sum-early" class="chart"></div>
+       <div id="bva-sum-mid" class="chart"></div>
+       <div id="bva-sum-late" class="chart"></div>
+    </div>
+  </div>
+  
+  <div class="subsection">
+    <h4>Per-Layer Panels</h4>
+    <div id="bva-layer-grid" class="grid-4" style="margin-top: 16px;">
+       </div>
   </div>
 </section>
 
@@ -731,15 +785,16 @@ section h3 {
     <select id="source-select-2"></select>
   </div>
   <div class="kpis" id="source-kpis"></div>
-  <div class="grid-3">
-    <div id="hist-gate" class="chart"></div>
-    <div id="hist-steps" class="chart"></div>
-    <div id="hist-cos" class="chart"></div>
-  </div>
   <div class="grid-2">
-    <div id="hist-loss" class="chart"></div>
-    <div id="hist-gate-wide" class="chart"></div>
+    <div id="hist-update-pref" class="chart"></div>
+    <div id="hist-gate-pref" class="chart"></div>
   </div>
+  <div class="grid-3">
+    <div id="hist-gate-deep" class="chart"></div>
+    <div id="hist-gate-wide" class="chart"></div>
+    <div id="hist-steps" class="chart"></div>
+  </div>
+  <div id="hist-loss" class="chart"></div>
 </section>
 
 <section>
@@ -751,23 +806,15 @@ section h3 {
   </div>
   <div class="grid-2">
     <div id="layer-gate" class="chart"></div>
-    <div id="layer-steps" class="chart"></div>
-  </div>
-  <div class="grid-2">
-    <div id="layer-loop-disp" class="chart"></div>
     <div id="layer-preference" class="chart"></div>
   </div>
   <div class="grid-2">
-    <div id="layer-delta" class="chart"></div>
-    <div id="layer-cos" class="chart"></div>
+    <div id="layer-steps" class="chart"></div>
+    <div id="layer-loop-disp" class="chart"></div>
   </div>
   <div class="grid-2">
-    <div id="layer-cross" class="chart"></div>
     <div id="halt-curves" class="chart-tall"></div>
-  </div>
-  <div class="grid-2">
     <div id="step-disp-curves" class="chart-tall"></div>
-    <div></div>
   </div>
 </section>
 
@@ -779,10 +826,9 @@ section h3 {
     <label>chunk</label> <select id="chunk-select"></select>
     <label>color by</label>
     <select id="color-metric">
-      <optgroup label="preference (diverging deep↔wide)">
-        <option value="gate_deep_relative" selected>gate_deep_relative</option>
-        <option value="deep_contribution_share">deep_contribution_share</option>
-        <option value="delta_cos_sim">delta_cos_sim (path agreement)</option>
+      <optgroup label="preference (diverging deep ↔ wide)">
+        <option value="update_pref" selected>update_pref (actual update share)</option>
+        <option value="gate_pref">gate_pref (gate-only)</option>
       </optgroup>
       <optgroup label="raw gates (sequential)">
         <option value="gate_deep">gate_deep</option>
@@ -790,20 +836,18 @@ section h3 {
       </optgroup>
       <optgroup label="compute / loop">
         <option value="expected_steps">expected_steps</option>
-        <option value="loop_displacement">loop_displacement (did loop work?)</option>
+        <option value="loop_displacement">loop_displacement</option>
       </optgroup>
-      <optgroup label="updates / loss">
+      <optgroup label="loss">
         <option value="loss">loss</option>
-        <option value="delta_deep_norm">delta_deep_norm</option>
-        <option value="delta_wide_norm">delta_wide_norm</option>
       </optgroup>
       <optgroup label="POS (categorical)">
-        <option value="pos">pos (categorical color)</option>
+        <option value="pos">pos</option>
       </optgroup>
     </select>
     <label>layer</label>
     <select id="layer-select"></select>
-    <label><input type="checkbox" id="show-pos-toggle"> show POS</label>
+    <label><input type="checkbox" id="show-pos-toggle"> show POS subscripts</label>
     <span class="legend" id="color-legend"></span>
   </div>
   <div class="token-explorer-layout">
@@ -816,12 +860,27 @@ section h3 {
 </section>
 
 <section>
+  <h2><span class="num">§4b</span> sequence routing grid</h2>
+  <h3>How does routing evolve across layers for the selected chunk?</h3>
+  <div class="controls">
+    <label>metric</label>
+    <select id="grid-metric">
+      <option value="update_pref" selected>update_pref (actual update share)</option>
+      <option value="gate_pref">gate_pref (gate-only)</option>
+    </select>
+  </div>
+  <div id="routing-grid" class="chart" style="height: 400px;"></div>
+  <p class="note">X-axis: Tokens from the chunk selected in §4. Y-axis: Layer depth. Colors map to the diagram: <strong style="color: #2a4d6e;">Teal = Deep</strong>, <strong style="color: #b6533a;">Rust = Wide</strong>.</p>
+</section>
+
+<section>
   <h2><span class="num">§5</span> POS analysis</h2>
   <h3>Function vs content words — does the router actually care about syntax?</h3>
-  <p class="note">UPOS tags from spaCy, aligned to subword tokens. Multi-token
-    words can be aggregated by <em>mean</em> (average compute the word received)
-    or <em>max</em> (peak compute triggered by any subword). For non-English
-    or code-heavy sources, POS tags are unreliable — see coverage below.</p>
+  <p class="note">UPOS tags from spaCy (with a math-aware override for gsm8k),
+    aligned to subword tokens. Multi-token words can be aggregated by
+    <em>mean</em> (average compute the word received) or <em>max</em> (peak
+    compute triggered by any subword). For non-English or heavily-symbolic
+    sources, POS tags are unreliable — check coverage below.</p>
   <div class="controls">
     <label>source</label> <select id="source-select-5"></select>
     <label>aggregation</label>
@@ -833,46 +892,27 @@ section h3 {
           id="pos-coverage"></span>
   </div>
 
-  <!-- §5a: POS × layer heatmap with metric dropdown -->
   <div class="subsection">
     <h4>§5a — POS × layer heatmap</h4>
-    <h5>The averaging across layers in §5b hides most of the signal. Here it isn't averaged.</h5>
+    <h5>For each POS tag, the chosen metric at every layer. Layer-averaging
+      hides most of the signal — this view doesn't average.</h5>
     <div class="controls">
       <label>metric</label>
       <select id="pos-heatmap-metric">
-        <option value="gate_deep_relative" selected>gate_deep_relative</option>
-        <option value="deep_contribution_share">deep_contribution_share</option>
-        <option value="expected_steps">expected_steps</option>
-        <option value="loop_displacement">loop_displacement</option>
-        <option value="delta_cos_sim">delta_cos_sim</option>
-        <option value="delta_deep_norm">delta_deep_norm</option>
-        <option value="delta_wide_norm">delta_wide_norm</option>
+        <option value="update_pref" selected>update_pref</option>
+        <option value="gate_pref">gate_pref</option>
         <option value="gate_deep">gate_deep</option>
         <option value="gate_wide">gate_wide</option>
+        <option value="expected_steps">expected_steps</option>
+        <option value="loop_displacement">loop_displacement</option>
       </select>
       <span class="legend" id="pos-heatmap-legend"></span>
     </div>
     <div id="pos-heatmap" class="chart-heatmap"></div>
     <p class="note">Cell value = mean over all words tagged that POS, at that layer.
-      Hover for exact value and word count. Tags with fewer than 3 words are dropped.</p>
+      Tags with fewer than 10 words in the source are dropped.</p>
   </div>
 
-  <!-- §5b: averaged-across-layers bars (the original §5 view) -->
-  <div class="subsection">
-    <h4>§5b — averaged across all layers</h4>
-    <h5>What the §5a heatmap collapses to if you average over the layer axis.
-      Useful only as a contrast — most POS effects are layer-specific.</h5>
-    <div class="grid-2">
-      <div id="pos-bar-dcs" class="chart-tall"></div>
-      <div id="pos-bar-loopdisp" class="chart-tall"></div>
-    </div>
-    <div class="grid-2">
-      <div id="pos-bar-steps" class="chart-tall"></div>
-      <div id="pos-bar-loss" class="chart-tall"></div>
-    </div>
-  </div>
-
-  <!-- §5c: single-layer bars -->
   <div class="subsection">
     <h4>§5c — single layer</h4>
     <h5>Drill into a single layer. Use this to confirm a row in the §5a heatmap.</h5>
@@ -881,63 +921,49 @@ section h3 {
       <select id="pos-single-layer"></select>
     </div>
     <div class="grid-2">
-      <div id="pos-single-dcs" class="chart-tall"></div>
-      <div id="pos-single-loopdisp" class="chart-tall"></div>
+      <div id="pos-single-update-pref" class="chart-tall"></div>
+      <div id="pos-single-gate-pref" class="chart-tall"></div>
     </div>
     <div class="grid-2">
       <div id="pos-single-steps" class="chart-tall"></div>
-      <div id="pos-single-gdr" class="chart-tall"></div>
+      <div id="pos-single-loopdisp" class="chart-tall"></div>
     </div>
   </div>
-</section>
 
-<section>
-  <h2><span class="num">§6</span> cross-source comparison</h2>
-  <h3>Same heatmap, different sources. Is the routing pattern data-specific or model-specific?</h3>
-  <p class="note">Shared colorscale across all panels so cells are directly comparable.
-    Cells with fewer than 10 words for a (POS, source) are dropped — appears as a grey gap.</p>
-  <div class="controls">
-    <label>metric</label>
-    <select id="pos-compare-metric">
-      <option value="gate_deep_relative" selected>gate_deep_relative</option>
-      <option value="deep_contribution_share">deep_contribution_share</option>
-      <option value="expected_steps">expected_steps</option>
-      <option value="loop_displacement">loop_displacement</option>
-      <option value="delta_cos_sim">delta_cos_sim</option>
-      <option value="delta_deep_norm">delta_deep_norm</option>
-      <option value="delta_wide_norm">delta_wide_norm</option>
-      <option value="gate_deep">gate_deep</option>
-      <option value="gate_wide">gate_wide</option>
-    </select>
-    <label>aggregation</label>
-    <select id="pos-compare-agg">
-      <option value="mean" selected>mean over subwords</option>
-      <option value="max">max over subwords</option>
-    </select>
-  </div>
-
-  <!-- §6a: side-by-side, one heatmap per source -->
   <div class="subsection">
-    <h4>§6a — side-by-side per source</h4>
-    <h5>If the layer pattern is identical across sources, the model has a fixed
-      routing schedule. If POS rows light up differently per source, the model
-      adapts routing to content.</h5>
-    <div id="pos-compare-panels"></div>
-  </div>
-
-  <!-- §6b: difference heatmap -->
-  <div class="subsection">
-    <h4>§6b — difference (A − B)</h4>
-    <h5>Subtraction makes data-specific routing visible. Blue cells: source A
-      routes more deep than B. Red cells: A routes more wide than B.</h5>
+    <h4>§5d — per-POS lines across layers</h4>
+    <h5>One line per POS tag. Shows the trajectory of each tag through the
+      stack — much easier to read than a heatmap row when comparing tags.</h5>
     <div class="controls">
-      <label>source A</label>
-      <select id="pos-diff-a"></select>
-      <label>−</label>
-      <label>source B</label>
-      <select id="pos-diff-b"></select>
+      <label>metric</label>
+      <select id="pos-lines-metric">
+        <option value="update_pref" selected>update_pref</option>
+        <option value="gate_pref">gate_pref</option>
+        <option value="gate_deep">gate_deep</option>
+        <option value="gate_wide">gate_wide</option>
+        <option value="expected_steps">expected_steps</option>
+        <option value="loop_displacement">loop_displacement</option>
+      </select>
+      <span style="color: var(--muted); font-size: 12px;">
+        Click POS names in the legend to toggle.
+      </span>
     </div>
-    <div id="pos-diff-heatmap" class="chart-heatmap"></div>
+    <div id="pos-lines" class="chart-tall"></div>
+  </div>
+
+  <div class="subsection">
+    <h4>§5e — decisive-layer commitment</h4>
+    <h5>For each word, find the layer where the model commits hardest
+      (|update_pref − 0.5| is maximal). Mean over words of that POS tells you
+      <em>which way it commits when it commits hardest</em>, without weak-gating
+      layers dragging the mean toward 0.5.</h5>
+    <div class="grid-2">
+      <div id="decisive-pref" class="chart-tall"></div>
+      <div id="decisive-layer" class="chart-tall"></div>
+    </div>
+    <p class="note">Left: mean signed <code>update_pref</code> at each POS's decisive layer
+      (red = wide, blue = deep, grey horizontal line = 0.5 = balanced).
+      Right: mean layer index at which that decisive moment occurs.</p>
   </div>
 </section>
 
@@ -967,6 +993,9 @@ const PLOT_CONFIG = { displayModeBar: false, responsive: true };
 const COLOR_DEEP = "#2a4d6e";
 const COLOR_WIDE = "#b6533a";
 const COLOR_NEUTRAL = "#6b6b6b";
+const RGB_DEEP    = [42, 77, 110];
+const RGB_WIDE    = [182, 83, 58];
+const RGB_NEUTRAL = [246, 243, 236];
 
 function layoutCopy(extra) {
   return Object.assign({}, JSON.parse(JSON.stringify(PLOT_LAYOUT)), extra || {});
@@ -984,60 +1013,13 @@ function fillMeta() {
 }
 
 // ---------------------------------------------------------------------------
-// §1 Overview bars
+// UI Setup and Plumping
 // ---------------------------------------------------------------------------
-const RGB_DEEP    = [42, 77, 110];
-const RGB_WIDE    = [182, 83, 58];
-const RGB_NEUTRAL = [246, 243, 236];
-
-function drawOverview() {
-  const sources = META.source_order;
-  const dcs = sources.map(s => SOURCES[s].agg.summary.mean_deep_contribution_share);
-  const es = sources.map(s => SOURCES[s].agg.summary.mean_expected_steps);
-  const ld = sources.map(s => SOURCES[s].agg.summary.mean_loop_displacement);
-  const loss = sources.map(s => SOURCES[s].agg.summary.mean_loss);
-
-  const baseBarLayout = (title, range) => layoutCopy({
-    title: { text: title, font: { size: 12 } },
-    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, range ? { range: range } : {}),
-    xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { tickangle: -45, tickfont: { size: 9 } }),
-  });
-
-  const dcs_colors = dcs.map(v => v >= 0.5
-    ? `rgba(${RGB_DEEP[0]},${RGB_DEEP[1]},${RGB_DEEP[2]},${0.4 + (v - 0.5)})`
-    : `rgba(${RGB_WIDE[0]},${RGB_WIDE[1]},${RGB_WIDE[2]},${0.4 + (0.5 - v)})`);
-  Plotly.newPlot("overview-gate", [{
-    type: "bar", x: sources, y: dcs,
-    marker: { color: dcs_colors },
-    hovertemplate: "%{x}<br>deep contrib share: %{y:.3f}<extra></extra>",
-  }], baseBarLayout("mean deep_contribution_share per source (0.5 = balanced)", [0, 1]),
-     PLOT_CONFIG);
-
-  Plotly.newPlot("overview-steps", [{
-    type: "bar", x: sources, y: es,
-    marker: { color: COLOR_NEUTRAL }, hovertemplate: "%{x}<br>expected_steps: %{y:.3f}<extra></extra>",
-  }], baseBarLayout("mean expected_steps per source", [0, META.max_loops]), PLOT_CONFIG);
-
-  Plotly.newPlot("overview-loss", [{
-    type: "bar", x: sources, y: loss,
-    marker: { color: COLOR_WIDE }, hovertemplate: "%{x}<br>loss: %{y:.3f}<extra></extra>",
-  }], baseBarLayout("mean per-token loss per source", null), PLOT_CONFIG);
-
-  const ldEl = document.getElementById("overview-loop-disp");
-  if (ldEl) {
-    Plotly.newPlot("overview-loop-disp", [{
-      type: "bar", x: sources, y: ld,
-      marker: { color: COLOR_DEEP },
-      hovertemplate: "%{x}<br>loop_displacement: %{y:.3f}<extra></extra>",
-    }], baseBarLayout("mean loop_displacement per source — did the loop work?", null),
-       PLOT_CONFIG);
-  }
-}
-
 function fillSourceSelectors() {
-  for (const id of ["source-select-2", "source-select-3", "source-select-4", "source-select-5"]) {
+  for (const id of ["source-select-2", "source-select-3", "source-select-4", "source-select-5", "source-select-aligned", "source-diff-a", "source-diff-b"]) {
     const sel = document.getElementById(id);
     if (!sel) continue;
+    sel.innerHTML = "";
     for (const s of META.source_order) {
       const o = document.createElement("option");
       o.value = s; o.textContent = s;
@@ -1046,15 +1028,71 @@ function fillSourceSelectors() {
   }
 }
 
+function updateAnchorSelector(source) {
+  const sel = document.getElementById("anchor-select");
+  if (!sel) return;
+  sel.innerHTML = "";
+  const anchors = Object.keys(SOURCES[source].agg.aligned || {});
+  if (anchors.length === 0) {
+    const o = document.createElement("option");
+    o.value = ""; o.textContent = "No alignment data";
+    sel.appendChild(o);
+    return;
+  }
+  for (const a of anchors) {
+    const o = document.createElement("option");
+    o.value = a; o.textContent = `"${a}"`;
+    sel.appendChild(o);
+  }
+}
+
+function updateDiffAnchorSelector() {
+  const srcA = document.getElementById("source-diff-a").value;
+  const srcB = document.getElementById("source-diff-b").value;
+  const sel = document.getElementById("anchor-select-diff");
+  if (!sel) return;
+  sel.innerHTML = "";
+  
+  if (!srcA || !srcB) return;
+  const anchorsA = Object.keys(SOURCES[srcA].agg.aligned || {});
+  const anchorsB = Object.keys(SOURCES[srcB].agg.aligned || {});
+  // Find common anchors available in both sources
+  const common = anchorsA.filter(a => anchorsB.includes(a));
+  
+  if (common.length === 0) {
+    const o = document.createElement("option"); o.value = ""; o.textContent = "No shared anchors"; sel.appendChild(o);
+    return;
+  }
+  for (const a of common) {
+    const o = document.createElement("option"); o.value = a; o.textContent = `"${a}"`; sel.appendChild(o);
+  }
+}
+
+function updateBVAAnchorSelector() {
+  const sel = document.getElementById("anchor-select-bva");
+  if (!sel) return;
+  sel.innerHTML = "";
+  const firstSource = META.source_order[0];
+  const anchors = Object.keys(SOURCES[firstSource].agg.aligned || {});
+  for (const a of anchors) {
+    const o = document.createElement("option"); o.value = a; o.textContent = `"${a}"`; sel.appendChild(o);
+  }
+}
+
 function fillLayerSelector() {
   const sel = document.getElementById("layer-select");
+  const meanOpt = document.createElement("option");
+  meanOpt.value = "mean";
+  meanOpt.textContent = "mean (all layers)";
+  sel.appendChild(meanOpt);
+
   for (let i = 0; i < META.n_layer; i++) {
     const o = document.createElement("option");
     o.value = i; o.textContent = "layer " + i;
     sel.appendChild(o);
   }
-  sel.value = Math.floor(META.n_layer / 2);
-  // Also fill the §5c per-layer selector with the same options.
+  sel.value = "mean";
+
   const sel5c = document.getElementById("pos-single-layer");
   if (sel5c) {
     for (let i = 0; i < META.n_layer; i++) {
@@ -1066,6 +1104,265 @@ function fillLayerSelector() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// §1 Overview bars
+// ---------------------------------------------------------------------------
+function drawOverview() {
+  const sources = META.source_order;
+  const upref = sources.map(s => SOURCES[s].agg.summary.mean_update_pref);
+  const es    = sources.map(s => SOURCES[s].agg.summary.mean_expected_steps);
+  const loss  = sources.map(s => SOURCES[s].agg.summary.mean_loss);
+
+  const baseBarLayout = (title, range) => layoutCopy({
+    title: { text: title, font: { size: 12 } },
+    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, range ? { range: range } : {}),
+    xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { tickangle: -45, tickfont: { size: 9 } }),
+  });
+
+  const upref_colors = upref.map(v => v >= 0.5
+    ? `rgba(${RGB_DEEP[0]},${RGB_DEEP[1]},${RGB_DEEP[2]},${0.4 + (v - 0.5)})`
+    : `rgba(${RGB_WIDE[0]},${RGB_WIDE[1]},${RGB_WIDE[2]},${0.4 + (0.5 - v)})`);
+  Plotly.newPlot("overview-update-pref", [{
+    type: "bar", x: sources, y: upref,
+    marker: { color: upref_colors },
+    hovertemplate: "%{x}<br>update_pref: %{y:.3f}<extra></extra>",
+  }], baseBarLayout("mean update_pref per source  (0.5 = balanced)", [0, 1]), PLOT_CONFIG);
+
+  Plotly.newPlot("overview-steps", [{
+    type: "bar", x: sources, y: es,
+    marker: { color: COLOR_NEUTRAL },
+    hovertemplate: "%{x}<br>expected_steps: %{y:.3f}<extra></extra>",
+  }], baseBarLayout("mean expected_steps per source", [0, META.max_loops]), PLOT_CONFIG);
+
+  Plotly.newPlot("overview-loss", [{
+    type: "bar", x: sources, y: loss,
+    marker: { color: COLOR_WIDE },
+    hovertemplate: "%{x}<br>loss: %{y:.3f}<extra></extra>",
+  }], baseBarLayout("mean per-token loss per source", null), PLOT_CONFIG);
+}
+
+// ---------------------------------------------------------------------------
+// §1b Aligned Trajectories 
+// ---------------------------------------------------------------------------
+function drawAlignedTrajectories(source) {
+  const anchor = document.getElementById("anchor-select").value;
+  const aggData = (SOURCES[source].agg.aligned || {})[anchor];
+  const plotDiv = document.getElementById("aligned-plot");
+  
+  if (!aggData || aggData.means.length === 0 || aggData.means[0].every(x => x === null)) {
+    plotDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">No matches for anchor token in this source.</div>';
+    return;
+  }
+  plotDiv.innerHTML = '';
+
+  const WINDOW = (aggData.means[0].length - 1) / 2;
+  const xVals = Array.from({length: WINDOW * 2 + 1}, (_, i) => i - WINDOW);
+  const nLayer = META.n_layer;
+  const showSamples = document.getElementById("show-samples-toggle").checked;
+
+  const traces = [];
+  function getLayerColor(l, alpha) {
+    const intensity = l / (nLayer - 1);
+    const r = Math.round(196 - intensity * (196 - 26));
+    const g = Math.round(215 - intensity * (215 - 60));
+    const b = Math.round(232 - intensity * (232 - 94));
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  // Draw faint background sample lines
+  if (showSamples && aggData.samples) {
+    for (let l = 0; l < nLayer; l++) {
+      const colorStr = getLayerColor(l, 0.15); 
+      const samples = aggData.samples[l];
+      if (!samples) continue;
+      for (let s = 0; s < samples.length; s++) {
+        traces.push({
+          type: "scatter", mode: "lines", x: xVals, y: samples[s],
+          line: { color: colorStr, width: 1 },
+          hoverinfo: "skip", showlegend: false
+        });
+      }
+    }
+  }
+
+  // Draw thick layer average lines
+  const topTokens = aggData.top_tokens;
+  for (let l = 0; l < nLayer; l++) {
+    traces.push({
+      type: "scatter", mode: "lines", x: xVals, y: aggData.means[l],
+      name: `Layer ${l}`,
+      customdata: topTokens,
+      line: { color: getLayerColor(l, 1.0), width: l === nLayer - 1 ? 3 : 2 },
+      hovertemplate: `Offset: %{x}<br>Layer ${l}<br>update_pref: %{y:.3f}<br><br><b>Most frequent tokens here:</b><br>%{customdata}<extra></extra>`
+    });
+  }
+
+  const layout = layoutCopy({
+    title: { text: `Layer Trajectories Aligned to "${anchor}" — ${source}`, font: { size: 12 } },
+    showlegend: true, legend: { font: { size: 10 }, orientation: "v", x: 1.02, y: 1 },
+    xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { title: `Distance from '${anchor}' match`, zeroline: true, zerolinewidth: 2, zerolinecolor: "#b6533a" }),
+    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, { title: "update_pref", range: [0, 1] }),
+    margin: { l: 60, r: 100, t: 40, b: 50 },
+    shapes: [{ type: "line", x0: -WINDOW, x1: WINDOW, y0: 0.5, y1: 0.5, line: { color: "rgba(0,0,0,0.3)", width: 1, dash: "dot" } }]
+  });
+  Plotly.newPlot("aligned-plot", traces, layout, PLOT_CONFIG);
+}
+
+// ---------------------------------------------------------------------------
+// §1c Cross-Source Aligned Difference
+// ---------------------------------------------------------------------------
+function drawAlignedDiff() {
+  const srcA = document.getElementById("source-diff-a").value;
+  const srcB = document.getElementById("source-diff-b").value;
+  const anchor = document.getElementById("anchor-select-diff").value;
+  const plotDiv = document.getElementById("aligned-diff-plot");
+
+  if (!srcA || !srcB || srcA === srcB) {
+    plotDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Select two different sources to compare.</div>';
+    return;
+  }
+  if (!anchor) {
+    plotDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">No shared anchor strings found between these sources.</div>';
+    return;
+  }
+
+  const dataA = (SOURCES[srcA].agg.aligned || {})[anchor];
+  const dataB = (SOURCES[srcB].agg.aligned || {})[anchor];
+
+  if (!dataA || !dataB || dataA.means.length === 0 || dataB.means.length === 0) {
+    plotDiv.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);">Missing alignment data for one or both sources.</div>';
+    return;
+  }
+
+  const nLayer = META.n_layer;
+  const WINDOW = (dataA.means[0].length - 1) / 2;
+  const xVals = Array.from({length: WINDOW * 2 + 1}, (_, i) => i - WINDOW);
+  
+  const traces = [];
+  for (let l = 0; l < nLayer; l++) {
+    const diffs = [];
+    for (let i = 0; i < xVals.length; i++) {
+      const vA = dataA.means[l][i];
+      const vB = dataB.means[l][i];
+      if (vA !== null && vB !== null) {
+        diffs.push(vA - vB);
+      } else {
+        diffs.push(null);
+      }
+    }
+    
+    // Sequential color map for layers
+    const intensity = l / (nLayer - 1);
+    const r = Math.round(196 - intensity * (196 - 26));
+    const g = Math.round(215 - intensity * (215 - 60));
+    const b = Math.round(232 - intensity * (232 - 94));
+    
+    traces.push({
+      type: "scatter", mode: "lines", x: xVals, y: diffs,
+      name: `Layer ${l}`,
+      line: { color: `rgb(${r}, ${g}, ${b})`, width: l === nLayer - 1 ? 3 : 2 },
+      hovertemplate: `Offset: %{x}<br>Layer ${l}<br>Δ update_pref: %{y:.3f}<extra></extra>`
+    });
+  }
+
+  const layout = layoutCopy({
+    title: { text: `Difference: (${srcA}) - (${srcB}) Aligned to "${anchor}"`, font: { size: 12 } },
+    showlegend: true, legend: { font: { size: 10 }, orientation: "v", x: 1.02, y: 1 },
+    xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { title: `Distance from '${anchor}' match`, zeroline: true, zerolinewidth: 2, zerolinecolor: "#b6533a" }),
+    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, { title: "Δ update_pref (A - B)", range: [-1, 1] }),
+    margin: { l: 60, r: 100, t: 40, b: 50 },
+    shapes: [{ type: "line", x0: -WINDOW, x1: WINDOW, y0: 0, y1: 0, line: { color: "rgba(0,0,0,0.3)", width: 1, dash: "dot" } }]
+  });
+  Plotly.newPlot("aligned-diff-plot", traces, layout, PLOT_CONFIG);
+}
+
+// ---------------------------------------------------------------------------
+// §1d Before vs After Pivot Slopegraphs
+// ---------------------------------------------------------------------------
+function drawBeforeVsAfter() {
+  const anchor = document.getElementById("anchor-select-bva").value;
+  if (!anchor) return;
+  const W = parseInt(document.getElementById("bva-window").value);
+  const L = META.n_layer;
+
+  const L_early = [0, Math.floor(L/3)];
+  const L_mid = [Math.floor(L/3), Math.floor(2*L/3)];
+  const L_late = [Math.floor(2*L/3), L];
+
+  const sources = META.source_order.filter(s => SOURCES[s].agg.aligned && SOURCES[s].agg.aligned[anchor]);
+  const palette = ["#2a4d6e", "#b6533a", "#6b8e6e", "#d9905a", "#7b5fa8"];
+
+  function getMean(source, layers, offsets) {
+    let sum = 0; let count = 0;
+    const data = SOURCES[source].agg.aligned[anchor].means;
+    if (!data || data.length === 0) return null;
+    const WINDOW = (data[0].length - 1) / 2;
+    for (let l = layers[0]; l < layers[1]; l++) {
+      for (let o of offsets) {
+        const val = data[l][WINDOW + o];
+        if (val !== null && isFinite(val)) { sum += val; count++; }
+      }
+    }
+    return count > 0 ? sum / count : null;
+  }
+
+  // -W to -1 (Before)
+  const offsets_before = Array.from({length: W}, (_, i) => -W + i);
+  // 1 to W (After). Skipping offset 0 (the pivot itself) to isolate true before/after states.
+  const offsets_after = Array.from({length: W}, (_, i) => i + 1);   
+
+  function makePlot(elId, title, layers) {
+    const traces = sources.map((s, i) => {
+      const b = getMean(s, layers, offsets_before);
+      const a = getMean(s, layers, offsets_after);
+      return {
+        type: "scatter", mode: "lines+markers",
+        x: ["Before", "After"], y: [b, a],
+        name: s, legendgroup: s,
+        line: { color: palette[i % palette.length], width: 2.5 },
+        marker: { size: 8 },
+        hovertemplate: s + "<br>%{x}: %{y:.3f}<extra></extra>"
+      };
+    });
+    
+    const layout = layoutCopy({
+      title: { text: title, font: { size: 12 } },
+      margin: { l: 45, r: 10, t: 40, b: 30 },
+      yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, { range: [0, 1], dtick: 0.2, title: "update_pref" }),
+      xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { showgrid: false }),
+      showlegend: elId === "bva-sum-overall"
+    });
+    
+    if (elId === "bva-sum-overall") {
+       layout.legend = { orientation: "h", y: -0.2, x: 0, font: { size: 10 } };
+       layout.margin.b = 60; // Make room for legend
+    }
+    
+    Plotly.newPlot(elId, traces, layout, PLOT_CONFIG);
+  }
+
+  // Render Summaries
+  makePlot("bva-sum-overall", "Overall Average", [0, L]);
+  makePlot("bva-sum-early", `Early Layers (0 - ${L_early[1]-1})`, L_early);
+  makePlot("bva-sum-mid", `Mid Layers (${L_mid[0]} - ${L_mid[1]-1})`, L_mid);
+  makePlot("bva-sum-late", `Late Layers (${L_late[0]} - ${L_late[1]-1})`, L_late);
+
+  // Render Per-Layer Grid
+  const layerGrid = document.getElementById("bva-layer-grid");
+  layerGrid.innerHTML = ""; // Clear existing
+  for (let l = 0; l < L; l++) {
+    const div = document.createElement("div");
+    div.id = `bva-layer-${l}`;
+    div.className = "chart";
+    div.style.height = "240px";
+    layerGrid.appendChild(div);
+    makePlot(div.id, `Layer ${l}`, [l, l+1]);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// §2 Source deep-dive
+// ---------------------------------------------------------------------------
 function histTrace(h, color, name) {
   const edges = h.edges;
   const counts = h.counts;
@@ -1083,31 +1380,29 @@ function drawSourceDeepDive(source) {
   const s = agg.summary;
   document.getElementById("source-kpis").innerHTML = `
     <div class="kpi"><span class="label">tokens</span><span class="val">${s.n_tokens.toLocaleString()}</span><span class="sub">${s.n_chunks} chunks</span></div>
-    <div class="kpi"><span class="label">mean gate_deep_rel</span><span class="val">${s.mean_gate_deep_relative.toFixed(3)}</span><span class="sub">g_d / (g_d + g_w)</span></div>
-    <div class="kpi"><span class="label">mean deep contrib</span><span class="val">${s.mean_deep_contribution_share.toFixed(3)}</span><span class="sub">share of update</span></div>
+    <div class="kpi"><span class="label">mean update_pref</span><span class="val">${s.mean_update_pref.toFixed(3)}</span><span class="sub">actual update share</span></div>
+    <div class="kpi"><span class="label">mean gate_pref</span><span class="val">${s.mean_gate_pref.toFixed(3)}</span><span class="sub">gate-only</span></div>
+    <div class="kpi"><span class="label">mean gate_deep</span><span class="val">${s.mean_gate_deep.toFixed(3)}</span><span class="sub">raw</span></div>
+    <div class="kpi"><span class="label">mean gate_wide</span><span class="val">${s.mean_gate_wide.toFixed(3)}</span><span class="sub">raw</span></div>
     <div class="kpi"><span class="label">mean expected_steps</span><span class="val">${s.mean_expected_steps.toFixed(3)}</span><span class="sub">out of ${META.max_loops}</span></div>
-    <div class="kpi"><span class="label">mean loop_disp</span><span class="val">${s.mean_loop_displacement.toFixed(3)}</span><span class="sub">||h_final − h_step1||/||h_step1||</span></div>
     <div class="kpi"><span class="label">mean loss</span><span class="val">${s.mean_loss.toFixed(3)}</span></div>
-    <div class="kpi"><span class="label">mean cos(Δd,Δw)</span><span class="val">${s.mean_delta_cos_sim.toFixed(3)}</span></div>
   `;
-  Plotly.newPlot("hist-gate", [histTrace(agg.hist.gate_deep_relative, COLOR_DEEP, "gate_deep_relative")],
-    layoutCopy({ title: { text: "gate_deep_relative — g_d / (g_d + g_w)", font: { size: 12 } } }), PLOT_CONFIG);
-  Plotly.newPlot("hist-gate-wide", [histTrace(agg.hist.deep_contribution_share, COLOR_DEEP, "deep_contribution_share")],
-    layoutCopy({ title: { text: "deep_contribution_share — share of update from deep", font: { size: 12 } } }), PLOT_CONFIG);
-  Plotly.newPlot("hist-steps", [histTrace(agg.hist.expected_steps, COLOR_NEUTRAL, "expected_steps")],
-    layoutCopy({ title: { text: "expected_steps distribution (all layers)", font: { size: 12 } } }), PLOT_CONFIG);
-  Plotly.newPlot("hist-cos", [histTrace(agg.hist.delta_cos_sim, COLOR_NEUTRAL, "delta_cos_sim")],
-    layoutCopy({ title: { text: "cosine(Δdeep, Δwide) — do paths do different things?", font: { size: 12 } } }), PLOT_CONFIG);
-  Plotly.newPlot("hist-loss", [histTrace(agg.hist.loop_displacement, COLOR_DEEP, "loop_displacement")],
-    layoutCopy({ title: { text: "loop_displacement — did loop work past step 1?", font: { size: 12 } } }), PLOT_CONFIG);
+  Plotly.newPlot("hist-update-pref", [histTrace(agg.hist.update_pref, COLOR_DEEP, "update_pref")], layoutCopy({ title: { text: "update_pref — actual update share", font: { size: 12 } } }), PLOT_CONFIG);
+  Plotly.newPlot("hist-gate-pref", [histTrace(agg.hist.gate_pref, COLOR_DEEP, "gate_pref")], layoutCopy({ title: { text: "gate_pref — gate-only", font: { size: 12 } } }), PLOT_CONFIG);
+  Plotly.newPlot("hist-gate-deep", [histTrace(agg.hist.gate_deep, COLOR_DEEP, "gate_deep")], layoutCopy({ title: { text: "gate_deep (raw)", font: { size: 12 } } }), PLOT_CONFIG);
+  Plotly.newPlot("hist-gate-wide", [histTrace(agg.hist.gate_wide, COLOR_WIDE, "gate_wide")], layoutCopy({ title: { text: "gate_wide (raw)", font: { size: 12 } } }), PLOT_CONFIG);
+  Plotly.newPlot("hist-steps", [histTrace(agg.hist.expected_steps, COLOR_NEUTRAL, "expected_steps")], layoutCopy({ title: { text: "expected_steps (all layers)", font: { size: 12 } } }), PLOT_CONFIG);
+  Plotly.newPlot("hist-loss", [histTrace(agg.hist.loss, COLOR_WIDE, "loss")], layoutCopy({ title: { text: "per-token loss", font: { size: 12 } } }), PLOT_CONFIG);
 }
 
+// ---------------------------------------------------------------------------
+// §3 Layer dynamics
+// ---------------------------------------------------------------------------
 function lineTrace(y, color, name) {
   const x = y.map((_, i) => i);
   return { type: "scatter", mode: "lines+markers", x: x, y: y,
            marker: { color: color, size: 6 }, line: { color: color, width: 1.5 },
-           name: name,
-           hovertemplate: name + "<br>layer %{x}: %{y:.3f}<extra></extra>" };
+           name: name, hovertemplate: name + "<br>layer %{x}: %{y:.3f}<extra></extra>" };
 }
 
 function drawLayerDynamics(source) {
@@ -1120,6 +1415,14 @@ function drawLayerDynamics(source) {
     showlegend: true, legend: { font: { size: 10 }, orientation: "h", y: 1.1 },
     yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, { range: [0, 1] }),
   }), PLOT_CONFIG);
+  Plotly.newPlot("layer-preference", [
+    lineTrace(pl.gate_pref, COLOR_DEEP, "gate_pref"),
+    lineTrace(pl.update_pref, COLOR_WIDE, "update_pref"),
+  ], layoutCopy({
+    title: { text: "preference per layer (0.5 = balanced)", font: { size: 12 } },
+    showlegend: true, legend: { font: { size: 10 }, orientation: "h", y: 1.1 },
+    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, { range: [0, 1] }),
+  }), PLOT_CONFIG);
   Plotly.newPlot("layer-steps", [
     lineTrace(pl.expected_steps, COLOR_NEUTRAL, "expected_steps"),
   ], layoutCopy({
@@ -1129,41 +1432,9 @@ function drawLayerDynamics(source) {
   Plotly.newPlot("layer-loop-disp", [
     lineTrace(pl.loop_displacement, COLOR_DEEP, "loop_displacement"),
   ], layoutCopy({
-    title: { text: "mean loop_displacement per layer — did the loop work?", font: { size: 12 } },
+    title: { text: "mean loop_displacement per layer", font: { size: 12 } },
   }), PLOT_CONFIG);
-  Plotly.newPlot("layer-preference", [
-    lineTrace(pl.gate_deep_relative, COLOR_DEEP, "gate_deep_relative"),
-    lineTrace(pl.deep_contribution_share, COLOR_WIDE, "deep_contribution_share"),
-  ], layoutCopy({
-    title: { text: "deep preference per layer (0.5 = balanced)", font: { size: 12 } },
-    showlegend: true, legend: { font: { size: 10 }, orientation: "h", y: 1.1 },
-    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, { range: [0, 1] }),
-  }), PLOT_CONFIG);
-  Plotly.newPlot("layer-delta", [
-    lineTrace(pl.delta_deep_norm, COLOR_DEEP, "‖Δdeep‖"),
-    lineTrace(pl.delta_wide_norm, COLOR_WIDE, "‖Δwide‖"),
-  ], layoutCopy({
-    title: { text: "mean update magnitude per layer", font: { size: 12 } },
-    showlegend: true, legend: { font: { size: 10 }, orientation: "h", y: 1.1 },
-  }), PLOT_CONFIG);
-  Plotly.newPlot("layer-cos", [
-    lineTrace(pl.delta_cos_sim, COLOR_NEUTRAL, "cos(Δd,Δw)"),
-  ], layoutCopy({
-    title: { text: "cosine similarity of path updates per layer", font: { size: 12 } },
-    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, { range: [-1, 1] }),
-  }), PLOT_CONFIG);
-  if (META.use_cross) {
-    Plotly.newPlot("layer-cross", [
-      lineTrace(pl.cross_w2d_norm, COLOR_DEEP, "w→d"),
-      lineTrace(pl.cross_d2w_norm, COLOR_WIDE, "d→w"),
-    ], layoutCopy({
-      title: { text: "cross-path contamination magnitude per layer", font: { size: 12 } },
-      showlegend: true, legend: { font: { size: 10 }, orientation: "h", y: 1.1 },
-    }), PLOT_CONFIG);
-  } else {
-    document.getElementById("layer-cross").innerHTML =
-      '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-family:var(--mono);font-size:12px;">use_cross=False — no cross-path data</div>';
-  }
+
   const halts = pl.halt_probs;
   const halt_traces = halts.map((row, li) => ({
     type: "scatter", mode: "lines", x: row.map((_, i) => i), y: row,
@@ -1173,12 +1444,12 @@ function drawLayerDynamics(source) {
   }));
   Plotly.newPlot("halt-curves", halt_traces, layoutCopy({
     title: { text: "mean halt probability per (layer, step)", font: { size: 12 } },
-    showlegend: true,
-    legend: { font: { size: 9 }, orientation: "v", x: 1.02, y: 1 },
+    showlegend: true, legend: { font: { size: 9 }, orientation: "v", x: 1.02, y: 1 },
     margin: { l: 50, r: 100, t: 30, b: 50 },
     yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, { range: [0, 1] }),
     xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { title: "step" }),
   }), PLOT_CONFIG);
+
   const sd = pl.step_displacement;
   const sd_traces = sd.map((row, li) => ({
     type: "scatter", mode: "lines", x: row.map((_, i) => i), y: row,
@@ -1188,39 +1459,31 @@ function drawLayerDynamics(source) {
   }));
   Plotly.newPlot("step-disp-curves", sd_traces, layoutCopy({
     title: { text: "step displacement ‖h[s+1] − h[s]‖ per (layer, step)", font: { size: 12 } },
-    showlegend: true,
-    legend: { font: { size: 9 }, orientation: "v", x: 1.02, y: 1 },
+    showlegend: true, legend: { font: { size: 9 }, orientation: "v", x: 1.02, y: 1 },
     margin: { l: 50, r: 100, t: 30, b: 50 },
     xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { title: "step" }),
   }), PLOT_CONFIG);
 }
 
 // ---------------------------------------------------------------------------
-// §4 Token explorer (unchanged from previous version)
+// §4 Token explorer
 // ---------------------------------------------------------------------------
 const METRIC_RANGES = {
-  gate_deep_relative:      { range: [0, 1], cmap: "deepwide" },
-  deep_contribution_share: { range: [0, 1], cmap: "deepwide" },
-  delta_cos_sim:           { range: [-1, 1], cmap: "diverging_cos" },
-  gate_deep: { range: [0, 1], cmap: "sequential_deep" },
-  gate_wide: { range: [0, 1], cmap: "sequential_wide" },
+  gate_pref:         { range: [0, 1], cmap: "deepwide" },
+  update_pref:       { range: [0, 1], cmap: "deepwide" },
+  gate_deep:         { range: [0, 1], cmap: "sequential_deep" },
+  gate_wide:         { range: [0, 1], cmap: "sequential_wide" },
   expected_steps:    { range: [0, META.max_loops], cmap: "viridis" },
   loop_displacement: { range: [0, 1], cmap: "viridis" },
-  loss:            { range: [0, 10], cmap: "ylorrd" },
-  delta_deep_norm: { range: null, cmap: "viridis" },
-  delta_wide_norm: { range: null, cmap: "viridis" },
+  loss:              { range: [0, 10], cmap: "ylorrd" },
 };
 const POS_PALETTE = {
   NOUN:  "#2a4d6e", PROPN: "#3d6b94", VERB:  "#1f6f64", ADJ:   "#6b8e6e",
-  ADV:   "#a3a661", NUM:   "#7b5fa8",
-  DET:   "#d9905a", PRON:  "#c47054", ADP:   "#b6533a",
+  ADV:   "#a3a661", NUM:   "#7b5fa8", DET:   "#d9905a", PRON:  "#c47054", ADP:   "#b6533a",
   CCONJ: "#a35a3f", SCONJ: "#a35a3f", PART:  "#9c5b4a", AUX:   "#bb6f4e",
-  PUNCT: "#d4c2a8", SYM:   "#d4c2a8",
-  INTJ:  "#9c9c9c", X:     "#9c9c9c", SPACE: "#cccccc",
+  PUNCT: "#d4c2a8", SYM:   "#d4c2a8", INTJ:  "#9c9c9c", X:     "#9c9c9c", SPACE: "#cccccc",
   UNKNOWN: "#bdbdbd", SPECIAL: "#eeeeee",
 };
-const POS_CONTENT = new Set(["NOUN", "PROPN", "VERB", "ADJ", "ADV", "NUM"]);
-const POS_FUNCTION = new Set(["DET", "PRON", "ADP", "CCONJ", "SCONJ", "PART", "AUX", "PUNCT", "SYM"]);
 const POS_ORDER = [
   "NOUN", "PROPN", "VERB", "ADJ", "ADV", "NUM",
   "DET", "PRON", "ADP", "CCONJ", "SCONJ", "PART", "AUX", "PUNCT", "SYM",
@@ -1234,6 +1497,7 @@ function _mix(a, b, t) {
     Math.round(a[2] + (b[2] - a[2]) * t),
   ];
 }
+
 function colorFor(val, metric) {
   if (metric === "pos") {
     if (!val) return "transparent";
@@ -1249,7 +1513,7 @@ function colorFor(val, metric) {
   let hi = cfg.range ? cfg.range[1] : 5;
   const t = Math.max(0, Math.min(1, (val - lo) / (hi - lo)));
   const alpha = 0.6;
-  if (cfg.cmap === "deepwide" || cfg.cmap === "diverging_cos") {
+  if (cfg.cmap === "deepwide") {
     let rgb;
     if (t >= 0.5) rgb = _mix(RGB_NEUTRAL, RGB_DEEP, (t - 0.5) * 2);
     else          rgb = _mix(RGB_WIDE, RGB_NEUTRAL, t * 2);
@@ -1294,22 +1558,57 @@ function getChunk() {
   const idx = parseInt(document.getElementById("chunk-select").value);
   return SOURCES[source].chunks[idx];
 }
+
 function getMetricArrayForChunk(chunk, metric, layer) {
   if (metric === "loss") return chunk.loss;
   if (metric === "pos") return chunk.pos || chunk.tokens.map(() => "UNKNOWN");
-  if (metric === "gate_deep_relative") {
-    const gd = chunk.gate_deep[layer];
-    const gw = chunk.gate_wide[layer];
+
+  const isMean = (layer === "mean");
+  const singleLayer = isMean ? 0 : parseInt(layer);
+  const L = chunk.gate_deep.length;
+  const numToks = chunk.tokens.length;
+
+  if (metric === "gate_pref") {
+    if (isMean) {
+      return Array.from({length: numToks}, (_, i) => {
+        let sum = 0;
+        for (let l=0; l<L; l++) {
+          const gd = chunk.gate_deep[l][i];
+          const gw = chunk.gate_wide[l][i];
+          sum += (gd + gw) > 1e-6 ? gd / (gd + gw) : 0.5;
+        }
+        return sum / L;
+      });
+    }
+    const gd = chunk.gate_deep[singleLayer];
+    const gw = chunk.gate_wide[singleLayer];
     return gd.map((v, i) => {
       const denom = (v + gw[i]);
       return denom > 1e-6 ? v / denom : 0.5;
     });
   }
-  if (metric === "deep_contribution_share") {
-    const gd = chunk.gate_deep[layer];
-    const gw = chunk.gate_wide[layer];
-    const dd = chunk.delta_deep_norm[layer];
-    const dw = chunk.delta_wide_norm[layer];
+
+  if (metric === "update_pref") {
+    if (isMean) {
+      return Array.from({length: numToks}, (_, i) => {
+        let sum = 0;
+        for (let l=0; l<L; l++) {
+          const gd = chunk.gate_deep[l][i];
+          const gw = chunk.gate_wide[l][i];
+          const dd = chunk.delta_deep_norm[l][i];
+          const dw = chunk.delta_wide_norm[l][i];
+          const dc = gd * dd;
+          const wc = gw * dw;
+          const denom = dc + wc;
+          sum += (denom > 1e-6) ? dc / denom : 0.5;
+        }
+        return sum / L;
+      });
+    }
+    const gd = chunk.gate_deep[singleLayer];
+    const gw = chunk.gate_wide[singleLayer];
+    const dd = chunk.delta_deep_norm[singleLayer];
+    const dw = chunk.delta_wide_norm[singleLayer];
     return gd.map((g, i) => {
       const dc = g * dd[i];
       const wc = gw[i] * dw[i];
@@ -1317,14 +1616,76 @@ function getMetricArrayForChunk(chunk, metric, layer) {
       return denom > 1e-6 ? dc / denom : 0.5;
     });
   }
-  return chunk[metric][layer];
+
+  if (isMean) {
+    return Array.from({length: numToks}, (_, i) => {
+      let sum = 0;
+      for (let l=0; l<L; l++) sum += chunk[metric][l][i];
+      return sum / L;
+    });
+  }
+
+  return chunk[metric][singleLayer];
+}
+
+function drawRoutingGrid() {
+  const chunk = getChunk();
+  if (!chunk) return;
+  const metric = document.getElementById("grid-metric").value;
+  const L = META.n_layer;
+  const numToks = chunk.tokens.length;
+  
+  const xLabels = chunk.token_strs.map((t, i) => 
+    `[${i}] ` + t.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "↵")
+  );
+
+  const z = [];
+  for (let l = 0; l < L; l++) {
+    const row = [];
+    for (let i = 0; i < numToks; i++) {
+      const gd = chunk.gate_deep[l][i];
+      const gw = chunk.gate_wide[l][i];
+      
+      if (metric === "gate_pref") {
+        row.push((gd + gw) > 1e-6 ? gd / (gd + gw) : 0.5);
+      } else { 
+        const dd = chunk.delta_deep_norm[l][i];
+        const dw = chunk.delta_wide_norm[l][i];
+        const dc = gd * dd;
+        const wc = gw * dw;
+        row.push((dc + wc) > 1e-6 ? dc / (dc + wc) : 0.5);
+      }
+    }
+    z.push(row);
+  }
+
+  const yLabels = Array.from({length: L}, (_, i) => `Layer ${i}`);
+
+  const trace = {
+    type: "heatmap", z: z, x: xLabels, y: yLabels,
+    colorscale: [[0.0, "#b6533a"], [0.5, "#f6f3ec"], [1.0, "#2a4d6e"]],
+    zmin: 0, zmax: 1, hovertemplate: "Token: %{x}<br>%{y}<br>" + metric + ": %{z:.3f}<extra></extra>",
+    colorbar: { thickness: 12, len: 0.9, tickfont: { size: 10 } }
+  };
+
+  const layout = layoutCopy({
+    title: { text: "Network Depth vs. Sequence Position", font: { size: 12 } },
+    xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { tickangle: -45, tickfont: { size: 11, family: "IBM Plex Mono, monospace" } }),
+    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, { title: "Network Depth", tickfont: { size: 11 } }),
+    margin: { l: 60, r: 20, t: 40, b: 100 }
+  });
+
+  Plotly.newPlot("routing-grid", [trace], layout, PLOT_CONFIG);
 }
 
 function renderTokens() {
   const chunk = getChunk();
   if (!chunk) return;
   const metric = document.getElementById("color-metric").value;
-  const layer = parseInt(document.getElementById("layer-select").value);
+  
+  let layer = document.getElementById("layer-select").value;
+  if (layer !== "mean") layer = parseInt(layer);
+
   const isPerLayer = (metric !== "loss" && metric !== "pos");
   const arr = getMetricArrayForChunk(chunk, metric, layer);
   const showPos = document.getElementById("show-pos-toggle").checked && chunk.pos;
@@ -1358,7 +1719,9 @@ function renderTokens() {
     container.appendChild(span);
   }
   updateLegend(metric, isPerLayer ? layer : null);
+  drawRoutingGrid();
 }
+
 function updateLegend(metric, layer) {
   if (metric === "pos") {
     const items = POS_ORDER.filter(t => POS_PALETTE[t]).map(t => {
@@ -1371,7 +1734,12 @@ function updateLegend(metric, layer) {
   const cfg = METRIC_RANGES[metric];
   const lo = cfg.range ? cfg.range[0] : 0;
   const hi = cfg.range ? cfg.range[1] : 5;
-  const layerStr = layer !== null ? ` @ layer ${layer}` : " (single value, no layer)";
+  
+  let layerStr = " (no layer)";
+  if (layer !== null) {
+      layerStr = (layer === "mean") ? " (mean across all layers)" : ` @ layer ${layer}`;
+  }
+
   const stops = [];
   const N = 24;
   for (let i = 0; i < N; i++) {
@@ -1382,6 +1750,7 @@ function updateLegend(metric, layer) {
   document.getElementById("color-legend").innerHTML =
     `${metric}${layerStr} &nbsp; ${lo.toFixed(1)} <span class="swatch" style="background:${grad}"></span> ${hi.toFixed(1)}`;
 }
+
 let lockedToken = null;
 function showTokenDetail(chunk, idx, lock) {
   if (lockedToken !== null && !lock) return;
@@ -1403,13 +1772,13 @@ function showTokenDetail(chunk, idx, lock) {
     const gw = chunk.gate_wide[li][idx];
     const dd = chunk.delta_deep_norm[li][idx];
     const dw = chunk.delta_wide_norm[li][idx];
-    const gdr = (gd + gw) > 1e-6 ? gd / (gd + gw) : 0.5;
-    const dcShare = (gd * dd + gw * dw) > 1e-6 ? (gd * dd) / (gd * dd + gw * dw) : 0.5;
+    const gpref = (gd + gw) > 1e-6 ? gd / (gd + gw) : 0.5;
+    const upref = (gd * dd + gw * dw) > 1e-6 ? (gd * dd) / (gd * dd + gw * dw) : 0.5;
     rows += `<tr>
       <td>${li}</td><td>${gd.toFixed(3)}</td><td>${gw.toFixed(3)}</td>
-      <td><strong>${gdr.toFixed(2)}</strong></td><td><strong>${dcShare.toFixed(2)}</strong></td>
+      <td><strong>${gpref.toFixed(2)}</strong></td><td><strong>${upref.toFixed(2)}</strong></td>
       <td>${chunk.expected_steps[li][idx].toFixed(2)}</td><td>${chunk.loop_displacement[li][idx].toFixed(2)}</td>
-      <td>${dd.toFixed(2)}</td><td>${dw.toFixed(2)}</td><td>${chunk.delta_cos_sim[li][idx].toFixed(2)}</td>
+      <td>${dd.toFixed(2)}</td><td>${dw.toFixed(2)}</td>
     </tr>`;
   }
   const displayTok = tokStr.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "↵");
@@ -1421,116 +1790,96 @@ function showTokenDetail(chunk, idx, lock) {
     </div>
     <div style="margin-bottom: 10px;">loss (predict next) = <strong>${loss !== null ? loss.toFixed(3) : "n/a"}</strong></div>
     <table>
-      <tr><th>l</th><th>g_d</th><th>g_w</th><th>g_d/Σ</th><th>Δd-sh</th><th>steps</th><th>loop-d</th><th>‖Δd‖</th><th>‖Δw‖</th><th>cos</th></tr>
+      <tr><th>l</th><th>g_d</th><th>g_w</th><th>g_pref</th><th>u_pref</th><th>steps</th><th>loop-d</th><th>‖Δd‖</th><th>‖Δw‖</th></tr>
       ${rows}
     </table>
     <div style="color: var(--muted); margin-top: 8px; font-size: 10px;">
-      g_d/Σ = gate_deep_relative, Δd-sh = deep_contribution_share, loop-d = loop_displacement
+      g_pref = gate_pref, u_pref = update_pref, loop-d = loop_displacement
     </div>
   `;
 }
 
 // ---------------------------------------------------------------------------
-// §5 POS analysis — new heatmap + single-layer + averaged-bars
+// §5 POS analysis
 // ---------------------------------------------------------------------------
-// Metric -> {range, diverging, mid}. Used by both heatmap and single-layer.
-// 'diverging' means colorscale should be centered at `mid`. Otherwise sequential.
 const POS_METRIC_CFG = {
-  gate_deep_relative:      { range: [0, 1], diverging: true,  mid: 0.5,
-                              label: "gate_deep_relative" },
-  deep_contribution_share: { range: [0, 1], diverging: true,  mid: 0.5,
-                              label: "deep_contribution_share" },
-  expected_steps:          { range: [0, META.max_loops], diverging: false,
-                              label: "expected_steps" },
-  loop_displacement:       { range: null,   diverging: false,
-                              label: "loop_displacement" },
-  delta_cos_sim:           { range: [-1, 1], diverging: true,  mid: 0,
-                              label: "cos(Δdeep, Δwide)" },
-  delta_deep_norm:         { range: null,   diverging: false,
-                              label: "‖Δdeep‖" },
-  delta_wide_norm:         { range: null,   diverging: false,
-                              label: "‖Δwide‖" },
-  gate_deep:               { range: [0, 1], diverging: false, label: "gate_deep" },
-  gate_wide:               { range: [0, 1], diverging: false, label: "gate_wide" },
+  gate_pref:         { range: [0, 1], diverging: true,  mid: 0.5, label: "gate_pref" },
+  update_pref:       { range: [0, 1], diverging: true,  mid: 0.5, label: "update_pref" },
+  expected_steps:    { range: [0, META.max_loops], diverging: false, label: "expected_steps" },
+  loop_displacement: { range: null,   diverging: false, label: "loop_displacement" },
+  gate_deep:         { range: [0, 1], diverging: false, label: "gate_deep" },
+  gate_wide:         { range: [0, 1], diverging: false, label: "gate_wide" },
 };
 
-// Plotly colorscale used for diverging metrics (wide → neutral → deep).
 const DIVERGING_SCALE = [
-  [0.0, `rgb(${RGB_WIDE[0]},${RGB_WIDE[1]},${RGB_WIDE[2]})`],
-  [0.5, `rgb(${RGB_NEUTRAL[0]},${RGB_NEUTRAL[1]},${RGB_NEUTRAL[2]})`],
-  [1.0, `rgb(${RGB_DEEP[0]},${RGB_DEEP[1]},${RGB_DEEP[2]})`],
+  [0.0, "#b6533a"], [0.25, "#d99d8a"], [0.5, "#f6f3ec"],
+  [0.75, "#7a98b8"], [1.0, "#2a4d6e"],
 ];
-const SEQUENTIAL_SCALE = "Viridis";
+const SEQUENTIAL_SCALE = [
+  [0.0, "#f6f3ec"], [0.5, "#d8c98c"], [1.0, "#2a4d6e"],
+];
 
-// Minimum word count per (POS, source) cell. Below this, cells are nulled
-// out so noisy under-sampled tags (e.g. SPACE in triviaqa with ~5 examples)
-// don't dominate the colorscale.
 const MIN_WORDS_PER_CELL = 10;
 
 function getPOSTagsPresent(pos, minWords) {
-  // Return POS tags present in this source with at least minWords words,
-  // in canonical POS_ORDER.
-  return POS_ORDER.filter(t => {
-    const n = pos.n_words_per_pos[t] || 0;
-    return n >= minWords;
-  });
+  return POS_ORDER.filter(t => (pos.n_words_per_pos[t] || 0) >= minWords);
+}
+
+function _layerArray(pos, metric, agg, tag) {
+  const src = (agg === "max") ? pos.by_pos_layer_max : pos.by_pos_layer_mean;
+  if (!src[metric] || !src[metric][tag]) return null;
+  return src[metric][tag];
+}
+
+function drawPOSAll(source) {
+  const data = SOURCES[source];
+  const cov = data.agg.pos ? `POS coverage: ${(data.agg.pos.coverage * 100).toFixed(1)}%` : "no POS data";
+  document.getElementById("pos-coverage").textContent = cov;
+  if (!data.agg.pos) {
+    for (const id of ["pos-heatmap", "pos-lines", "decisive-pref", "decisive-layer",
+                      "pos-single-update-pref", "pos-single-gate-pref",
+                      "pos-single-steps", "pos-single-loopdisp"]) {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-family:var(--mono);font-size:12px;">no POS sidecar for this source</div>';
+    }
+    return;
+  }
+  drawPOSHeatmap(source);
+  drawPOSSingleLayer(source);
+  drawPOSLines(source);
+  drawDecisive(source);
 }
 
 function drawPOSHeatmap(source) {
   const pos = SOURCES[source].agg.pos;
-  if (!pos) {
-    document.getElementById("pos-heatmap").innerHTML =
-      '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-family:var(--mono);font-size:12px;">no POS data</div>';
-    document.getElementById("pos-heatmap-legend").innerHTML = "";
-    return;
-  }
+  const agg = document.getElementById("pos-agg").value;
   const metric = document.getElementById("pos-heatmap-metric").value;
-  const aggKey = document.getElementById("pos-agg").value === "max"
-                 ? "by_pos_layer_max" : "by_pos_layer_mean";
-  const data = pos[aggKey][metric];   // tag -> [val per layer] or undefined
-  if (!data) {
-    document.getElementById("pos-heatmap").innerHTML =
-      '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-family:var(--mono);font-size:12px;">metric not available</div>';
-    return;
-  }
-
-  // Tags as Y (POS), layers as X (0..N-1). Plotly heatmap z is rows by columns.
+  const cfg = POS_METRIC_CFG[metric];
   const tags = getPOSTagsPresent(pos, MIN_WORDS_PER_CELL);
   const nLayer = META.n_layer;
-  // Build z: row = tag, col = layer. Use null for missing cells; Plotly renders
-  // them as gaps with `connectgaps:false`.
-  const z = tags.map(tag => {
-    const row = data[tag] || [];
+  const src = (agg === "max") ? pos.by_pos_layer_max : pos.by_pos_layer_mean;
+  const data = src[metric] || {};
+
+  const z = tags.map(t => {
+    const row = data[t] || [];
     return Array.from({length: nLayer}, (_, li) => {
       const v = row[li];
-      return (v === null || v === undefined) ? null : v;
+      return (v === undefined || v === null || !isFinite(v)) ? null : v;
     });
   });
-  // Color scaling. For diverging metrics with known bounds (e.g. [0,1]),
-  // we lock the colorscale to the full range so the midpoint always maps
-  // to neutral and cross-source comparison is honest. Auto-zooming made
-  // tiny variations look dramatic and broke cross-source comparability.
-  const cfg = POS_METRIC_CFG[metric];
+
   let zmin, zmax, colorscale;
-  if (cfg.diverging && cfg.range !== null) {
-    zmin = cfg.range[0];
-    zmax = cfg.range[1];
-    colorscale = DIVERGING_SCALE;
-  } else if (cfg.range !== null) {
-    zmin = cfg.range[0];
-    zmax = cfg.range[1];
-    colorscale = SEQUENTIAL_SCALE;
+  if (cfg.diverging) {
+    zmin = cfg.range[0]; zmax = cfg.range[1]; colorscale = DIVERGING_SCALE;
   } else {
-    // auto-range for unbounded metrics (delta norms, etc.)
     const flat = z.flat().filter(v => v !== null && isFinite(v));
-    if (flat.length === 0) { zmin = 0; zmax = 1; }
-    else { zmin = Math.min(...flat); zmax = Math.max(...flat); }
+    zmin = cfg.range ? cfg.range[0] : Math.min(...flat);
+    zmax = cfg.range ? cfg.range[1] : Math.max(...flat);
     colorscale = SEQUENTIAL_SCALE;
   }
-  // Build customdata for hover: word counts.
+
   const wordCounts = tags.map(t => pos.n_words_per_pos[t] || 0);
-  // Replicate so plotly can show one count per cell.
-  const customdata = tags.map((t, ti) =>
+  const customdata = tags.map((_, ti) =>
     Array.from({length: nLayer}, () => wordCounts[ti])
   );
   const trace = {
@@ -1546,332 +1895,148 @@ function drawPOSHeatmap(source) {
     colorbar: { thickness: 12, len: 0.9, tickfont: { size: 10 } },
   };
   const layout = layoutCopy({
-    title: { text: cfg.label + " — POS × layer (" +
-                   (aggKey === "by_pos_layer_max" ? "max" : "mean") +
-                   " over subwords)",
-             font: { size: 12 } },
+    title: { text: `${cfg.label} — ${source} (${agg})`, font: { size: 12 } },
     xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, {
       title: "layer", tickfont: { size: 10 }, type: "category",
     }),
     yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, {
       title: "POS", tickfont: { size: 11 }, autorange: "reversed",
     }),
-    margin: { l: 65, r: 60, t: 40, b: 50 },
+    margin: { l: 65, r: 60, t: 35, b: 45 },
   });
   Plotly.newPlot("pos-heatmap", [trace], layout, PLOT_CONFIG);
 
-  // Small inline legend / sample size note.
-  const totalWords = tags.reduce((s, t) => s + (pos.n_words_per_pos[t] || 0), 0);
   document.getElementById("pos-heatmap-legend").innerHTML =
-    `${tags.length} tags, ${totalWords.toLocaleString()} words total ` +
-    `(tags with <3 words excluded)`;
-}
-
-function drawPOSAveragedBars(source) {
-  // §5b — the original §5 view, kept as contrast.
-  const pos = SOURCES[source].agg.pos;
-  const covEl = document.getElementById("pos-coverage");
-  if (!pos) {
-    covEl.textContent = "no POS sidecar for this source";
-    for (const id of ["pos-bar-dcs", "pos-bar-loopdisp", "pos-bar-steps", "pos-bar-loss"]) {
-      document.getElementById(id).innerHTML =
-        '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-family:var(--mono);font-size:12px;">no POS data</div>';
-    }
-    return;
-  }
-  const cov = (pos.coverage * 100).toFixed(1);
-  covEl.textContent = `coverage: ${cov}% of tokens tagged. ` +
-                      (pos.coverage < 0.5 ? "⚠ low — POS unreliable for this source." : "");
-
-  const aggMode = document.getElementById("pos-agg").value === "max"
-                  ? "by_pos_max" : "by_pos_mean";
-  const byPos = pos[aggMode] || {};
-  const tags = POS_ORDER.filter(t => byPos[t] && byPos[t].n_words >= 3);
-
-  function makeBar(elId, metricKey, title, range) {
-    const xs = tags;
-    const ys = tags.map(t => byPos[t][metricKey]);
-    const ns = tags.map(t => byPos[t].n_words);
-    const colors = tags.map(t => POS_PALETTE[t] || "#888");
-    Plotly.newPlot(elId, [{
-      type: "bar", x: xs, y: ys, customdata: ns,
-      marker: { color: colors },
-      hovertemplate: "%{x}<br>" + metricKey + ": %{y:.3f}<br>n_words: %{customdata}<extra></extra>",
-    }], layoutCopy({
-      title: { text: title, font: { size: 12 } },
-      yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, range ? { range: range } : {}),
-      xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { tickangle: -45, tickfont: { size: 10 } }),
-    }), PLOT_CONFIG);
-  }
-  makeBar("pos-bar-dcs",      "deep_contribution_share",
-          "deep_contribution_share per POS (avg across all layers)", [0, 1]);
-  makeBar("pos-bar-loopdisp", "loop_displacement",
-          "loop_displacement per POS (avg across all layers)", null);
-  makeBar("pos-bar-steps",    "expected_steps",
-          "expected_steps per POS (avg across all layers)", [0, META.max_loops]);
-  makeBar("pos-bar-loss",     "loss",
-          "loss per POS — which words are hard to predict?", null);
+    cfg.diverging
+      ? `${cfg.range[0].toFixed(1)} <span class="swatch" style="background: linear-gradient(to right, #b6533a, #f6f3ec, #2a4d6e);"></span> ${cfg.range[1].toFixed(1)}  (wide ↔ deep)`
+      : `${zmin.toFixed(2)} <span class="swatch" style="background: linear-gradient(to right, #f6f3ec, #d8c98c, #2a4d6e);"></span> ${zmax.toFixed(2)}`;
 }
 
 function drawPOSSingleLayer(source) {
-  // §5c — bars for ONE layer at a time.
   const pos = SOURCES[source].agg.pos;
-  if (!pos) {
-    for (const id of ["pos-single-dcs", "pos-single-loopdisp", "pos-single-steps", "pos-single-gdr"]) {
-      document.getElementById(id).innerHTML =
-        '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-family:var(--mono);font-size:12px;">no POS data</div>';
-    }
-    return;
-  }
-  const aggKey = document.getElementById("pos-agg").value === "max"
-                 ? "by_pos_layer_max" : "by_pos_layer_mean";
+  const agg = document.getElementById("pos-agg").value;
   const layer = parseInt(document.getElementById("pos-single-layer").value);
   const tags = getPOSTagsPresent(pos, MIN_WORDS_PER_CELL);
+  const wordCounts = tags.map(t => pos.n_words_per_pos[t] || 0);
 
-  function makeBar(elId, metricKey, title, range) {
-    const data = pos[aggKey][metricKey] || {};
-    const xs = tags;
-    const ys = tags.map(t => (data[t] || [])[layer]);
-    const ns = tags.map(t => pos.n_words_per_pos[t] || 0);
-    const colors = tags.map(t => POS_PALETTE[t] || "#888");
-    Plotly.newPlot(elId, [{
-      type: "bar", x: xs, y: ys, customdata: ns,
-      marker: { color: colors },
-      hovertemplate: "%{x}<br>" + metricKey + " @ L" + layer +
-                     ": %{y:.3f}<br>n_words: %{customdata}<extra></extra>",
-    }], layoutCopy({
-      title: { text: title + " — layer " + layer, font: { size: 12 } },
-      yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, range ? { range: range } : {}),
-      xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { tickangle: -45, tickfont: { size: 10 } }),
-    }), PLOT_CONFIG);
-  }
-  makeBar("pos-single-dcs",       "deep_contribution_share",
-          "deep_contribution_share per POS", [0, 1]);
-  makeBar("pos-single-loopdisp",  "loop_displacement",
-          "loop_displacement per POS", null);
-  makeBar("pos-single-steps",     "expected_steps",
-          "expected_steps per POS", [0, META.max_loops]);
-  makeBar("pos-single-gdr",       "gate_deep_relative",
-          "gate_deep_relative per POS", [0, 1]);
-}
-
-function drawPOSAll(source) {
-  drawPOSAveragedBars(source);
-  drawPOSHeatmap(source);
-  drawPOSSingleLayer(source);
-}
-
-// ---------------------------------------------------------------------------
-// §6 — cross-source comparison
-// ---------------------------------------------------------------------------
-
-/** Build z-matrix [tags × layers] for one (source, metric, agg). Null cells
- *  for under-sampled tags. */
-function _buildSourceZ(source, metric, agg, tags) {
-  const pos = SOURCES[source].agg.pos;
-  if (!pos) return null;
-  const aggKey = agg === "max" ? "by_pos_layer_max" : "by_pos_layer_mean";
-  const data = pos[aggKey][metric];
-  if (!data) return null;
-  const nLayer = META.n_layer;
-  // null-out cells where this source's word count for this tag is too low.
-  return tags.map(tag => {
-    const n = pos.n_words_per_pos[tag] || 0;
-    if (n < MIN_WORDS_PER_CELL) {
-      return Array(nLayer).fill(null);
-    }
-    const row = data[tag] || [];
-    return Array.from({length: nLayer}, (_, li) => {
-      const v = row[li];
-      return (v === null || v === undefined) ? null : v;
+  function _bar(elId, metric, color, refLine) {
+    const ys = tags.map(t => {
+      const arr = _layerArray(pos, metric, agg, t);
+      return (arr && arr[layer] !== undefined && arr[layer] !== null) ? arr[layer] : null;
     });
-  });
-}
-
-/** Union of POS tags present (with >=MIN_WORDS_PER_CELL words) in ANY of the
- *  given sources, ordered by canonical POS_ORDER. */
-function _unionTagsAcrossSources(sources) {
-  const present = new Set();
-  for (const s of sources) {
-    const pos = SOURCES[s].agg.pos;
-    if (!pos) continue;
-    for (const tag of POS_ORDER) {
-      if ((pos.n_words_per_pos[tag] || 0) >= MIN_WORDS_PER_CELL) {
-        present.add(tag);
-      }
+    let colors = color;
+    if (metric === "update_pref" || metric === "gate_pref") {
+      colors = ys.map(v => v === null ? "rgba(150,150,150,0.4)" :
+        (v >= 0.5
+          ? `rgba(${RGB_DEEP[0]},${RGB_DEEP[1]},${RGB_DEEP[2]},${0.4 + (v - 0.5)})`
+          : `rgba(${RGB_WIDE[0]},${RGB_WIDE[1]},${RGB_WIDE[2]},${0.4 + (0.5 - v)})`));
     }
-  }
-  return POS_ORDER.filter(t => present.has(t));
-}
-
-function drawPOSCompareSideBySide() {
-  const metric = document.getElementById("pos-compare-metric").value;
-  const agg = document.getElementById("pos-compare-agg").value;
-  const cfg = POS_METRIC_CFG[metric];
-  const container = document.getElementById("pos-compare-panels");
-  container.innerHTML = "";
-
-  const sources = META.source_order.filter(s => SOURCES[s].agg.pos);
-  if (sources.length === 0) {
-    container.innerHTML = '<div style="color:var(--muted); font-family:var(--mono); font-size:12px;">no source has POS data</div>';
-    return;
-  }
-
-  // Union of tags so every panel has the same y-axis.
-  const tags = _unionTagsAcrossSources(sources);
-  const nLayer = META.n_layer;
-
-  // Decide shared zmin/zmax/colorscale BEFORE drawing, so all panels use
-  // the same color mapping. Same rule as §5a: locked range for diverging
-  // metrics with known bounds, auto for unbounded ones.
-  let zmin, zmax, colorscale;
-  if (cfg.diverging && cfg.range !== null) {
-    zmin = cfg.range[0]; zmax = cfg.range[1]; colorscale = DIVERGING_SCALE;
-  } else if (cfg.range !== null) {
-    zmin = cfg.range[0]; zmax = cfg.range[1]; colorscale = SEQUENTIAL_SCALE;
-  } else {
-    // auto: take min/max across ALL sources to keep panels comparable.
-    let all = [];
-    for (const s of sources) {
-      const z = _buildSourceZ(s, metric, agg, tags);
-      if (z) all = all.concat(z.flat().filter(v => v !== null && isFinite(v)));
-    }
-    if (all.length === 0) { zmin = 0; zmax = 1; }
-    else { zmin = Math.min(...all); zmax = Math.max(...all); }
-    colorscale = SEQUENTIAL_SCALE;
-  }
-
-  // One heatmap per source, stacked vertically.
-  for (const source of sources) {
-    const wrap = document.createElement("div");
-    wrap.className = "chart-heatmap";
-    wrap.style.marginBottom = "8px";
-    const elId = `pos-compare-${source.replace(/[^a-z0-9_]/gi, "_")}`;
-    wrap.id = elId;
-    container.appendChild(wrap);
-
-    const z = _buildSourceZ(source, metric, agg, tags);
-    if (!z) {
-      wrap.innerHTML = `<div style="color:var(--muted); font-family:var(--mono); font-size:12px;">${source}: no POS data</div>`;
-      continue;
-    }
-    const wordCounts = tags.map(t => SOURCES[source].agg.pos.n_words_per_pos[t] || 0);
-    const customdata = tags.map((t, ti) =>
-      Array.from({length: nLayer}, () => wordCounts[ti])
-    );
-    const trace = {
-      type: "heatmap",
-      z: z,
-      x: Array.from({length: nLayer}, (_, i) => "L" + i),
-      y: tags,
-      colorscale: colorscale,
-      zmin: zmin, zmax: zmax,
-      customdata: customdata,
-      hovertemplate: source + "<br>POS=%{y}<br>layer=%{x}<br>" + cfg.label +
-                     "=%{z:.3f}<br>n_words=%{customdata}<extra></extra>",
-      colorbar: { thickness: 12, len: 0.9, tickfont: { size: 10 } },
-    };
     const layout = layoutCopy({
-      title: { text: `${source} — ${cfg.label}`, font: { size: 12 } },
-      xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, {
-        title: "layer", tickfont: { size: 10 }, type: "category",
-      }),
-      yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, {
-        title: "POS", tickfont: { size: 11 }, autorange: "reversed",
-      }),
-      margin: { l: 65, r: 60, t: 35, b: 45 },
+      title: { text: `${POS_METRIC_CFG[metric].label} @ layer ${layer}`, font: { size: 12 } },
+      xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { tickangle: -45, tickfont: { size: 10 } }),
+      yaxis: Object.assign({}, PLOT_LAYOUT.yaxis,
+        POS_METRIC_CFG[metric].range ? { range: POS_METRIC_CFG[metric].range } : {}),
+      shapes: refLine ? [{
+        type: "line", x0: -0.5, x1: tags.length - 0.5, y0: refLine, y1: refLine,
+        line: { color: "rgba(0,0,0,0.4)", width: 1, dash: "dot" },
+      }] : [],
     });
-    Plotly.newPlot(elId, [trace], layout, PLOT_CONFIG);
+    Plotly.newPlot(elId, [{
+      type: "bar", x: tags, y: ys,
+      marker: { color: colors },
+      customdata: wordCounts,
+      hovertemplate: "%{x}<br>" + POS_METRIC_CFG[metric].label +
+                     " = %{y:.3f}<br>n_words = %{customdata}<extra></extra>",
+    }], layout, PLOT_CONFIG);
   }
+
+  _bar("pos-single-update-pref", "update_pref",       COLOR_DEEP, 0.5);
+  _bar("pos-single-gate-pref",   "gate_pref",         COLOR_DEEP, 0.5);
+  _bar("pos-single-steps",       "expected_steps",    COLOR_NEUTRAL, null);
+  _bar("pos-single-loopdisp",    "loop_displacement", COLOR_DEEP, null);
 }
 
-function drawPOSDiffHeatmap() {
-  const metric = document.getElementById("pos-compare-metric").value;
-  const agg = document.getElementById("pos-compare-agg").value;
+function drawPOSLines(source) {
+  const pos = SOURCES[source].agg.pos;
+  const agg = document.getElementById("pos-agg").value;
+  const metric = document.getElementById("pos-lines-metric").value;
   const cfg = POS_METRIC_CFG[metric];
-  const a = document.getElementById("pos-diff-a").value;
-  const b = document.getElementById("pos-diff-b").value;
-  const el = document.getElementById("pos-diff-heatmap");
+  const tags = getPOSTagsPresent(pos, MIN_WORDS_PER_CELL);
 
-  if (!a || !b || !SOURCES[a] || !SOURCES[b] || !SOURCES[a].agg.pos || !SOURCES[b].agg.pos) {
-    el.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-family:var(--mono);font-size:12px;">pick two sources with POS data</div>';
-    return;
-  }
-  if (a === b) {
-    el.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-family:var(--mono);font-size:12px;">pick two different sources</div>';
-    return;
-  }
-
-  // Use intersection of well-sampled tags, so every cell in the diff exists.
-  // Union'd tags with one source missing would produce all-null rows.
-  const tags = POS_ORDER.filter(t =>
-    (SOURCES[a].agg.pos.n_words_per_pos[t] || 0) >= MIN_WORDS_PER_CELL &&
-    (SOURCES[b].agg.pos.n_words_per_pos[t] || 0) >= MIN_WORDS_PER_CELL
-  );
-  const nLayer = META.n_layer;
-  const zA = _buildSourceZ(a, metric, agg, tags);
-  const zB = _buildSourceZ(b, metric, agg, tags);
-
-  // Subtract element-wise. Null if either side is null.
-  const z = zA.map((rowA, ti) => {
-    const rowB = zB[ti];
-    return rowA.map((va, li) => {
-      const vb = rowB[li];
-      if (va === null || vb === null) return null;
-      return va - vb;
-    });
+  const traces = tags.map(tag => {
+    const ys = _layerArray(pos, metric, agg, tag);
+    const color = POS_PALETTE[tag] || "#888";
+    return {
+      type: "scatter", mode: "lines+markers",
+      x: ys ? ys.map((_, i) => i) : [],
+      y: ys || [],
+      name: tag + ` (n=${pos.n_words_per_pos[tag]})`,
+      line: { color: color, width: 1.5 },
+      marker: { color: color, size: 5 },
+      hovertemplate: tag + "<br>layer %{x}: " + cfg.label + "=%{y:.3f}<extra></extra>",
+    };
   });
 
-  // Symmetric colorscale around 0 for the diff. Magnitude = max |diff|.
-  const flat = z.flat().filter(v => v !== null && isFinite(v));
-  const maxAbs = flat.length ? Math.max(...flat.map(Math.abs)) : 0.1;
-  const zmin = -maxAbs;
-  const zmax = +maxAbs;
+  const shapes = (metric === "update_pref" || metric === "gate_pref") ? [{
+    type: "line", x0: 0, x1: META.n_layer - 1, y0: 0.5, y1: 0.5,
+    line: { color: "rgba(0,0,0,0.4)", width: 1, dash: "dot" },
+  }] : [];
 
-  // Hover shows A, B, and the diff.
-  const aData = SOURCES[a].agg.pos[agg === "max" ? "by_pos_layer_max" : "by_pos_layer_mean"][metric] || {};
-  const bData = SOURCES[b].agg.pos[agg === "max" ? "by_pos_layer_max" : "by_pos_layer_mean"][metric] || {};
-  const customdata = tags.map((t, ti) =>
-    Array.from({length: nLayer}, (_, li) => {
-      const va = (aData[t] || [])[li];
-      const vb = (bData[t] || [])[li];
-      return [
-        (va === undefined || va === null) ? NaN : va,
-        (vb === undefined || vb === null) ? NaN : vb,
-      ];
-    })
-  );
-
-  const trace = {
-    type: "heatmap",
-    z: z,
-    x: Array.from({length: nLayer}, (_, i) => "L" + i),
-    y: tags,
-    colorscale: DIVERGING_SCALE,
-    zmin: zmin, zmax: zmax,
-    customdata: customdata,
-    hovertemplate: `POS=%{y}<br>layer=%{x}<br>` +
-                   `${a}: %{customdata[0]:.3f}<br>` +
-                   `${b}: %{customdata[1]:.3f}<br>` +
-                   `diff: %{z:.3f}<extra></extra>`,
-    colorbar: { thickness: 12, len: 0.9, tickfont: { size: 10 } },
-  };
   const layout = layoutCopy({
-    title: { text: `${cfg.label}: ${a} − ${b}`, font: { size: 12 } },
-    xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, {
-      title: "layer", tickfont: { size: 10 }, type: "category",
-    }),
-    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, {
-      title: "POS", tickfont: { size: 11 }, autorange: "reversed",
-    }),
-    margin: { l: 65, r: 60, t: 40, b: 50 },
+    title: { text: `${cfg.label} across layers, per POS — ${source}`, font: { size: 12 } },
+    showlegend: true,
+    legend: { font: { size: 10 }, orientation: "v", x: 1.02, y: 1 },
+    margin: { l: 50, r: 140, t: 30, b: 50 },
+    xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { title: "layer", dtick: 1 }),
+    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis,
+      cfg.range ? { range: cfg.range } : {}),
+    shapes: shapes,
   });
-  Plotly.newPlot("pos-diff-heatmap", [trace], layout, PLOT_CONFIG);
+  Plotly.newPlot("pos-lines", traces, layout, PLOT_CONFIG);
 }
 
-function drawPOSCompareAll() {
-  drawPOSCompareSideBySide();
-  drawPOSDiffHeatmap();
+function drawDecisive(source) {
+  const pos = SOURCES[source].agg.pos;
+  if (!pos || !pos.decisive || Object.keys(pos.decisive).length === 0) {
+    for (const id of ["decisive-pref", "decisive-layer"]) {
+      document.getElementById(id).innerHTML =
+        '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-family:var(--mono);font-size:12px;">no decisive-layer data</div>';
+    }
+    return;
+  }
+  const tags = POS_ORDER.filter(t => pos.decisive[t] && pos.decisive[t].n_words >= MIN_WORDS_PER_CELL);
+  const prefs = tags.map(t => pos.decisive[t].mean_pref_at_decisive);
+  const layers = tags.map(t => pos.decisive[t].mean_decisive_layer);
+  const counts = tags.map(t => pos.decisive[t].n_words);
+
+  const prefColors = prefs.map(v => v >= 0.5
+    ? `rgba(${RGB_DEEP[0]},${RGB_DEEP[1]},${RGB_DEEP[2]},${0.4 + (v - 0.5)})`
+    : `rgba(${RGB_WIDE[0]},${RGB_WIDE[1]},${RGB_WIDE[2]},${0.4 + (0.5 - v)})`);
+  Plotly.newPlot("decisive-pref", [{
+    type: "bar", x: tags, y: prefs,
+    marker: { color: prefColors },
+    customdata: counts,
+    hovertemplate: "%{x}<br>update_pref at decisive layer = %{y:.3f}<br>n_words = %{customdata}<extra></extra>",
+  }], layoutCopy({
+    title: { text: "update_pref at the decisive layer, per POS", font: { size: 12 } },
+    xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { tickangle: -45, tickfont: { size: 10 } }),
+    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, { range: [0, 1] }),
+    shapes: [{
+      type: "line", x0: -0.5, x1: tags.length - 0.5, y0: 0.5, y1: 0.5,
+      line: { color: "rgba(0,0,0,0.4)", width: 1, dash: "dot" },
+    }],
+  }), PLOT_CONFIG);
+
+  Plotly.newPlot("decisive-layer", [{
+    type: "bar", x: tags, y: layers,
+    marker: { color: COLOR_NEUTRAL },
+    customdata: counts,
+    hovertemplate: "%{x}<br>mean decisive layer = %{y:.2f}<br>n_words = %{customdata}<extra></extra>",
+  }], layoutCopy({
+    title: { text: "mean decisive layer index, per POS", font: { size: 12 } },
+    xaxis: Object.assign({}, PLOT_LAYOUT.xaxis, { tickangle: -45, tickfont: { size: 10 } }),
+    yaxis: Object.assign({}, PLOT_LAYOUT.yaxis, { range: [0, META.n_layer - 1] }),
+  }), PLOT_CONFIG);
 }
 
 // ---------------------------------------------------------------------------
@@ -1883,19 +2048,37 @@ function init() {
   fillLayerSelector();
   drawOverview();
 
-  const defaultSource = META.source_order[0];
-  document.getElementById("source-select-2").value = defaultSource;
-  document.getElementById("source-select-3").value = defaultSource;
-  document.getElementById("source-select-4").value = defaultSource;
+  // Pick intelligent defaults for A and B
+  let srcA = META.source_order.find(s => s.includes("gsm")) || META.source_order[0];
+  let srcB = META.source_order.find(s => s.includes("trivia") || s.includes("cap")) || 
+             (META.source_order.length > 1 ? META.source_order[1] : META.source_order[0]);
+
+  document.getElementById("source-select-2").value = srcA;
+  document.getElementById("source-select-3").value = srcA;
+  document.getElementById("source-select-4").value = srcA;
+  document.getElementById("source-select-aligned").value = srcA;
+  
+  document.getElementById("source-diff-a").value = srcA;
+  document.getElementById("source-diff-b").value = srcB;
+
   const ss5 = document.getElementById("source-select-5");
-  if (ss5) ss5.value = defaultSource;
+  if (ss5) ss5.value = srcA;
 
-  drawSourceDeepDive(defaultSource);
-  drawLayerDynamics(defaultSource);
-  fillChunkSelector(defaultSource);
+  drawSourceDeepDive(srcA);
+  drawLayerDynamics(srcA);
+  fillChunkSelector(srcA);
   renderTokens();
-  drawPOSAll(defaultSource);
+  drawPOSAll(srcA);
+  
+  // Init Event-Aligned Plots
+  updateAnchorSelector(srcA);
+  drawAlignedTrajectories(srcA);
+  updateDiffAnchorSelector();
+  drawAlignedDiff();
+  updateBVAAnchorSelector();
+  drawBeforeVsAfter();
 
+  // Wiring Event Listeners
   document.getElementById("source-select-2").addEventListener("change", e => drawSourceDeepDive(e.target.value));
   document.getElementById("source-select-3").addEventListener("change", e => drawLayerDynamics(e.target.value));
   document.getElementById("source-select-4").addEventListener("change", e => {
@@ -1903,6 +2086,29 @@ function init() {
     lockedToken = null;
     renderTokens();
   });
+  
+  document.getElementById("source-select-aligned").addEventListener("change", e => {
+    updateAnchorSelector(e.target.value);
+    drawAlignedTrajectories(e.target.value);
+  });
+  document.getElementById("anchor-select").addEventListener("change", () => {
+    drawAlignedTrajectories(document.getElementById("source-select-aligned").value);
+  });
+  document.getElementById("show-samples-toggle").addEventListener("change", () => {
+    drawAlignedTrajectories(document.getElementById("source-select-aligned").value);
+  });
+  
+  document.getElementById("source-diff-a").addEventListener("change", () => {
+    updateDiffAnchorSelector(); drawAlignedDiff();
+  });
+  document.getElementById("source-diff-b").addEventListener("change", () => {
+    updateDiffAnchorSelector(); drawAlignedDiff();
+  });
+  document.getElementById("anchor-select-diff").addEventListener("change", drawAlignedDiff);
+
+  document.getElementById("anchor-select-bva").addEventListener("change", drawBeforeVsAfter);
+  document.getElementById("bva-window").addEventListener("change", drawBeforeVsAfter);
+
   document.getElementById("chunk-select").addEventListener("change", () => {
     lockedToken = null;
     renderTokens();
@@ -1910,6 +2116,8 @@ function init() {
   document.getElementById("color-metric").addEventListener("change", renderTokens);
   document.getElementById("layer-select").addEventListener("change", renderTokens);
   document.getElementById("show-pos-toggle").addEventListener("change", renderTokens);
+  document.getElementById("grid-metric").addEventListener("change", drawRoutingGrid);
+
   if (ss5) {
     ss5.addEventListener("change", e => drawPOSAll(e.target.value));
     document.getElementById("pos-agg").addEventListener("change", () => {
@@ -1921,24 +2129,9 @@ function init() {
     document.getElementById("pos-single-layer").addEventListener("change", () => {
       drawPOSSingleLayer(document.getElementById("source-select-5").value);
     });
-  }
-
-  // §6 wiring. Fill the source pickers for the difference heatmap with the
-  // available sources, default to first vs second so something shows on load.
-  const diffA = document.getElementById("pos-diff-a");
-  const diffB = document.getElementById("pos-diff-b");
-  if (diffA && diffB) {
-    for (const s of META.source_order) {
-      const o1 = document.createElement("option"); o1.value = s; o1.textContent = s; diffA.appendChild(o1);
-      const o2 = document.createElement("option"); o2.value = s; o2.textContent = s; diffB.appendChild(o2);
-    }
-    diffA.value = META.source_order[0];
-    diffB.value = META.source_order[1] || META.source_order[0];
-    drawPOSCompareAll();
-    document.getElementById("pos-compare-metric").addEventListener("change", drawPOSCompareAll);
-    document.getElementById("pos-compare-agg").addEventListener("change", drawPOSCompareAll);
-    diffA.addEventListener("change", drawPOSDiffHeatmap);
-    diffB.addEventListener("change", drawPOSDiffHeatmap);
+    document.getElementById("pos-lines-metric").addEventListener("change", () => {
+      drawPOSLines(document.getElementById("source-select-5").value);
+    });
   }
 }
 
@@ -1947,7 +2140,6 @@ init();
 </body>
 </html>
 """
-
 
 if __name__ == "__main__":
     main()

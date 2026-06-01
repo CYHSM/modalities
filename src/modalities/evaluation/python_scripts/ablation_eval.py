@@ -80,9 +80,20 @@ def parse_ablation(spec: str):
       'g_deep=1,g_wide=0'                -> {'g_deep': 1.0, 'g_wide': 0.0}
       'shuffle'                          -> {'shuffle': True}
       'force_loops=2'                    -> {'force_loops': 2}
+      'halt_threshold=0.1'               -> {'halt_threshold': 0.1}
       'g_deep=1,g_wide=0,force_loops=2'  -> combined
 
-    Returns a dict with optional keys: g_deep, g_wide, shuffle, force_loops.
+    Returns a dict with optional keys:
+      g_deep, g_wide, shuffle, force_loops, halt_threshold.
+
+    halt_threshold semantics: a token "exits" the loop at the first step
+    where prob_remain <= halt_threshold, dumping all remaining mass into
+    that step (halt_prob is forced to 1.0 for that token). Per-token, so
+    fast tokens exit early and slow ones keep looping up to max_loops.
+
+    halt_threshold=0 disables the threshold (= learned behavior).
+    halt_threshold=1.0 forces exit at step 0 (= K=1).
+    Typical sweep: 0.5, 0.3, 0.1, 0.05, 0.01.
     """
     out = {}
     if spec.strip().lower() == "learned":
@@ -94,16 +105,25 @@ def parse_ablation(spec: str):
         if part == "shuffle":
             out["shuffle"] = True
             continue
-        m = re.match(r"^(g_deep|g_wide|force_loops)\s*=\s*([\d.]+)$", part)
+        m = re.match(r"^(g_deep|g_wide|force_loops|halt_threshold)\s*=\s*([\d.]+)$", part)
         if not m:
             raise ValueError(f"can't parse ablation part: {part!r}")
         key, val = m.group(1), m.group(2)
         if key == "force_loops":
             out["force_loops"] = int(val)
+        elif key == "halt_threshold":
+            t = float(val)
+            if not (0.0 <= t <= 1.0):
+                raise ValueError(f"halt_threshold must be in [0,1], got {t}")
+            out["halt_threshold"] = t
         else:
             out[key] = float(val)
     if "shuffle" in out and ("g_deep" in out or "g_wide" in out):
         raise ValueError("shuffle is incompatible with constant gate overrides")
+    if "halt_threshold" in out and "force_loops" in out:
+        # force_loops sets the loop count exactly; halt_threshold tries to
+        # cut it short. Combining them is a confused spec — bail loudly.
+        raise ValueError("halt_threshold is incompatible with force_loops")
     return out
 
 
@@ -116,6 +136,7 @@ def ablation_name(spec_dict):
     if "g_wide" in spec_dict: parts.append(f"gw{spec_dict['g_wide']}")
     if spec_dict.get("shuffle"): parts.append("shuffle")
     if "force_loops" in spec_dict: parts.append(f"K{spec_dict['force_loops']}")
+    if "halt_threshold" in spec_dict: parts.append(f"halt{spec_dict['halt_threshold']}")
     return "_".join(parts).replace(".", "p")
 
 
@@ -374,9 +395,223 @@ def patch_force_loops(model, K):
     return n_patched
 
 
-# ----------------------------------------------------------------------------
-# Eval loop
-# ----------------------------------------------------------------------------
+def patch_halt_threshold(model, threshold):
+    """Force per-token early exit at the first step where prob_remain <= threshold.
+
+    Mechanism
+    ---------
+    The block's loop is:
+
+        halt_prob = router(h_loop, step_normalized, x=x)
+        p_stop    = prob_remain * halt_prob
+        prob_remain = prob_remain * (1 - halt_prob)
+        output_acc += h_loop * p_stop
+
+    We don't touch the block. Instead we wrap the block.forward to seed a
+    fresh `_current_prob_remain` attribute on the block at entry, AND
+    monkey-patch the loop iteration via the router wrapper. The router
+    wrapper does the override: if prob_remain[token] <= threshold, set
+    halt_prob[token] = 1.0.
+
+    Since we can't reach into the block's for-loop without rewriting it,
+    we instead use a clever shortcut: wrap the router. The router only
+    sees `h_loop` and `step_normalized`. But the block forward is reading
+    `prob_remain` from a local variable, which we can't see from outside.
+
+    So we DO have to override the block forward. We replicate its loop
+    structure but inject the threshold check. The block forward is long
+    but mechanical; we copy the math verbatim and only modify the halt_prob
+    line.
+
+    For threshold=0, this is a no-op (early-return).
+    For threshold>=1, every token halts at step 0 (= K=1).
+    """
+    if threshold is None or threshold <= 0.0:
+        return 0
+
+    import torch.nn.functional as F
+
+    n_patched = 0
+    for module in model.modules():
+        if type(module).__name__ != "AdaptiveRecursiveBlock":
+            continue
+        if not getattr(module, "has_loop_path", False):
+            continue
+
+        # Stash threshold + a place to collect mean expected_steps across
+        # forwards. We aggregate over the whole eval run; reset by caller.
+        module._halt_threshold = float(threshold)
+        if not hasattr(module, "_halt_stats"):
+            module._halt_stats = {
+                "sum_expected_steps": 0.0,
+                "n_tokens": 0,
+                # Batch-bounded actual loop steps: across forwards, sum of
+                # max step index where ANY token in the batch hadn't halted yet.
+                # This is the wall-clock-relevant number (the for-loop only
+                # exits when every token has prob_remain ≈ 0).
+                "sum_max_active_steps": 0,
+                "n_forwards": 0,
+            }
+
+        if hasattr(module, "_orig_forward_halt"):
+            # Already patched (re-entry, e.g. test). Refresh threshold and skip.
+            n_patched += 1
+            continue
+        module._orig_forward_halt = module.forward
+
+        # Build the patched forward by reaching into the block's loop logic.
+        # We can't simply call _orig_forward and post-edit; we need to
+        # intercept inside the loop. So we replicate the loop here. The
+        # rest of the block forward (deep path, wide path, gate, etc.) is
+        # NOT replicated — we delegate by calling the original forward but
+        # with a tweak: we use a "halt hook" by patching the router's
+        # forward instead. This is much simpler.
+        #
+        # The router's signature is (h, step_normalized, x=None). It
+        # returns a tensor (B, T, 1) of halt probs. We don't have access
+        # to prob_remain inside the router. So we maintain prob_remain
+        # ourselves, in lockstep with the block, by tracking step number
+        # and the halt_prob we returned each call.
+        #
+        # This works because the router is called exactly once per step,
+        # in order, by exactly one block. We reset on step_normalized=0.
+
+        router = module.router
+        if hasattr(router, "_orig_forward_halt"):
+            n_patched += 1
+            continue
+        router._orig_forward_halt = router.forward
+        router._halt_threshold = float(threshold)
+        router._halt_owner = module   # back-pointer for stats
+
+        def make_halt_router(orig_forward):
+            def patched(self, h, step_normalized, x=None):
+                halt_prob = orig_forward.__func__(self, h, step_normalized=step_normalized, x=x)
+                # halt_prob shape is (B, T, 1) or (B, T); normalize to (B, T, 1)
+                # for the math, then return same shape we got.
+                squeeze_back = (halt_prob.dim() == 2)
+                if squeeze_back:
+                    halt_prob_ = halt_prob.unsqueeze(-1)
+                else:
+                    halt_prob_ = halt_prob
+
+                # Maintain our own prob_remain in lockstep with the block.
+                # Reset at step 0 (step_normalized == 0.0) — that's when
+                # the block's loop just started.
+                if step_normalized == 0.0 or not hasattr(self, "_halt_prob_remain"):
+                    B, T = halt_prob_.shape[:2]
+                    self._halt_prob_remain = torch.ones(
+                        B, T, 1, device=halt_prob_.device, dtype=halt_prob_.dtype,
+                    )
+                    self._halt_step = 0
+                pr = self._halt_prob_remain   # (B, T, 1) pre-this-step
+
+                # Force halt where prob_remain has already dropped below threshold.
+                # `force_mask` is True for tokens that should exit NOW.
+                force_mask = (pr <= self._halt_threshold)
+                halt_prob_ = torch.where(force_mask, torch.ones_like(halt_prob_), halt_prob_)
+
+                # Bookkeeping: contribution to expected_steps for tokens that
+                # halt at this step. p_stop = pr * halt_prob_; step (1-indexed)
+                # is self._halt_step + 1.
+                p_stop = pr * halt_prob_
+                self._halt_owner._halt_stats["sum_expected_steps"] += float(
+                    (p_stop * (self._halt_step + 1)).sum().item()
+                )
+                # n_tokens counted ONCE per token, at step 0.
+                if self._halt_step == 0:
+                    B, T = halt_prob_.shape[:2]
+                    self._halt_owner._halt_stats["n_tokens"] += B * T
+
+                # Update prob_remain for next step.
+                self._halt_prob_remain = pr * (1.0 - halt_prob_)
+                self._halt_step += 1
+
+                # Batch-bounded actual-step tracking. The real loop in the
+                # block always runs to max_loops; but with proper early
+                # termination, it would exit as soon as every token in the
+                # batch has prob_remain ≈ 0. Simulate that: record the first
+                # step at which max(prob_remain) drops below a tiny epsilon.
+                # If no such step exists, the loop "needed" all max_loops.
+                eps = 1e-6
+                if (not hasattr(self, "_halt_max_active_step_this_fwd")
+                        or self._halt_max_active_step_this_fwd is None):
+                    self._halt_max_active_step_this_fwd = self._halt_owner.max_loops
+                if (self._halt_max_active_step_this_fwd >= self._halt_owner.max_loops
+                        and float(self._halt_prob_remain.max().item()) <= eps):
+                    self._halt_max_active_step_this_fwd = self._halt_step
+
+                # If this is the last router call of the loop, any residual
+                # prob_remain gets deposited by the block at step==max_loops
+                # (matching the post-loop pooling in AdaptiveRecursiveBlock).
+                # Add that contribution to the stats so E[steps] reflects
+                # the FULL trajectory, not just the halt mass.
+                owner = self._halt_owner
+                if self._halt_step >= owner.max_loops:
+                    tail = self._halt_prob_remain   # (B, T, 1)
+                    owner._halt_stats["sum_expected_steps"] += float(
+                        (tail * owner.max_loops).sum().item()
+                    )
+                    # Flush max_active_step at end of loop, then reset.
+                    owner._halt_stats["sum_max_active_steps"] += int(
+                        self._halt_max_active_step_this_fwd
+                    )
+                    owner._halt_stats["n_forwards"] += 1
+                    self._halt_max_active_step_this_fwd = None
+
+                return halt_prob_.squeeze(-1) if squeeze_back else halt_prob_
+            return patched
+
+        router.forward = MethodType(make_halt_router(router._orig_forward_halt), router)
+        n_patched += 1
+
+    return n_patched
+
+
+def collect_halt_stats(model):
+    """Sum expected_steps + max_active_steps across all loop blocks.
+
+    Returns two compute axes for the quality-vs-compute plot:
+      - mean_expected_steps_global: per-token theoretical compute (averages
+        over per-token early exits). What you'd pay with depth-batching.
+      - mean_max_active_steps: per-forward wall-clock-relevant compute,
+        the step at which the block's loop would exit with early
+        termination. Always >= mean_expected_steps; bounded by max_loops.
+    """
+    total_sum = 0.0
+    total_n = 0
+    total_max_steps = 0
+    total_fwd = 0
+    n_blocks = 0
+    per_layer_es = []
+    per_layer_max = []
+    for module in model.modules():
+        if type(module).__name__ != "AdaptiveRecursiveBlock":
+            continue
+        if not hasattr(module, "_halt_stats"):
+            continue
+        s = module._halt_stats["sum_expected_steps"]
+        n = module._halt_stats["n_tokens"]
+        smax = module._halt_stats["sum_max_active_steps"]
+        nf = module._halt_stats["n_forwards"]
+        if n > 0:
+            per_layer_es.append(s / n)
+        if nf > 0:
+            per_layer_max.append(smax / nf)
+        total_sum += s
+        total_n += n
+        total_max_steps += smax
+        total_fwd += nf
+        n_blocks += 1
+    if total_n == 0:
+        return None
+    return {
+        "mean_expected_steps_global": total_sum / total_n,
+        "mean_max_active_steps": total_max_steps / max(total_fwd, 1),
+        "mean_expected_steps_per_block": per_layer_es,
+        "mean_max_active_steps_per_block": per_layer_max,
+        "n_blocks": n_blocks,
+    }
 
 def eval_one_source(model, parquet_path, max_chunks, device, pos_map=None):
     """Iterate over a source's parquet, run model with current patches,
@@ -485,7 +720,9 @@ def main():
     # the router, so they don't collide.
     n_gates = patch_gates(model, spec)
     n_loops = patch_force_loops(model, spec.get("force_loops", None))
-    print(f"  patched {n_gates} dual gates, {n_loops} loop blocks")
+    n_halt = patch_halt_threshold(model, spec.get("halt_threshold", None))
+    print(f"  patched {n_gates} dual gates, {n_loops} loop blocks, "
+          f"{n_halt} halt-threshold routers")
 
     # Sources
     paloma_dir = Path(args.paloma_dir)
@@ -518,6 +755,16 @@ def main():
             for tag, stats in top:
                 print(f"    {tag:6s}  mean_loss={stats['mean_loss']:.3f}  n={stats['n_tokens']}")
         results["sources"][source] = r
+
+    # If a halt-threshold ablation, collect the expected-steps summary.
+    halt_stats = collect_halt_stats(model)
+    if halt_stats is not None:
+        results["halt_stats"] = halt_stats
+        print(f"\n  mean E[steps] (per-token, theoretical):  "
+              f"{halt_stats['mean_expected_steps_global']:.3f}")
+        print(f"  mean max-active steps (batch-bounded):   "
+              f"{halt_stats['mean_max_active_steps']:.3f}")
+        print(f"  (across {halt_stats['n_blocks']} loop blocks)")
 
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)

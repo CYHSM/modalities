@@ -1,8 +1,8 @@
 #!/bin/bash
 set -u
-SCRATCH_ROOT="/leonardo_scratch/large/userexternal/mfrey000/experiments_emnlp"
+SCRATCH_ROOT="/leonardo_scratch/large/userexternal/mfrey000/experiments_emnlp_revisions"
 WANDB_DIR="${SCRATCH_ROOT}/wandb/wandb"
-TARGET_PROJECT="dualpathflops-final"
+TARGET_PROJECT="dualfull"
 
 # --- Credentials ---
 if [ -z "${WANDB_API_KEY:-}" ] && ! grep -q "api.wandb.ai" "$HOME/.netrc" 2>/dev/null; then
@@ -26,7 +26,7 @@ FAILED=0
 for d in "$WANDB_DIR"/offline-run-*; do
   [ -d "$d" ] || continue
   echo "--- syncing $d"
-  if ! wandb sync "$d" --exclude-globs "*.png,*.jpg,*.jpeg,*.gif,*.mp4,*.html,*.mp3,*.pt,*.pth,*.bin,*.safetensors,*.h5,*.npz,*.parquet,media/**,artifact/**,files/media/**" --project "$TARGET_PROJECT"; then
+  if ! wandb sync "$d" --project "$TARGET_PROJECT"; then
     echo "⚠️  FAILED: $d"
     FAILED=1
   fi

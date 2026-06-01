@@ -55,6 +55,22 @@ ABLATIONS=(
     "force_loops=8"                 # 13: K=8
     "force_loops=9"                 # 14: K=9
     "force_loops=10"                # 15: K=10 (OOD: 6 steps past trained)
+    # --- adaptive halting: 10-point linear sweep, T in [0.1, 0.99] ---
+    # Lower thresholds (<0.1) are flat — router halts ~all tokens within 2
+    # steps on its own (trained K=4 with avg E[steps]≈1.94 at T=0.05). The
+    # threshold only bites past ~0.4; we still include 0.1-0.3 to show the
+    # flat region for the curve. T=0.99 instead of 1.0 since 1.0 is exactly
+    # K=1 (already at index 6).
+    "halt_threshold=0.1"            # 16
+    "halt_threshold=0.2"            # 17
+    "halt_threshold=0.3"            # 18
+    "halt_threshold=0.4"            # 19
+    "halt_threshold=0.5"            # 20
+    "halt_threshold=0.6"            # 21
+    "halt_threshold=0.7"            # 22
+    "halt_threshold=0.8"            # 23
+    "halt_threshold=0.9"            # 24
+    "halt_threshold=0.99"           # 25
 )
 
 if [ -z "${SLURM_ARRAY_TASK_ID:-}" ]; then
