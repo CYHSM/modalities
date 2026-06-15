@@ -1,0 +1,3 @@
+config_files/model_tests/leonardo/lr_scheduler/base_210M_cosine_final0_lr001.yaml
+config_files/model_tests/leonardo/lr_scheduler/base_210M_cosine_final0_lr005.yaml
+config_files/model_tests/leonardo/lr_scheduler/base_210M_cosine_final0_lr007.yaml
