@@ -1,0 +1,2172 @@
+settings:
+  experiment_id: ${modalities_env:experiment_id}
+  config_file_path: ${modalities_env:config_file_path}
+  referencing_keys:
+    sample_key: input_ids
+    target_key: target_ids
+    prediction_key: logits
+  cuda_env:
+    local_rank: ${cuda_env:LOCAL_RANK}
+    global_rank: ${cuda_env:RANK}
+    world_size: ${cuda_env:WORLD_SIZE}
+  paths:
+    experiments_root_path: ${modalities_env:experiments_root_path}
+    experiment_folder_path: ${settings.paths.experiments_root_path}/${settings.experiment_id}
+  intervals:
+    # steps in 4h = effective FLOPS/s * checkpoint every 4h / FLOPS per step
+    # steps in 4h = 512 * 2.25e^15 * 0.3 * 4*60*60 / (6 * 8B * 8M) = 12360
+    # batch size is 2^23 = 8M tokens
+    # we updated the value to 12500 to have some round numbers in the eval plots later
+    training_log_interval_in_steps: 1
+    checkpointing_interval_in_steps: 5000
+    evaluation_interval_in_steps: 5000
+  consistency_enforcement:
+    enforce_tokens_per_step_consistency: true
+    enforce_last_step_logged: false
+    enforce_last_step_evaluated: false
+    enforce_last_step_checkpointed: false
+    enforce_enough_tokens_in_dataset: false
+  step_profile:
+    gradient_accumulation_steps: 1
+    local_train_micro_batch_size: 2
+    sequence_length: 4096
+    dp_degree:
+      instance_key: dp_degree
+      pass_type: BY_REFERENCE
+  training_target:
+    num_target_tokens: 19_999_993_364_480  # TODO: 2^44 + 2^41  +2^37 = 19.928.648.253.440
+    num_target_steps:
+      component_key: number_conversion
+      variant_key: num_steps_from_num_tokens
+      config:
+        dp_degree:
+          instance_key: dp_degree
+          pass_type: BY_REFERENCE
+        local_micro_batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        global_num_tokens: ${settings.training_target.num_target_tokens}
+        sequence_length: ${settings.step_profile.sequence_length}
+        gradient_accumulation_steps: ${settings.step_profile.gradient_accumulation_steps}
+  training_progress:
+    global_num_seen_tokens: 0
+    num_seen_steps: 0
+    num_seen_samples: 0
+    last_step: -1
+
+collate_fn:
+  component_key: collate_fn
+  variant_key: gpt_2_llm_collator
+  config:
+    sample_key: ${settings.referencing_keys.sample_key}
+    target_key: ${settings.referencing_keys.target_key}
+
+train_dataset:
+  component_key: dataset
+  variant_key: combined
+  config:
+    datasets:
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_0.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_1.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_2.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_3.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_4.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_5.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_6.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_7.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_8.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_9.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_10.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_11.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_12.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_13.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_14.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_15.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_16.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_17.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_18.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_19.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_20.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_21.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_22.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_23.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_24.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_25.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_26.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_27.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_28.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_29.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_30.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_31.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_32.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_33.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_34.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_35.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_36.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_37.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_38.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_39.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_40.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_41.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_42.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_43.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_44.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_45.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_46.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_47.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_48.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_49.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    - component_key: dataset
+      variant_key: packed_mem_map_dataset_continuous
+      config:
+        raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_50.sanitized.pbin
+        sequence_length: ${settings.step_profile.sequence_length}
+        sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_51.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_52.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_53.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_54.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_55.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_56.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_57.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_58.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_59.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_60.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_61.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_62.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_63.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_64.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_65.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_66.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_67.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_68.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_69.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_70.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_71.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_72.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_73.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_74.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_75.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_76.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_77.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_78.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_79.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_80.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_81.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_82.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_83.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_84.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_85.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_86.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_87.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_88.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_89.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_90.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_91.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_92.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_93.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_94.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_95.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_96.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_97.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_98.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_99.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_100.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_101.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_102.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_103.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_104.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_105.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_106.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_107.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_108.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_109.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_110.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_111.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_112.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_113.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_114.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_115.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_116.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_117.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_118.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_119.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_120.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_121.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_122.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_123.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_124.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_125.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_126.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_127.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_128.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_129.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_130.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_131.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_132.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_133.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_134.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_135.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_136.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_137.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_138.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_139.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_140.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_141.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_142.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_143.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_144.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_145.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_146.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_147.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_148.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_149.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_150.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_151.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_152.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_153.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_154.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_155.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_156.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_157.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_158.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_159.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_160.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_161.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_162.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_163.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_164.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_165.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_166.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_167.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_168.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_169.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_170.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_171.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_172.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_173.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_174.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_175.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_176.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_177.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_178.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_179.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_180.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_181.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_182.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_183.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_184.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_185.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_186.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_187.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_188.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_189.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_190.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_191.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_192.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_193.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_194.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_195.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_196.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_197.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_198.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_199.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_200.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_201.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_202.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_203.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_204.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_205.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_206.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_207.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_208.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_209.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_210.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_211.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_212.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_213.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_214.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_215.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_216.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_217.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_218.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_219.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_220.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_221.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_222.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_223.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_224.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_225.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_226.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_227.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_228.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_229.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_230.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_231.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_232.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_233.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_234.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_235.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_236.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_237.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_238.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_239.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_240.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_241.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_242.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_243.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_244.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_245.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_246.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_247.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_248.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_249.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_250.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_251.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_252.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_253.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_254.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_255.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_256.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_257.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_258.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_259.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_260.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_261.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_262.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_263.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_264.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_265.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_266.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_267.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_268.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_269.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_270.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_271.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_272.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_273.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_274.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_275.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_276.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_277.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_278.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_279.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_280.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_281.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_282.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_283.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_284.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_285.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_286.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_287.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_288.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_289.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_290.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_291.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_292.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_293.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_294.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_295.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_296.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_297.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_298.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+    # - component_key: dataset
+    #   variant_key: packed_mem_map_dataset_continuous
+    #   config:
+    #     raw_data_path: /leonardo_scratch/large/userexternal/mluebber/datasets/soofi_en_de_modalities/chunk_299.sanitized.pbin
+    #     sequence_length: ${settings.step_profile.sequence_length}
+    #     sample_key: ${settings.referencing_keys.sample_key}
+
+
+train_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: train
+    dataset:
+      instance_key: train_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: resumable_distributed_sampler
+          config:
+            dataset:
+              instance_key: train_dataset
+              pass_type: BY_REFERENCE
+            rank: ${settings.cuda_env.global_rank}
+            num_replicas: ${settings.cuda_env.world_size}
+            shuffle: false
+            seed: 42
+            drop_last: true
+            skip_num_global_samples: ${settings.training_progress.num_seen_samples}
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+test_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: /data/otc-prod-bucket/preprocessing/preprocessed/Nemotron-CC/tokenized/validation/modalities/100k/100k_samples_validation_split__last_samples_from_nemotron_cc_chunk_99.pbin
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key:  ${settings.referencing_keys.sample_key}
+
+test_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 4
+    pin_memory: true
+    dataloader_tag: test
+    dataset:
+      instance_key: test_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: distributed_sampler
+          config:
+            rank: ${settings.cuda_env.global_rank}
+            num_replicas: ${settings.cuda_env.world_size}
+            shuffle: false
+            drop_last: true
+            dataset:
+              instance_key: test_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+eval_dataloaders: []
+  # - instance_key: test_dataloader
+  #   pass_type: BY_REFERENCE
+
+checkpoint_saving:
+  component_key: checkpoint_saving
+  variant_key: default
+  config:
+    checkpoint_saving_strategy:
+      component_key: checkpoint_saving_strategy
+      variant_key: save_k_most_recent_checkpoints_strategy
+      config:
+        k: -1
+    checkpoint_saving_execution:
+      component_key: checkpoint_saving_execution
+      variant_key: dcp
+      config:
+        checkpoint_path: ${settings.paths.experiment_folder_path}/checkpoints
+        global_rank: ${settings.cuda_env.global_rank}
+        experiment_id: ${settings.experiment_id}
+
+loss_fn:
+  component_key: loss
+  variant_key: clm_cross_entropy_loss
+  config:
+    target_key: ${settings.referencing_keys.target_key}
+    prediction_key: ${settings.referencing_keys.prediction_key}
+
+device_mesh:
+  component_key: device_mesh
+  variant_key: default
+  config:
+    device_type: cuda
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: -1
+    world_size: ${settings.cuda_env.world_size}
+
+dp_degree:
+  component_key: number_conversion
+  variant_key: parallel_degree
+  config:
+    device_mesh:
+      instance_key: device_mesh
+      pass_type: BY_REFERENCE
+    parallelism_methods: [dp_shard, dp_replicate]
+
+app_state:
+  component_key: app_state
+  variant_key: raw
+  config:
+    model:
+      instance_key: initialized_model
+      pass_type: BY_REFERENCE
+    optimizer:
+      instance_key: optimizer
+      pass_type: BY_REFERENCE
+    lr_scheduler:
+      instance_key: lr_scheduler
+      pass_type: BY_REFERENCE
+
+initialized_model:
+  component_key: model
+  variant_key: model_initialized
+  config:
+    model:
+      instance_key: fsdp_model
+      pass_type: BY_REFERENCE
+    model_initializer:
+      component_key: model_initialization
+      variant_key: gpt2_llama3_like
+      config:
+        num_layers: ${model_raw.config.n_layer}
+        n_embd: ${model_raw.config.n_embd}
+        depth_init: True
+
+fsdp_model:
+  component_key: model
+  variant_key: fsdp2_wrapped
+  config:
+    model:
+      instance_key: compiled_model
+      pass_type: BY_REFERENCE
+    device_mesh:
+      instance_key: device_mesh
+      pass_type: BY_REFERENCE
+    mixed_precision_settings:
+      param_dtype: BF_16
+      reduce_dtype: FP_32
+    block_names: [GPT2Block]
+    layers_per_fsdp_unit: 4
+
+compiled_model:
+  component_key: model
+  variant_key: compiled
+  config:
+    model:
+      instance_key: model_raw
+      pass_type: BY_REFERENCE
+    block_names: [GPT2Block]
+
+model_raw:
+  component_key: model
+  variant_key: gpt2
+  config:
+    use_meta_device: false
+    use_weight_tying: false
+    sample_key: ${settings.referencing_keys.sample_key}
+    poe_type: NOPE
+    sequence_length: ${settings.step_profile.sequence_length}
+    prediction_key: ${loss_fn.config.prediction_key}
+    vocab_size: 131072
+    n_layer: 36
+    n_head_q: 16
+    n_head_kv: 4
+    ffn_hidden: 16512   # will be internally mapped to 11008 (by multiplying with 2/3)
+    n_embd: 2048
+    dropout: 0.0
+    bias: false
+    attention_config:
+      qkv_transforms:
+        - type_hint: RotaryTransform
+          config:
+            n_embd: ${model_raw.config.n_embd}
+            n_head: ${model_raw.config.n_head_q}
+            seq_length_dim: -2
+            base_freq: 50000
+      qk_norm_config:
+        norm_type: pytorch_rms_norm
+        config:
+          normalized_shape: 128 # model_raw.config.n_embd // model_raw.config.n_head_q
+          eps: 1.0e-06
+
+      
+    attention_implementation: pytorch_flash
+    activation_type: swiglu
+    attention_norm_config:
+      norm_type: pytorch_rms_norm
+      config:
+        normalized_shape: ${model_raw.config.n_embd}
+        eps: 1.0e-06
+    ffn_norm_config:
+      norm_type: pytorch_rms_norm
+      config:
+        normalized_shape: ${model_raw.config.n_embd}
+        eps: 1.0e-06
+    lm_head_norm_config:
+      norm_type: pytorch_rms_norm
+      config:
+        normalized_shape: ${model_raw.config.n_embd}
+        eps: 1.0e-06
+
+lr_scheduler:
+  component_key: scheduler
+  variant_key: linear_lr
+  config:
+    optimizer:
+      instance_key: optimizer
+      pass_type: BY_REFERENCE
+    start_factor: 0.01
+    end_factor: 1
+    total_iters: 2000
+
+optimizer:
+  component_key: optimizer
+  variant_key: adam_w
+  config:
+    lr: 0.0002
+    betas:
+    - 0.9
+    - 0.95
+    eps: 1.0e-08
+    fused: true
+    foreach: false
+    weight_decay: 0.1
+    weight_decay_groups_excluded:
+    - embedding
+    - layernorm
+    wrapped_model:
+      instance_key: initialized_model
+      pass_type: BY_REFERENCE
+
+gradient_clipper:
+  component_key: gradient_clipper
+  variant_key: fsdp2
+  config:
+    wrapped_model:
+      instance_key: initialized_model
+      pass_type: BY_REFERENCE
+    norm_type: P2_NORM
+    max_norm: 1.0
+    device_mesh:
+      instance_key: device_mesh
+      pass_type: BY_REFERENCE
+
+progress_subscriber:
+  component_key: progress_subscriber
+  variant_key: rich
+  config:
+    global_rank: ${settings.cuda_env.global_rank}
+    num_seen_steps: ${settings.training_progress.num_seen_steps}
+    num_target_steps: ${settings.training_target.num_target_steps}
+    train_dataloader_tag: ${train_dataloader.config.dataloader_tag}
+    eval_dataloaders:
+      instance_key: eval_dataloaders
+      pass_type: BY_REFERENCE
+
+evaluation_subscriber:
+  component_key: results_subscriber
+  variant_key: wandb
+  config:
+    entity: soofi-exchange
+    global_rank: ${settings.cuda_env.global_rank}
+    project: 3B-dense-soofi-en-de
+    mode: OFFLINE
+    experiment_id: ${settings.experiment_id}
+    directory: ${settings.paths.experiment_folder_path}/wandb
+    config_file_path: ${settings.config_file_path}
+
+mfu_calculator:
+  component_key: mfu_calculator
+  variant_key: gpt2
+  config:
+    n_layer: ${model_raw.config.n_layer}
+    sequence_length: ${settings.step_profile.sequence_length}
+    n_embd: ${model_raw.config.n_embd}
+    world_size: ${settings.cuda_env.world_size}
+    wrapped_model:
+      instance_key: initialized_model
+      pass_type: BY_REFERENCE
+    device_mesh:
+      instance_key: device_mesh
+      pass_type: BY_REFERENCE

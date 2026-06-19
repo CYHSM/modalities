@@ -112,6 +112,98 @@ def _detach_metrics(metrics: dict | None) -> dict | None:
             result[key] = value
     return result
 
+class CLMCrossEntropyWithPonderLoss(Loss):
+    def __init__(
+        self,
+        target_key: str,
+        prediction_key: str,
+        tag: str = "CLMCrossEntropyWithPonderLoss",
+    ):
+        super().__init__(tag)
+        self.target_key = target_key
+        self.prediction_key = prediction_key
+        self.ce_loss_fun = CrossEntropyLoss(reduction="mean")
+
+        # Stored after each forward for the Trainer to retrieve
+        self._last_ce_loss = torch.tensor(0.0)
+        self._last_ponder_loss = torch.tensor(0.0)
+        self._last_metrics: dict | None = None  # The full MetricsBag (or None)
+
+    @overload
+    def __call__(self, forward_batch: InferenceResultBatch) -> torch.Tensor:
+        ...
+
+    @overload
+    def __call__(self, outputs: torch.Tensor | dict, targets: torch.Tensor) -> torch.Tensor:
+        ...
+
+    def __call__(self, *args, **kwargs) -> torch.Tensor:
+        labels, outputs = self._parse_arguments(args, kwargs)
+
+        if isinstance(outputs, dict):
+            if "logits" in outputs:
+                lm_logits = outputs["logits"]
+            else:
+                lm_logits = outputs[self.prediction_key]
+            ponder_loss = outputs.get("ponder_loss", torch.tensor(0.0, device=lm_logits.device))
+            metrics = outputs.get("metrics", None)
+        else:
+            lm_logits = outputs
+            ponder_loss = torch.tensor(0.0, device=lm_logits.device)
+            metrics = None
+
+        labels = labels.to(lm_logits.device)
+        shift_logits = lm_logits.contiguous()
+        shift_labels = labels.contiguous().long()
+
+        ce_loss = self.ce_loss_fun(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1),
+        )
+
+        # Store detached copies for retrieval
+        self._last_ce_loss = ce_loss.detach()
+        self._last_ponder_loss = ponder_loss.detach()
+        self._last_metrics = _detach_metrics(metrics)
+
+        return ce_loss + ponder_loss
+
+    def get_metrics(self) -> dict:
+        """
+        Returns the loss scalars + the full metrics bag from the last forward.
+        The Trainer iterates this generically — no manual per-field extraction.
+        """
+        return {
+            "ce_loss": self._last_ce_loss,
+            "ponder_loss": self._last_ponder_loss,
+            "metrics": self._last_metrics,
+        }
+
+    def _parse_arguments(
+        self,
+        args: list[torch.Tensor | dict] | list[InferenceResultBatch],
+        kwargs: dict[str, torch.Tensor | dict] | dict[str, InferenceResultBatch],
+    ) -> tuple[torch.Tensor, torch.Tensor | dict]:
+        if len(args) == 1 and isinstance(args[0], InferenceResultBatch):
+            forward_batch = args[0]
+            labels = forward_batch.get_targets(self.target_key)
+            outputs = forward_batch.get_predictions(self.prediction_key)
+        elif "forward_batch" in kwargs and isinstance(kwargs["forward_batch"], InferenceResultBatch):
+            forward_batch = kwargs["forward_batch"]
+            labels = forward_batch.get_targets(self.target_key)
+            outputs = forward_batch.get_predictions(self.prediction_key)
+        elif len(args) == 2:
+            outputs, labels = args
+        elif "outputs" in kwargs and "targets" in kwargs:
+            outputs = kwargs["outputs"]
+            labels = kwargs["targets"]
+        elif len(args) == 1 and "targets" in kwargs:
+            outputs = args[0]
+            labels = kwargs["targets"]
+        else:
+            raise TypeError("Invalid arguments for CLMCrossEntropyWithPonderLoss.__call__")
+        return labels, outputs
+
 
 def nce_loss(
     embedding1: torch.Tensor, embedding2: torch.Tensor, device: torch.device, is_asymmetric: bool, temperature: float
