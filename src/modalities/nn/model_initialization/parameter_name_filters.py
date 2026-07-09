@@ -29,10 +29,10 @@ NAMED_PARAMETER_INIT_GROUPS = {
         WeightInitTypes.PLAIN: RegexFilter(
             weights=[
                 # attention projection weights
-                r"transformer\.h\.\d+\.attn\.(q_attn|k_attn|v_attn|c_proj)\.weight",
+                r"transformer\.h\..+?\.attn\.(q_attn|k_attn|v_attn|c_proj)\.weight",
                 # hidden feed forward in attention block
-                r"transformer\.h\.\w+\.mlp\.(W|V|W_2)\.weight",  # SwiGLU
-                r"transformer\.h\.\w+\.mlp\.(c_fc|c_proj)\.weight",  # gelu
+                r"transformer\.h\..+?\.mlp\.(W|V|W_2)\.weight",  # SwiGLU
+                r"transformer\.h\..+?\.mlp\.(c_fc|c_proj)\.weight",  # gelu
                 # embedding weights
                 r"transformer\.wte\.weight",
                 r"transformer\.wpe\.weight",
@@ -41,9 +41,9 @@ NAMED_PARAMETER_INIT_GROUPS = {
             ],
             biases=[
                 # NOTE: some bias terms might not be present due to user configuration
-                r"transformer\.h\.\d+\.attn\.(q_attn|k_attn|v_attn|c_proj)\.bias",
-                r"transformer\.h\.\w+\.mlp\.(W|V|W_2)\.bias",  # SwiGLU
-                r"transformer\.h\.\w+\.mlp\.(c_fc|c_proj)\.bias",  # gelu
+                r"transformer\.h\..+?\.attn\.(q_attn|k_attn|v_attn|c_proj)\.bias",
+                r"transformer\.h\..+?\.mlp\.(W|V|W_2)\.bias",  # SwiGLU
+                r"transformer\.h\..+?\.mlp\.(c_fc|c_proj)\.bias",  # gelu
                 r"transformer\.lm_head\.bias",  # typically not present
             ],
         ),
@@ -52,9 +52,9 @@ NAMED_PARAMETER_INIT_GROUPS = {
         #         https://arxiv.org/abs/2312.16903
         WeightInitTypes.SCALED: RegexFilter(
             weights=[
-                r"transformer\.h\.\d+\.attn\.c_proj\.weight",
-                r"transformer\.h\.\w+\.mlp\.W_2.weight",  # SwiGLU
-                r"transformer\.h\.\w+\.mlp\.c_proj\.weight",  # gelu
+                r"transformer\.h\..+?\.attn\.c_proj\.weight",
+                r"transformer\.h\..+?\.mlp\.W_2.weight",  # SwiGLU
+                r"transformer\.h\..+?\.mlp\.c_proj\.weight",  # gelu
             ]
         ),
         WeightInitTypes.SCALED_EMBED: RegexFilter(
