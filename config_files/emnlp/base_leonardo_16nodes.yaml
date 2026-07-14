@@ -2977,3 +2977,64 @@ tokenizer:
     pretrained_model_name_or_path: /leonardo_work/EUHPC_D21_101/mfrey/tokenizer/local_gpt2_tokenizer/
     padding: false
     truncation: false
+model_converter:
+  component_key: model_converter
+  variant_key: default
+  config:
+    command_template: python src/modalities/conversion/dualpath/convert_dualpath.py {checkpoint_path}
+      {output_dir} --modalities_config {modalities_config} > {checkpoint_path}/conversion.log
+      2>&1
+    checkpoint_dir: ${settings.paths.experiments_root_path}/${settings.experiment_id}
+    global_rank: ${settings.cuda_env.global_rank}
+    eval_interval: ${settings.intervals.checkpointing_interval_in_steps}
+downstream_evaluator:
+  component_key: downstream_evaluator
+  variant_key: default
+  config:
+    tokenizer:
+      instance_key: tokenizer
+      pass_type: BY_REFERENCE
+    tasks:
+    - minerva_math_algebra:bpb::olmes
+    - minerva_math_counting_and_probability:bpb::olmes
+    - minerva_math_geometry:bpb::olmes
+    - minerva_math_intermediate_algebra:bpb::olmes
+    - minerva_math_number_theory:bpb::olmes
+    - minerva_math_prealgebra:bpb::olmes
+    - minerva_math_precalculus:bpb::olmes
+    - arc_challenge:rc::olmes:full
+    - arc_easy:rc::olmes:full
+    - hellaswag:rc::olmes:full
+    - winogrande:rc::olmes:full
+    - socialiqa:rc::olmes:full
+    - piqa:rc::olmes:full
+    - qasper_yesno:rc::olmes
+    - lambada
+    - arc_challenge:rc:bpb::olmes:full
+    - arc_easy:rc:bpb::olmes:full
+    - hellaswag:rc:bpb::olmes:full
+    - winogrande:rc:bpb::olmes:full
+    - socialiqa:rc:bpb::olmes:full
+    - piqa:rc:bpb::olmes:full
+    - qasper_yesno:rc:bpb::olmes
+    - lambada:bpb
+    - gsm8k::olmes
+    eval_interval: ${settings.intervals.evaluation_interval_in_steps}
+    checkpoint_dir: ${settings.paths.experiments_root_path}/${settings.experiment_id}
+    global_rank: ${settings.cuda_env.global_rank}
+    olmes_command_template: bash scripts/evaluation/run_olmes_sbatch.sh {hf_model_dir}
+      '{tasks}' {step} 128 1
+mfu_calculator:
+  component_key: mfu_calculator
+  variant_key: gpt2
+  config:
+    n_layer: ${model_raw.config.n_layer}
+    sequence_length: ${settings.step_profile.sequence_length}
+    n_embd: ${model_raw.config.n_embd}
+    world_size: ${settings.cuda_env.world_size}
+    wrapped_model:
+      instance_key: initialized_model
+      pass_type: BY_REFERENCE
+    device_mesh:
+      instance_key: device_mesh
+      pass_type: BY_REFERENCE

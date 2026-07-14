@@ -72,11 +72,15 @@ class AdaptiveComputationConfig(BaseModel):
     halt_threshold: float = 1.00
     ponder_penalty_weight: float = 0.00
     wide_ffn_hidden: int = 0
+    loop_combination_mode: Literal["act", "final", "uniform_average"] = "act"
 
     # ---- Gate mode ---------------------------------------------------------
+
     # "convex":     output = g * h_deep + (1-g) * h_wide  (single gate)
     # "two_gates":  output = g_d * h_deep_eff + g_w * h_wide_eff
-    gate_mode: Literal["convex", "two_gates"] = "two_gates"
+    # "softmax":    output = g_d * h_deep_eff + g_w * h_wide_eff (g_d, g_w from softmax)
+    # "fixed":      output = 0.5 * h_deep_eff + 0.5 * h_wide_eff
+    gate_mode: Literal["convex", "two_gates", "softmax", "fixed"] = "two_gates"
     gate_init_bias: float = 0.0
     deep_gate_init_bias: float = 0.0
     wide_gate_init_bias: float = 0.0
@@ -617,6 +621,7 @@ class DualPathGateTwoGates(nn.Module):
         use_cross: bool = False,
         cross_scale_deep_init: float = -7.0,
         cross_scale_wide_init: float = -7.0,
+        is_softmax: bool = False,
     ):
         super().__init__()
         self.deep_gate_init_bias = deep_gate_init_bias
@@ -624,6 +629,7 @@ class DualPathGateTwoGates(nn.Module):
         self.use_cross = use_cross
         self.cross_scale_deep_init = cross_scale_deep_init
         self.cross_scale_wide_init = cross_scale_wide_init
+        self.is_softmax = is_softmax
 
         # Single Linear projecting to 2 logits — matches old code's gate_proj.
         self.gate_proj = nn.Linear(n_embd, 2, bias=True)
@@ -678,7 +684,10 @@ class DualPathGateTwoGates(nn.Module):
             aux:           dict
         """
         logits = self.gate_proj(x)                       # (B, T, 2)
-        gates_raw = torch.sigmoid(logits)                # (B, T, 2)
+        if self.is_softmax:
+            gates_raw = torch.softmax(logits, dim=-1)    # (B, T, 2)
+        else:
+            gates_raw = torch.sigmoid(logits)            # (B, T, 2)
         gate_deep_raw = gates_raw[..., 0:1]
         gate_wide_raw = gates_raw[..., 1:2]
 
@@ -747,6 +756,77 @@ class DualPathGateTwoGates(nn.Module):
 
 
 # =============================================================================
+# Dual Path Gate — fixed (no gate) variant
+# =============================================================================
+
+class DualPathGateFixed(nn.Module):
+    """Fixed gate mechanism that statically assigns 0.5 to both paths."""
+
+    def __init__(
+        self,
+        use_cross: bool = False,
+        cross_scale_deep_init: float = -7.0,
+        cross_scale_wide_init: float = -7.0,
+        n_embd: int = 768,
+    ):
+        super().__init__()
+        self.use_cross = use_cross
+        if self.use_cross:
+            self.proj_w2d = nn.Linear(n_embd, n_embd, bias=False)
+            self.proj_d2w = nn.Linear(n_embd, n_embd, bias=False)
+            self.cross_scale_deep = nn.Parameter(torch.empty(1))
+            self.cross_scale_wide = nn.Parameter(torch.empty(1))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        if self.use_cross:
+            nn.init.zeros_(self.proj_w2d.weight)
+            nn.init.zeros_(self.proj_d2w.weight)
+            nn.init.constant_(self.cross_scale_deep, -7.0)
+            nn.init.constant_(self.cross_scale_wide, -7.0)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        h_deep: torch.Tensor,
+        h_wide: torch.Tensor,
+        gate_override: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+        gate = torch.full((x.size(0), x.size(1), 1), 0.5, device=x.device, dtype=x.dtype)
+        if gate_override is not None:
+            if gate_override.dim() == 2:
+                gate_override = gate_override.unsqueeze(-1)
+            gate = gate_override.to(dtype=gate.dtype, device=gate.device)
+
+        if self.use_cross:
+            s_d = F.softplus(self.cross_scale_deep)
+            s_w = F.softplus(self.cross_scale_wide)
+            cross_w2d = s_d * self.proj_w2d(h_wide)
+            cross_d2w = s_w * self.proj_d2w(h_deep)
+            h_deep_eff = h_deep + cross_w2d
+            h_wide_eff = h_wide + cross_d2w
+        else:
+            cross_w2d = None
+            cross_d2w = None
+            h_deep_eff = h_deep
+            h_wide_eff = h_wide
+
+        output = gate * h_deep_eff + (1.0 - gate) * h_wide_eff
+
+        with torch.no_grad():
+            aux = {
+                "gate_logit_mean": torch.tensor(0.0, device=x.device),
+                "gate_logit_std": torch.tensor(0.0, device=x.device),
+            }
+            if self.use_cross:
+                aux["cross_w2d_norm_per_token"] = cross_w2d.norm(dim=-1)
+                aux["cross_d2w_norm_per_token"] = cross_d2w.norm(dim=-1)
+                aux["cross_scale_deep"] = s_d.detach().squeeze()
+                aux["cross_scale_wide"] = s_w.detach().squeeze()
+        return output, gate, gate, aux
+
+
+# =============================================================================
 # Adaptive Recursive Block
 # =============================================================================
 
@@ -772,7 +852,11 @@ class AdaptiveRecursiveBlock(nn.Module):
 
         self.has_loop_path = layer_type in ["loop", "dual"]
         if self.has_loop_path:
-            self.router = AdaptiveRouter(n_embd)
+            self.loop_combination_mode = getattr(adaptive_config, "loop_combination_mode", "act")
+            if self.loop_combination_mode == "act":
+                self.router = AdaptiveRouter(n_embd)
+            else:
+                self.router = None
             self.loop_scales = nn.Parameter(
                 torch.full((self.max_loops,), adaptive_config.loop_scale_init)
             )
@@ -785,15 +869,23 @@ class AdaptiveRecursiveBlock(nn.Module):
             )
 
         if layer_type == "dual":
-            if self.gate_mode == "convex":
-                self.dual_gate = DualPathGateConvex(
-                    n_embd=n_embd,
-                    gate_init_bias=adaptive_config.gate_init_bias,
-                    use_cross=adaptive_config.use_cross,
-                    cross_scale_deep_init=adaptive_config.cross_scale_deep_init,
-                    cross_scale_wide_init=adaptive_config.cross_scale_wide_init,
-                )
-            elif self.gate_mode == "two_gates":
+            if self.gate_mode in ["convex", "fixed"]:
+                if self.gate_mode == "convex":
+                    self.dual_gate = DualPathGateConvex(
+                        n_embd=n_embd,
+                        gate_init_bias=adaptive_config.gate_init_bias,
+                        use_cross=adaptive_config.use_cross,
+                        cross_scale_deep_init=adaptive_config.cross_scale_deep_init,
+                        cross_scale_wide_init=adaptive_config.cross_scale_wide_init,
+                    )
+                else:
+                    self.dual_gate = DualPathGateFixed(
+                        use_cross=adaptive_config.use_cross,
+                        cross_scale_deep_init=adaptive_config.cross_scale_deep_init,
+                        cross_scale_wide_init=adaptive_config.cross_scale_wide_init,
+                        n_embd=n_embd,
+                    )
+            elif self.gate_mode in ["two_gates", "softmax"]:
                 self.dual_gate = DualPathGateTwoGates(
                     n_embd=n_embd,
                     deep_gate_init_bias=adaptive_config.deep_gate_init_bias,
@@ -801,6 +893,7 @@ class AdaptiveRecursiveBlock(nn.Module):
                     use_cross=adaptive_config.use_cross,
                     cross_scale_deep_init=adaptive_config.cross_scale_deep_init,
                     cross_scale_wide_init=adaptive_config.cross_scale_wide_init,
+                    is_softmax=(self.gate_mode == "softmax"),
                 )
             else:
                 raise ValueError(f"Unknown gate_mode: {self.gate_mode}")
@@ -827,47 +920,69 @@ class AdaptiveRecursiveBlock(nn.Module):
         metrics = StepMetrics(self.max_loops, device)
 
         # ---------------------------------------------------------------
-        # Deep path: recursive block, ACT-halted
+        # Deep path: recursive block, ACT-halted or other combinations
         # ---------------------------------------------------------------
+        loop_combination_mode = getattr(self, "loop_combination_mode", "act")
         if self.has_loop_path:
-            step_denom = max(1, self.max_loops - 1)
             h_loop = x
             actual_steps = 0
 
-            for step in range(self.max_loops):
-                actual_steps = step + 1
+            if loop_combination_mode == "act":
+                step_denom = max(1, self.max_loops - 1)
+                for step in range(self.max_loops):
+                    actual_steps = step + 1
 
-                scale = F.softplus(self.loop_scales[step])
-                h_prev = h_loop
+                    scale = F.softplus(self.loop_scales[step])
+                    h_prev = h_loop
 
-                h_loop = self.block(h_loop, scale=scale)
+                    h_loop = self.block(h_loop, scale=scale)
 
-                halt_prob = self.router(h_loop, step_normalized=step / step_denom, x=x)
-                state.update(h_loop, halt_prob, step)
+                    halt_prob = self.router(h_loop, step_normalized=step / step_denom, x=x)
+                    state.update(h_loop, halt_prob, step)
+
+                    with torch.no_grad():
+                        metrics.log("loop_scale", scale.detach())
+
+                        rel_change = (h_loop - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)
+                        metrics.log("step_h_norm", h_loop.norm(dim=-1).mean())
+
+                        rel_norm_to_input, cos_sim_to_input = _displacement_stats(h_loop, x)
+                        metrics.log("step_cos_sim_to_input", cos_sim_to_input.mean())
+                        metrics.log("step_rel_norm_to_input", rel_norm_to_input.mean())
+
+                        metrics.log("halt_prob_mean", halt_prob.mean())
+                        metrics.log("halt_prob_std", halt_prob.std())
+                        metrics.log("halt_prob_min", halt_prob.min())
+                        metrics.log("halt_prob_max", halt_prob.max())
+                        metrics.log("rel_change", rel_change.mean())
+                        metrics.log("prob_remain_max", state.prob_remain.max())
+                        metrics.log("prob_remain_mean", state.prob_remain.mean())
+
+                state.finalize(h_loop, actual_steps)
+                h_deep = state.output
 
                 with torch.no_grad():
-                    metrics.log("loop_scale", scale.detach())
-
-                    rel_change = (h_loop - h_prev).norm(dim=-1) / (h_prev.norm(dim=-1) + 1e-6)
-                    metrics.log("step_h_norm", h_loop.norm(dim=-1).mean())
-
-                    rel_norm_to_input, cos_sim_to_input = _displacement_stats(h_loop, x)
-                    metrics.log("step_cos_sim_to_input", cos_sim_to_input.mean())
-                    metrics.log("step_rel_norm_to_input", rel_norm_to_input.mean())
-
-                    metrics.log("halt_prob_mean", halt_prob.mean())
-                    metrics.log("halt_prob_std", halt_prob.std())
-                    metrics.log("halt_prob_min", halt_prob.min())
-                    metrics.log("halt_prob_max", halt_prob.max())
-                    metrics.log("rel_change", rel_change.mean())
-                    metrics.log("prob_remain_max", state.prob_remain.max())
-                    metrics.log("prob_remain_mean", state.prob_remain.mean())
-
-            state.finalize(h_loop, actual_steps)
-            h_deep = state.output
-
-            with torch.no_grad():
-                frac_alive = (state.prob_remain > 0.01).float().mean()
+                    frac_alive = (state.prob_remain > 0.01).float().mean()
+            elif loop_combination_mode == "final":
+                for step in range(self.max_loops):
+                    actual_steps = step + 1
+                    scale = F.softplus(self.loop_scales[step])
+                    h_loop = self.block(h_loop, scale=scale)
+                    with torch.no_grad():
+                        metrics.log("loop_scale", scale.detach())
+                h_deep = h_loop
+                frac_alive = torch.tensor(0.0, device=device)
+            elif loop_combination_mode == "uniform_average":
+                h_sum = torch.zeros_like(x)
+                for step in range(self.max_loops):
+                    actual_steps = step + 1
+                    scale = F.softplus(self.loop_scales[step])
+                    h_loop = self.block(h_loop, scale=scale)
+                    h_sum = h_sum + h_loop
+                    with torch.no_grad():
+                        metrics.log("loop_scale", scale.detach())
+                h_deep = h_sum / self.max_loops
+                frac_alive = torch.tensor(0.0, device=device)
         else:
             h_deep = torch.zeros_like(x)
             actual_steps = 0
@@ -890,7 +1005,7 @@ class AdaptiveRecursiveBlock(nn.Module):
         # gate_deep_flat / gate_wide_flat are the per-token gate tensors used
         # for downstream logging. In convex mode, gate_wide_flat = 1 - gate_deep_flat.
         if self.layer_type == "dual":
-            if self.gate_mode == "convex":
+            if self.gate_mode in ["convex", "fixed"]:
                 output, gate, gate_raw, gate_aux = self.dual_gate(
                     x, h_deep, h_wide, gate_override=gate_override
                 )
@@ -898,7 +1013,7 @@ class AdaptiveRecursiveBlock(nn.Module):
                 gate_wide_flat = (1.0 - gate).detach().squeeze(-1)
                 gate_deep_raw_flat = gate_raw.detach().squeeze(-1)
                 gate_wide_raw_flat = (1.0 - gate_raw).detach().squeeze(-1)
-            else:  # two_gates
+            else:  # two_gates or softmax
                 output, gate_deep, gate_wide, gate_deep_raw, gate_wide_raw, gate_aux = (
                     self.dual_gate(x, h_deep, h_wide, gate_override=gate_override)
                 )
@@ -951,13 +1066,16 @@ class AdaptiveRecursiveBlock(nn.Module):
             cross_scale_deep_val = gate_aux.get("cross_scale_deep", zero_scalar)
             cross_scale_wide_val = gate_aux.get("cross_scale_wide", zero_scalar)
 
-            es = state.expected_steps.detach()
+            if loop_combination_mode == "act":
+                es = state.expected_steps.detach()
+            else:
+                es = torch.full((B, T), float(actual_steps), device=device, dtype=x.dtype)
 
         layer_metrics: dict[str, torch.Tensor] = {
             # ACT
-            "expected_steps": state.expected_steps,
+            "expected_steps": es,
             "actual_steps": torch.tensor(float(actual_steps), device=device),
-            "residual_mass": state.prob_remain.mean().detach(),
+            "residual_mass": state.prob_remain.mean().detach() if loop_combination_mode == "act" else torch.tensor(0.0, device=device),
             "frac_alive": frac_alive,
             "wide_scale": wide_scale_val.squeeze().detach(),
             "expected_steps_mean": es.mean(),

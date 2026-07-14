@@ -237,13 +237,13 @@ def solve_dual(F: int, d: int, max_loops: int, alpha: float, n_rep: int,
     h_d_exact = (alpha * f_arith / max_loops - attn) / (6.0 * d)
     h_w_exact = ((1.0 - alpha) * f_arith - attn) / (6.0 * d)
     if h_d_exact <= 0:
-        feasible_min = (max_loops * attn) / f_arith
-        raise ValueError(f"alpha={alpha} too small at budget {F:.2e}; deep can't cover "
-                         f"its attn cost. Try alpha >= {feasible_min:.3f}.")
+        print(f"  ⚠  alpha={alpha} too small at budget {F:.2e}; deep can't cover "
+              f"its attn cost. Pinned h_d_exact to minimum {swiglu_m}.")
+        h_d_exact = swiglu_m
     if h_w_exact <= 0:
-        feasible_max = 1.0 - attn / f_arith
-        raise ValueError(f"alpha={alpha} too large at budget {F:.2e}; wide can't cover "
-                         f"its attn cost. Try alpha <= {feasible_max:.3f}.")
+        print(f"  ⚠  alpha={alpha} too large at budget {F:.2e}; wide can't cover "
+              f"its attn cost. Pinned h_w_exact to minimum {swiglu_m}.")
+        h_w_exact = swiglu_m
 
     # NON-BASELINE: floor
     ffn_d = get_ffn_hidden(h_d_exact, swiglu_m, ffn_round, mode="floor")
@@ -388,6 +388,26 @@ def build_dual_min_deep(F: int, d: int, n_layers: int, max_loops: int,
             "flop_match_pct": (fb["total"] / F - 1.0) * 100}
 
 
+def build_dual_expanded(F: int, d: int, n_layers: int, max_loops: int, alpha: float,
+                        vocab: int, weight_tying: bool, n_head_q, n_head_kv,
+                        swiglu_m: int, ffn_round: int,
+                        gate_mode: str, use_cross: bool, loop_override: int = None) -> dict:
+    """Dual-path with n_layers*max_loops layers, max_loops=loop_override (or max_loops), and per-layer budget /max_loops."""
+    n_layers_exp = n_layers * max_loops
+    F_exp = F // max_loops
+    max_loops_to_use = loop_override if loop_override is not None else max_loops
+    cfg = build_dual(F=F_exp, d=d, n_layers=n_layers_exp, max_loops=max_loops_to_use, alpha=alpha,
+                     vocab=vocab, weight_tying=weight_tying, n_head_q=n_head_q, n_head_kv=n_head_kv,
+                     swiglu_m=swiglu_m, ffn_round=ffn_round, gate_mode=gate_mode, use_cross=use_cross)
+    cfg["variant"] = "expanded"
+    cfg["flop_budget_original"] = F
+    cfg["max_loops_original"] = max_loops
+    cfg["n_layers_original"] = n_layers
+    target_total = n_layers * F
+    cfg["total_flop_match_pct"] = (cfg["total_flops"] / target_total - 1.0) * 100
+    return cfg
+
+
 # =====================================================================
 # Experiment IDs
 # =====================================================================
@@ -408,8 +428,9 @@ def make_exp_id(cfg: dict) -> str:
         # Tag no-cross variants so their YAML filenames don't collide with
         # the cross-on dual at the same α.
         cross_tag = "_nocross" if cfg.get("use_cross") is False else ""
+        suffix = "_expanded" if cfg.get("variant") == "expanded" else ""
         return (f"dm{d}_L{L}_loop{cfg['max_loops']}_F{F_m:.0f}M"
-                f"_ffnD{cfg['ffn_deep']}_ffnW{cfg['ffn_wide']}_dual{alpha_tag}{cross_tag}")
+                f"_ffnD{cfg['ffn_deep']}_ffnW{cfg['ffn_wide']}_dual{alpha_tag}{cross_tag}{suffix}")
     if cfg["kind"] == "pure_loop":
         return (f"dm{d}_L{L}_loop{cfg['max_loops']}_F{F_m:.0f}M"
                 f"_ffnL{cfg['ffn_loop']}_pureloop")
@@ -576,9 +597,13 @@ def print_summary(F: int, d: int, n_layers: int, max_loops: int, swiglu_m: int,
             # Annotate no-cross duals so they're visually distinct in the table.
             if cfg.get("use_cross") is False:
                 label += " no-cross"
+            if cfg.get("variant") == "expanded":
+                label += f" expanded (L×{cfg['max_loops_original']})"
+                mismatch = cfg["total_flop_match_pct"]
+            else:
+                mismatch = cfg["flop_match_pct"]
             d_col = f"{cfg['ffn_deep']}/{cfg['ffn_deep_h_eff']}"
             w_col = f"{cfg['ffn_wide']}/{cfg['ffn_wide_h_eff']}"
-            mismatch = cfg["flop_match_pct"]
 
         print(f"    {label:<32s} {cfg['n_layers']:>9d} {d_col:>13s} {w_col:>13s} "
               f"{_fmt_p(cfg['total_params']):>9s} "
@@ -644,6 +669,13 @@ def main():
                         "clean per-token routing analysis (cross-path leakage muddies "
                         "the 'which path does this token want' reading). "
                         "Example: --add-no-cross-alpha 0.5")
+    p.add_argument("--add-expanded-dual-no-cross-alpha", type=float, nargs="+", default=None,
+                   help="Extra expanded dual configs at these α values with use_cross=False "
+                        "and n_layers*max_loops layers, max_loops=1. "
+                        "Example: --add-expanded-dual-no-cross-alpha 0.25 0.5 0.75")
+    p.add_argument("--add-expanded-dual-loops-a50", action="store_true", default=False,
+                   help="Add expanded dual no-cross configs with alpha=0.5, 64 layers, "
+                        "and loops 1, 2, 3, and 4.")
 
     # Output
     p.add_argument("--template", type=str, default=None,
@@ -724,6 +756,51 @@ def main():
                           f"(global --no-cross + same α in --alpha).")
             except ValueError as e:
                 print(f"  ⚠  Skipping no-cross dual α={alpha}: {e}")
+
+    # -----------------------------------------------------------------
+    # Extra expanded no-cross dual configs for per-token routing analysis.
+    # -----------------------------------------------------------------
+    if args.add_expanded_dual_no_cross_alpha is not None:
+        dual_no_cross_expanded_common = dict(common, gate_mode=args.gate_mode, use_cross=False)
+        for alpha in args.add_expanded_dual_no_cross_alpha:
+            try:
+                cfg_nc_exp = build_dual_expanded(alpha=alpha, **dual_no_cross_expanded_common)
+                already = any(
+                    c.get("kind") == "dual"
+                    and c.get("variant") == "expanded"
+                    and c.get("use_cross") is False
+                    and abs(c.get("alpha", -1) - alpha) < 1e-9
+                    for c in configs
+                )
+                if not already:
+                    configs.append(cfg_nc_exp)
+                else:
+                    print(f"  ℹ  Skipping expanded no-cross α={alpha}: already present.")
+            except ValueError as e:
+                print(f"  ⚠  Skipping expanded no-cross dual α={alpha}: {e}")
+
+    # -----------------------------------------------------------------
+    # Expanded dual no-cross loops 1, 2, 3, 4 for alpha=0.5
+    # -----------------------------------------------------------------
+    if args.add_expanded_dual_loops_a50:
+        dual_no_cross_expanded_common = dict(common, gate_mode=args.gate_mode, use_cross=False)
+        for loop in [1, 2, 3, 4]:
+            try:
+                cfg_nc_exp = build_dual_expanded(alpha=0.5, loop_override=loop, **dual_no_cross_expanded_common)
+                already = any(
+                    c.get("kind") == "dual"
+                    and c.get("variant") == "expanded"
+                    and c.get("use_cross") is False
+                    and abs(c.get("alpha", -1) - 0.5) < 1e-9
+                    and c.get("max_loops") == loop
+                    for c in configs
+                )
+                if not already:
+                    configs.append(cfg_nc_exp)
+                else:
+                    print(f"  ℹ  Skipping loop={loop} expanded no-cross α=0.5: already present.")
+            except ValueError as e:
+                print(f"  ⚠  Skipping loop={loop} expanded no-cross dual α=0.5: {e}")
 
     print_summary(args.flop_budget, args.d_model, args.n_layers,
                   args.max_loops, args.swiglu_multiple, configs)

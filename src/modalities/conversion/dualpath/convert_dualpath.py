@@ -19,7 +19,24 @@ from transformers import AutoTokenizer
 
 from modalities.config.config import load_app_config_dict
 from modalities.conversion.gpt2.conversion_tokenizer import convert_tokenizer
-from modalities.utils.env import EnvOverride
+class EnvOverride:
+    """Temporarily overrides environment variables."""
+    def __init__(self, env_dict: dict):
+        self.env_dict = env_dict
+        self.original_env = {}
+
+    def __enter__(self):
+        for k, v in self.env_dict.items():
+            self.original_env[k] = os.environ.get(k)
+            os.environ[k] = v
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        for k, v in self.original_env.items():
+            if v is None:
+                if k in os.environ:
+                    del os.environ[k]
+            else:
+                os.environ[k] = v
 
 logger = logging.getLogger(__name__)
 

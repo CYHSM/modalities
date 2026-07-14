@@ -11,14 +11,14 @@ sbatch --wait <<EOF
 #!/bin/bash
 #SBATCH --export=NONE
 #SBATCH --job-name=olmes-eval-${STEP}
-#SBATCH --account=euhpc_e05_119
+#SBATCH --account=AIFAC_S07_154
 #SBATCH --partition=boost_usr_prod
 #SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --time=12:00:00
+#SBATCH --time=06:00:00
 #SBATCH --mem=32G
 #SBATCH --output=${OUT_DIR}_slurm.log
 #SBATCH --error=${OUT_DIR}_slurm.err
@@ -59,12 +59,17 @@ source \${OLMES_VENV}/bin/activate
 export PYTHONPATH="\${MY_ROOT}/olmes:\${PYTHONPATH:-}"
 set -u
 
+LIMIT_ARG=()
+if [ "${LIMIT}" != "None" ] && [ -n "${LIMIT}" ]; then
+    LIMIT_ARG=(--limit "${LIMIT}")
+fi
+
 python \${OLMES_VENV}/bin/olmes \\
     --model '${HF_MODEL_DIR}' \\
     --model-type hf \\
     --model-args '{"trust_remote_code": true, "max_length": 4096}' \\
     --task ${TASKS} \\
-    --limit ${LIMIT} \\
+    "\${LIMIT_ARG[@]}" \\
     --batch-size ${BATCH_SIZE} \\
     --output-dir '${OUT_DIR}'
 

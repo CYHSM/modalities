@@ -134,11 +134,18 @@ def CMD_entry_point_run_modalities(
     default=None,
     help="Optional path to a folder where error logs will be written.",
 )
+@click.option(
+    "--experiment_id",
+    type=str,
+    default=None,
+    help="Optional experiment ID to use for this run. If not provided, it will be derived from the config file path.",
+)
 def CMD_entry_point_warmstart_modalities(
     experiments_root_path: Path,
     config_file_path: Path,
     last_checkpoint_info_file_path: Path,
     error_log_folder: Optional[Path] = None,
+    experiment_id: Optional[str] = None,
 ):
     """Entrypoint to run the model warmstart.
 
@@ -164,7 +171,10 @@ def CMD_entry_point_warmstart_modalities(
     try:
         with CudaEnv(process_group_backend=ProcessGroupBackendType.nccl):
             main_obj = Main(
-                config_file_path, experiments_root_path=experiments_root_path, additional_resolver_funs=resolver_funs
+                config_file_path,
+                experiments_root_path=experiments_root_path,
+                experiment_id=experiment_id,
+                additional_resolver_funs=resolver_funs,
             )
             components = main_obj.build_components(components_model_type=TrainingComponentsInstantiationModel)
             main_obj.run(components)
