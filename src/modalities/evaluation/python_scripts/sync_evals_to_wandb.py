@@ -26,8 +26,9 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import os
 # ---------- Paths ----------
-EXPERIMENTS_DIR = Path("/leonardo_scratch/large/userexternal/mfrey000/experiments_emnlp_revisions")
+EXPERIMENTS_DIR = Path(os.environ.get("EXPERIMENTS_DIR", "/leonardo_scratch/large/userexternal/mfrey000/experiments_budapest"))
 WANDB_DIR = EXPERIMENTS_DIR / "wandb" / "wandb"
 
 WANDB_ENTITY = "cyhsm"

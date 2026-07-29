@@ -76,7 +76,7 @@ class AdaptiveComputationConfig(BaseModel):
     # ---- Gate mode ---------------------------------------------------------
     # "convex":     output = g * h_deep + (1-g) * h_wide  (single gate)
     # "two_gates":  output = g_d * h_deep_eff + g_w * h_wide_eff
-    gate_mode: Literal["convex", "two_gates"] = "two_gates"
+    gate_mode: Literal["convex", "two_gates", "softmax", "fixed"] = "two_gates"
     gate_init_bias: float = 0.0
     deep_gate_init_bias: float = 0.0
     wide_gate_init_bias: float = 0.0
@@ -748,6 +748,118 @@ class DualPathGateTwoGates(nn.Module):
 
 
 # =============================================================================
+# Dual Path Gate — softmax variant
+# =============================================================================
+
+class DualPathGateSoftmax(DualPathGateTwoGates):
+    """Softmax over the two paths (deep vs wide)."""
+    def forward(
+        self,
+        x: torch.Tensor,
+        h_deep: torch.Tensor,
+        h_wide: torch.Tensor,
+        gate_override: Optional[
+            Union[torch.Tensor, tuple[Optional[torch.Tensor], Optional[torch.Tensor]]]
+        ] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+        logits = self.gate_proj(x)                       # (B, T, 2)
+        gates_raw = F.softmax(logits, dim=-1)            # (B, T, 2)
+        gate_deep_raw = gates_raw[..., 0:1]
+        gate_wide_raw = gates_raw[..., 1:2]
+
+        deep_ovr, wide_ovr = self._unpack_override(gate_override)
+        gate_deep = self._apply_override(gate_deep_raw, deep_ovr)
+        gate_wide = self._apply_override(gate_wide_raw, wide_ovr)
+
+        if self.use_cross:
+            s_d = F.softplus(self.cross_scale_deep)
+            s_w = F.softplus(self.cross_scale_wide)
+            cross_w2d_full = s_d * self.proj_w2d(h_wide)
+            cross_d2w_full = s_w * self.proj_d2w(h_deep)
+            contam_w2d = gate_deep * cross_w2d_full
+            contam_d2w = gate_wide * cross_d2w_full
+            h_deep_branch = gate_deep * h_deep + contam_w2d
+            h_wide_branch = gate_wide * h_wide + contam_d2w
+        else:
+            cross_w2d_full = None
+            cross_d2w_full = None
+            contam_w2d = None
+            contam_d2w = None
+            h_deep_branch = gate_deep * h_deep
+            h_wide_branch = gate_wide * h_wide
+
+        output = h_deep_branch + h_wide_branch
+
+        with torch.no_grad():
+            aux = {
+                "gate_logit_deep_mean": logits[..., 0].mean(),
+                "gate_logit_deep_std":  logits[..., 0].std(),
+                "gate_logit_wide_mean": logits[..., 1].mean(),
+                "gate_logit_wide_std":  logits[..., 1].std(),
+            }
+            if self.use_cross:
+                aux["cross_w2d_norm_per_token"] = contam_w2d.norm(dim=-1)
+                aux["cross_d2w_norm_per_token"] = contam_d2w.norm(dim=-1)
+                aux["cross_scale_deep"] = s_d.detach().squeeze()
+                aux["cross_scale_wide"] = s_w.detach().squeeze()
+
+        return output, gate_deep, gate_wide, gate_deep_raw, gate_wide_raw, aux
+
+# =============================================================================
+# Dual Path Gate — fixed 0.5 variant
+# =============================================================================
+
+class DualPathGateFixed(DualPathGateTwoGates):
+    """Fixed gate at 0.5 for both paths (ignores input)."""
+    def forward(
+        self,
+        x: torch.Tensor,
+        h_deep: torch.Tensor,
+        h_wide: torch.Tensor,
+        gate_override: Optional[
+            Union[torch.Tensor, tuple[Optional[torch.Tensor], Optional[torch.Tensor]]]
+        ] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+        # Fixed 0.5
+        gates_raw = torch.full((x.shape[0], x.shape[1], 2), 0.5, device=x.device, dtype=x.dtype)
+        gate_deep_raw = gates_raw[..., 0:1]
+        gate_wide_raw = gates_raw[..., 1:2]
+
+        deep_ovr, wide_ovr = self._unpack_override(gate_override)
+        gate_deep = self._apply_override(gate_deep_raw, deep_ovr)
+        gate_wide = self._apply_override(gate_wide_raw, wide_ovr)
+
+        if self.use_cross:
+            s_d = F.softplus(self.cross_scale_deep)
+            s_w = F.softplus(self.cross_scale_wide)
+            cross_w2d_full = s_d * self.proj_w2d(h_wide)
+            cross_d2w_full = s_w * self.proj_d2w(h_deep)
+            contam_w2d = gate_deep * cross_w2d_full
+            contam_d2w = gate_wide * cross_d2w_full
+            h_deep_branch = gate_deep * h_deep + contam_w2d
+            h_wide_branch = gate_wide * h_wide + contam_d2w
+        else:
+            cross_w2d_full = None
+            cross_d2w_full = None
+            contam_w2d = None
+            contam_d2w = None
+            h_deep_branch = gate_deep * h_deep
+            h_wide_branch = gate_wide * h_wide
+
+        output = h_deep_branch + h_wide_branch
+
+        with torch.no_grad():
+            aux = {}
+            if self.use_cross:
+                aux["cross_w2d_norm_per_token"] = contam_w2d.norm(dim=-1)
+                aux["cross_d2w_norm_per_token"] = contam_d2w.norm(dim=-1)
+                aux["cross_scale_deep"] = s_d.detach().squeeze()
+                aux["cross_scale_wide"] = s_w.detach().squeeze()
+
+        return output, gate_deep, gate_wide, gate_deep_raw, gate_wide_raw, aux
+
+
+# =============================================================================
 # Adaptive Recursive Block
 # =============================================================================
 
@@ -796,6 +908,24 @@ class AdaptiveRecursiveBlock(nn.Module):
                 )
             elif self.gate_mode == "two_gates":
                 self.dual_gate = DualPathGateTwoGates(
+                    n_embd=n_embd,
+                    deep_gate_init_bias=adaptive_config.deep_gate_init_bias,
+                    wide_gate_init_bias=adaptive_config.wide_gate_init_bias,
+                    use_cross=adaptive_config.use_cross,
+                    cross_scale_deep_init=adaptive_config.cross_scale_deep_init,
+                    cross_scale_wide_init=adaptive_config.cross_scale_wide_init,
+                )
+            elif self.gate_mode == "softmax":
+                self.dual_gate = DualPathGateSoftmax(
+                    n_embd=n_embd,
+                    deep_gate_init_bias=adaptive_config.deep_gate_init_bias,
+                    wide_gate_init_bias=adaptive_config.wide_gate_init_bias,
+                    use_cross=adaptive_config.use_cross,
+                    cross_scale_deep_init=adaptive_config.cross_scale_deep_init,
+                    cross_scale_wide_init=adaptive_config.cross_scale_wide_init,
+                )
+            elif self.gate_mode == "fixed":
+                self.dual_gate = DualPathGateFixed(
                     n_embd=n_embd,
                     deep_gate_init_bias=adaptive_config.deep_gate_init_bias,
                     wide_gate_init_bias=adaptive_config.wide_gate_init_bias,

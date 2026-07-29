@@ -120,8 +120,8 @@ class AdaptiveGPTConfig(PretrainedConfig):
         self.num_attention_heads = n_head_q
         self.hidden_size = n_embd
 
-        if gate_mode not in ("convex", "two_gates"):
-            raise ValueError(f"gate_mode must be 'convex' or 'two_gates', got {gate_mode}")
+        if gate_mode not in ("convex", "two_gates", "softmax", "fixed"):
+            raise ValueError(f"gate_mode must be 'convex', 'two_gates', 'softmax', or 'fixed', got {gate_mode}")
 
 
 class RMSLayerNorm(nn.Module):
@@ -453,6 +453,46 @@ class DualPathGateTwoGates(nn.Module):
         return h_deep_branch + h_wide_branch
 
 
+class DualPathGateSoftmax(DualPathGateTwoGates):
+    def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor) -> torch.Tensor:
+        gates = F.softmax(self.gate_proj(x), dim=-1)       # (B, T, 2)
+        gate_deep = gates[..., 0:1]
+        gate_wide = gates[..., 1:2]
+
+        if self.use_cross:
+            s_d = F.softplus(self.cross_scale_deep)
+            s_w = F.softplus(self.cross_scale_wide)
+            cross_w2d = s_d * self.proj_w2d(h_wide)
+            cross_d2w = s_w * self.proj_d2w(h_deep)
+            h_deep_branch = gate_deep * h_deep + gate_deep * cross_w2d
+            h_wide_branch = gate_wide * h_wide + gate_wide * cross_d2w
+        else:
+            h_deep_branch = gate_deep * h_deep
+            h_wide_branch = gate_wide * h_wide
+
+        return h_deep_branch + h_wide_branch
+
+
+class DualPathGateFixed(DualPathGateTwoGates):
+    def forward(self, x: torch.Tensor, h_deep: torch.Tensor, h_wide: torch.Tensor) -> torch.Tensor:
+        gates = torch.full((x.shape[0], x.shape[1], 2), 0.5, device=x.device, dtype=x.dtype)
+        gate_deep = gates[..., 0:1]
+        gate_wide = gates[..., 1:2]
+
+        if self.use_cross:
+            s_d = F.softplus(self.cross_scale_deep)
+            s_w = F.softplus(self.cross_scale_wide)
+            cross_w2d = s_d * self.proj_w2d(h_wide)
+            cross_d2w = s_w * self.proj_d2w(h_deep)
+            h_deep_branch = gate_deep * h_deep + gate_deep * cross_w2d
+            h_wide_branch = gate_wide * h_wide + gate_wide * cross_d2w
+        else:
+            h_deep_branch = gate_deep * h_deep
+            h_wide_branch = gate_wide * h_wide
+
+        return h_deep_branch + h_wide_branch
+
+
 def _build_dual_gate(config: AdaptiveGPTConfig) -> nn.Module:
     if config.gate_mode == "convex":
         return DualPathGateConvex(
@@ -464,6 +504,24 @@ def _build_dual_gate(config: AdaptiveGPTConfig) -> nn.Module:
         )
     elif config.gate_mode == "two_gates":
         return DualPathGateTwoGates(
+            n_embd=config.n_embd,
+            deep_gate_init_bias=config.deep_gate_init_bias,
+            wide_gate_init_bias=config.wide_gate_init_bias,
+            use_cross=config.use_cross,
+            cross_scale_deep_init=config.cross_scale_deep_init,
+            cross_scale_wide_init=config.cross_scale_wide_init,
+        )
+    elif config.gate_mode == "softmax":
+        return DualPathGateSoftmax(
+            n_embd=config.n_embd,
+            deep_gate_init_bias=config.deep_gate_init_bias,
+            wide_gate_init_bias=config.wide_gate_init_bias,
+            use_cross=config.use_cross,
+            cross_scale_deep_init=config.cross_scale_deep_init,
+            cross_scale_wide_init=config.cross_scale_wide_init,
+        )
+    elif config.gate_mode == "fixed":
+        return DualPathGateFixed(
             n_embd=config.n_embd,
             deep_gate_init_bias=config.deep_gate_init_bias,
             wide_gate_init_bias=config.wide_gate_init_bias,

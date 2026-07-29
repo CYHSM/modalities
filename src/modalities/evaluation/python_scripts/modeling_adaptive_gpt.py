@@ -136,8 +136,8 @@ class AdaptiveGPTConfig(PretrainedConfig):
         self.num_attention_heads = n_head_q
         self.hidden_size = n_embd
 
-        if gate_mode not in ("convex", "two_gates"):
-            raise ValueError(f"gate_mode must be 'convex' or 'two_gates', got {gate_mode}")
+        if gate_mode not in ("convex", "two_gates", "softmax", "fixed"):
+            raise ValueError(f"gate_mode must be 'convex', 'two_gates', 'softmax', or 'fixed', got {gate_mode}")
 
 
 # =============================================================================
@@ -425,6 +425,56 @@ class DualPathGateTwoGates(nn.Module):
         return out, gd.squeeze(-1), gw.squeeze(-1), cross_w2d_norm, cross_d2w_norm
 
 
+class DualPathGateSoftmax(DualPathGateTwoGates):
+    def forward(self, x, h_deep, h_wide, record=False):
+        gates = F.softmax(self.gate_proj(x), dim=-1)  # (B, T, 2)
+        gd = gates[..., 0:1]
+        gw = gates[..., 1:2]
+        cross_w2d_norm = cross_d2w_norm = None
+        if self.use_cross:
+            s_d = F.softplus(self.cross_scale_deep)
+            s_w = F.softplus(self.cross_scale_wide)
+            c_w2d = s_d * self.proj_w2d(h_wide)
+            c_d2w = s_w * self.proj_d2w(h_deep)
+            contam_w2d = gd * c_w2d
+            contam_d2w = gw * c_d2w
+            h_deep_branch = gd * h_deep + contam_w2d
+            h_wide_branch = gw * h_wide + contam_d2w
+            if record:
+                cross_w2d_norm = contam_w2d.norm(dim=-1)
+                cross_d2w_norm = contam_d2w.norm(dim=-1)
+        else:
+            h_deep_branch = gd * h_deep
+            h_wide_branch = gw * h_wide
+        out = h_deep_branch + h_wide_branch
+        return out, gd.squeeze(-1), gw.squeeze(-1), cross_w2d_norm, cross_d2w_norm
+
+
+class DualPathGateFixed(DualPathGateTwoGates):
+    def forward(self, x, h_deep, h_wide, record=False):
+        gates = torch.full((x.shape[0], x.shape[1], 2), 0.5, device=x.device, dtype=x.dtype)
+        gd = gates[..., 0:1]
+        gw = gates[..., 1:2]
+        cross_w2d_norm = cross_d2w_norm = None
+        if self.use_cross:
+            s_d = F.softplus(self.cross_scale_deep)
+            s_w = F.softplus(self.cross_scale_wide)
+            c_w2d = s_d * self.proj_w2d(h_wide)
+            c_d2w = s_w * self.proj_d2w(h_deep)
+            contam_w2d = gd * c_w2d
+            contam_d2w = gw * c_d2w
+            h_deep_branch = gd * h_deep + contam_w2d
+            h_wide_branch = gw * h_wide + contam_d2w
+            if record:
+                cross_w2d_norm = contam_w2d.norm(dim=-1)
+                cross_d2w_norm = contam_d2w.norm(dim=-1)
+        else:
+            h_deep_branch = gd * h_deep
+            h_wide_branch = gw * h_wide
+        out = h_deep_branch + h_wide_branch
+        return out, gd.squeeze(-1), gw.squeeze(-1), cross_w2d_norm, cross_d2w_norm
+
+
 def _build_dual_gate(config):
     if config.gate_mode == "convex":
         return DualPathGateConvex(
@@ -434,14 +484,34 @@ def _build_dual_gate(config):
             cross_scale_deep_init=config.cross_scale_deep_init,
             cross_scale_wide_init=config.cross_scale_wide_init,
         )
-    return DualPathGateTwoGates(
-        n_embd=config.n_embd,
-        deep_gate_init_bias=config.deep_gate_init_bias,
-        wide_gate_init_bias=config.wide_gate_init_bias,
-        use_cross=config.use_cross,
-        cross_scale_deep_init=config.cross_scale_deep_init,
-        cross_scale_wide_init=config.cross_scale_wide_init,
-    )
+    elif config.gate_mode == "two_gates":
+        return DualPathGateTwoGates(
+            n_embd=config.n_embd,
+            deep_gate_init_bias=config.deep_gate_init_bias,
+            wide_gate_init_bias=config.wide_gate_init_bias,
+            use_cross=config.use_cross,
+            cross_scale_deep_init=config.cross_scale_deep_init,
+            cross_scale_wide_init=config.cross_scale_wide_init,
+        )
+    elif config.gate_mode == "softmax":
+        return DualPathGateSoftmax(
+            n_embd=config.n_embd,
+            deep_gate_init_bias=config.deep_gate_init_bias,
+            wide_gate_init_bias=config.wide_gate_init_bias,
+            use_cross=config.use_cross,
+            cross_scale_deep_init=config.cross_scale_deep_init,
+            cross_scale_wide_init=config.cross_scale_wide_init,
+        )
+    elif config.gate_mode == "fixed":
+        return DualPathGateFixed(
+            n_embd=config.n_embd,
+            deep_gate_init_bias=config.deep_gate_init_bias,
+            wide_gate_init_bias=config.wide_gate_init_bias,
+            use_cross=config.use_cross,
+            cross_scale_deep_init=config.cross_scale_deep_init,
+            cross_scale_wide_init=config.cross_scale_wide_init,
+        )
+    raise ValueError(f"Unknown gate_mode: {config.gate_mode}")
 
 
 # =============================================================================

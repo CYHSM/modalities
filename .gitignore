@@ -157,6 +157,9 @@ tags
 
 checkpoints
 data-temp/
+eval_metrics_temp/
+acl_latex.tex
+table_main_updated.tex
 docs/source/generated
 docs/source/api
 pyenv*

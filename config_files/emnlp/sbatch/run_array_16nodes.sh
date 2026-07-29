@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=modalities_run
-#SBATCH --account=euhpc_e05_119
+#SBATCH --account=AIFAC_S07_154
 #SBATCH --exclusive
 #SBATCH --qos=normal
 #SBATCH --partition=boost_usr_prod
@@ -23,7 +23,7 @@ if [ -z "$SLURM_ARRAY_TASK_ID" ]; then
     exit 1
 fi
 
-CONFIG_LIST="all_configs.txt"
+CONFIG_LIST="${CONFIG_LIST:-budapest_configs.txt}"
 CONFIG_FILE_PATH=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$CONFIG_LIST")
 
 if [ -z "$CONFIG_FILE_PATH" ]; then
@@ -88,6 +88,7 @@ export CONTAINER_SRC_DIR="${CONTAINER_CODE_DIR}/src"
 
 srun singularity exec --nv \
     --bind "/leonardo_scratch:/leonardo_scratch" \
+    --bind "/leonardo_work:/leonardo_work" \
     --bind "${HOST_CODE_DIR}:${CONTAINER_CODE_DIR}" \
     --bind "${HOST_DATA_DIR}:${CONTAINER_DATA_DIR}" \
     --bind "${MY_ROOT}/experiments:${MY_ROOT}/experiments" \

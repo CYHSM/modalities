@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=olmes-eval
-#SBATCH --account=euhpc_e05_119
+#SBATCH --account=AIFAC_S07_154
 #SBATCH --partition=boost_usr_prod
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1

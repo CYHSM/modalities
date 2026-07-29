@@ -1,0 +1,142 @@
+{
+  "Seed 2_PureWide": {
+    "seed": "Seed 2",
+    "config": "PureWide",
+    "c4": 1.0180148032713328,
+    "wiki": 0.9184441444539272,
+    "cs_acc": 0.5403645833333334,
+    "cs_bpb": null,
+    "math_acc": 0.1181640625,
+    "math_bpb": null
+  },
+  "Seed 2_Loop=2": {
+    "seed": "Seed 2",
+    "config": "Loop=2",
+    "c4": 1.0269334702764363,
+    "wiki": 0.9266848831497493,
+    "cs_acc": 0.5322265625,
+    "cs_bpb": null,
+    "math_acc": 0.1337890625,
+    "math_bpb": null
+  },
+  "Seed 2_Loop=3": {
+    "seed": "Seed 2",
+    "config": "Loop=3",
+    "c4": 1.0367527396536866,
+    "wiki": 0.9422316272693158,
+    "cs_acc": 0.51904296875,
+    "cs_bpb": null,
+    "math_acc": 0.134765625,
+    "math_bpb": null
+  },
+  "Seed 2_Loop=4": {
+    "seed": "Seed 2",
+    "config": "Loop=4",
+    "c4": 1.042986090671869,
+    "wiki": 0.9447817019043533,
+    "cs_acc": 0.5146484375,
+    "cs_bpb": null,
+    "math_acc": 0.1103515625,
+    "math_bpb": null
+  },
+  "Seed 2_Dual a25": {
+    "seed": "Seed 2",
+    "config": "Dual a25",
+    "c4": 1.0156697421577323,
+    "wiki": 0.9131298389076346,
+    "cs_acc": 0.53466796875,
+    "cs_bpb": null,
+    "math_acc": 0.1123046875,
+    "math_bpb": null
+  },
+  "Seed 2_Dual a50": {
+    "seed": "Seed 2",
+    "config": "Dual a50",
+    "c4": 1.0155716499665586,
+    "wiki": 0.9146429400448173,
+    "cs_acc": 0.5418294270833334,
+    "cs_bpb": null,
+    "math_acc": 0.1259765625,
+    "math_bpb": null
+  },
+  "Seed 2_Dual a75": {
+    "seed": "Seed 2",
+    "config": "Dual a75",
+    "c4": 1.0217446648335906,
+    "wiki": 0.9208553136761134,
+    "cs_acc": 0.533203125,
+    "cs_bpb": null,
+    "math_acc": 0.1376953125,
+    "math_bpb": null
+  },
+  "Seed 3_PureWide": {
+    "seed": "Seed 3",
+    "config": "PureWide",
+    "c4": 1.0191590619607234,
+    "wiki": 0.9224825487763869,
+    "cs_acc": 0.5341796875,
+    "cs_bpb": null,
+    "math_acc": 0.115234375,
+    "math_bpb": null
+  },
+  "Seed 3_Loop=2": {
+    "seed": "Seed 3",
+    "config": "Loop=2",
+    "c4": 1.0276011127074778,
+    "wiki": 0.9303142616163724,
+    "cs_acc": 0.5257161458333334,
+    "cs_bpb": null,
+    "math_acc": 0.1220703125,
+    "math_bpb": null
+  },
+  "Seed 3_Loop=3": {
+    "seed": "Seed 3",
+    "config": "Loop=3",
+    "c4": 1.0362439521517286,
+    "wiki": 0.9375384796611669,
+    "cs_acc": 0.52099609375,
+    "cs_bpb": null,
+    "math_acc": 0.083984375,
+    "math_bpb": null
+  },
+  "Seed 3_Loop=4": {
+    "seed": "Seed 3",
+    "config": "Loop=4",
+    "c4": 1.0465257105452666,
+    "wiki": 0.9484267530118011,
+    "cs_acc": 0.5118815104166666,
+    "cs_bpb": null,
+    "math_acc": 0.0830078125,
+    "math_bpb": null
+  },
+  "Seed 3_Dual a25": {
+    "seed": "Seed 3",
+    "config": "Dual a25",
+    "c4": 1.013555909593889,
+    "wiki": 0.9142958941770852,
+    "cs_acc": 0.5411783854166666,
+    "cs_bpb": null,
+    "math_acc": 0.1171875,
+    "math_bpb": null
+  },
+  "Seed 3_Dual a50": {
+    "seed": "Seed 3",
+    "config": "Dual a50",
+    "c4": 1.017334774292606,
+    "wiki": 0.9170842806558157,
+    "cs_acc": 0.5397135416666666,
+    "cs_bpb": null,
+    "math_acc": 0.1162109375,
+    "math_bpb": null
+  },
+  "Seed 3_Dual a75": {
+    "seed": "Seed 3",
+    "config": "Dual a75",
+    "c4": 1.020425129289346,
+    "wiki": 0.9195024505155428,
+    "cs_acc": 0.5349934895833334,
+    "cs_bpb": null,
+    "math_acc": 0.154296875,
+    "math_bpb": null
+  }
+}
