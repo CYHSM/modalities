@@ -18,6 +18,8 @@ from modalities.checkpointing.fsdp.fsdp_checkpoint_loading import FSDP1Checkpoin
 from modalities.checkpointing.fsdp.fsdp_checkpoint_saving import DCPCheckpointSaving, FSDP1CheckpointSaving
 from modalities.checkpointing.stateful.app_state_factory import AppStateFactory
 from modalities.checkpointing.torch.torch_checkpoint_loading import TorchCheckpointLoading
+from modalities.conversion.model_converter import ModelConverter
+from modalities.evaluator import DownstreamEvaluator
 from modalities.config.config import (
     ActivationCheckpointedModelConfig,
     AdamOptimizerConfig,
@@ -25,6 +27,7 @@ from modalities.config.config import (
     BatchSamplerConfig,
     CheckpointSavingConfig,
     CLMCrossEntropyLossConfig,
+    CLMCrossEntropyWithPonderLossConfig,
     CombinedDatasetConfig,
     CompiledModelConfig,
     ConstantLRSchedulerConfig,
@@ -33,6 +36,7 @@ from modalities.config.config import (
     DCPCheckpointSavingConfig,
     DebuggingEnrichedModelConfig,
     DistributedSamplerConfig,
+    DownstreamEvaluatorConfig,
     DummyLRSchedulerConfig,
     DummyProgressSubscriberConfig,
     DummyResultSubscriberConfig,
@@ -52,6 +56,7 @@ from modalities.config.config import (
     LinearWarmupCosineAnnealingLRSchedulerConfig,
     LLMDataLoaderConfig,
     MemMapDatasetConfig,
+    ModelConverterConfig,
     OneCycleLRSchedulerConfig,
     PackedMemMapDatasetContinuousConfig,
     PackedMemMapDatasetMegatronConfig,
@@ -83,7 +88,7 @@ from modalities.logging_broker.subscriber_impl.subscriber_factory import (
     ProgressSubscriberFactory,
     ResultsSubscriberFactory,
 )
-from modalities.loss_functions import CLMCrossEntropyLoss
+from modalities.loss_functions import CLMCrossEntropyLoss, CLMCrossEntropyWithPonderLoss
 from modalities.models.coca.coca_model import CoCa, CoCaConfig
 from modalities.models.coca.collator import CoCaCollateFnConfig, CoCaCollatorFn
 from modalities.models.components.layer_norms import (
@@ -94,9 +99,10 @@ from modalities.models.components.layer_norms import (
 )
 from modalities.models.gpt2.collator import GPT2LLMCollateFn
 from modalities.models.gpt2.gpt2_model import GPT2LLMConfig
+from modalities.models.looped.dualpath import DualPathLLMConfig
 from modalities.models.gpt2.llama3_like_initialization import Llama3Initializer, Llama3InitializerConfig
 from modalities.models.huggingface.huggingface_model import HuggingFacePretrainedModel, HuggingFacePretrainedModelConfig
-from modalities.models.model_factory import GPT2ModelFactory, ModelFactory
+from modalities.models.model_factory import GPT2ModelFactory, DualPathModelFactory, ModelFactory
 from modalities.models.parallelism.pipeline_parallelism import ComponentSelectorFromPipeline, PipelineFactory
 from modalities.models.parallelism.pipeline_parallelism_configs import (
     ComponentSelectorFromPipelineConfig,
@@ -187,6 +193,7 @@ class ComponentEntity:
 
 COMPONENTS = [
     # models
+    ComponentEntity("model", "dualpath", DualPathModelFactory.get_dualpath_model, DualPathLLMConfig),
     ComponentEntity("model", "gpt2", GPT2ModelFactory.get_gpt2_model, GPT2LLMConfig),
     ComponentEntity(
         "model", "gpt2_tp", maybe_model_list(GPT2ModelFactory.get_gpt2_tensor_parallelized_model), GPT2ModelTPConfig
@@ -251,6 +258,7 @@ COMPONENTS = [
     ),
     # losses
     ComponentEntity("loss", "clm_cross_entropy_loss", CLMCrossEntropyLoss, CLMCrossEntropyLossConfig),
+    ComponentEntity("loss", "clm_cross_entropy_with_ponder_loss", CLMCrossEntropyWithPonderLoss, CLMCrossEntropyWithPonderLossConfig),
     # optimizers
     ComponentEntity(
         "optimizer", "adam", maybe_model_list_for_optimizer(OptimizerFactory.get_adam), AdamOptimizerConfig
@@ -534,5 +542,17 @@ COMPONENTS = [
         "print_forward_hook",
         maybe_model_list(HookRegistration.register_print_forward_hooks),
         PrintForwardHookConfig,
+    ),
+    ComponentEntity(
+        "model_converter",
+        "default",
+        ModelConverter,
+        ModelConverterConfig,
+    ),
+    ComponentEntity(
+        "downstream_evaluator",
+        "default",
+        DownstreamEvaluator,
+        DownstreamEvaluatorConfig,
     ),
 ]

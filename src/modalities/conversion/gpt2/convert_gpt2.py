@@ -38,6 +38,7 @@ def convert_gpt2(
     num_testruns: int = 0,
     device_modalities: str = "cpu",
     device_hf: str = "cpu",
+    checkpoint_path: str | None = None,
 ) -> None:
     """Takes a modalities gpt2 model and converts it to a Huggingface transformers model.
        The provided config yaml file should contain the model_raw or model section with the model configuration.
@@ -51,11 +52,17 @@ def convert_gpt2(
         num_testruns (int, optional): Number of test runs to perform. Defaults to 0.
         device_modalities (str, optional): Device for the modalities model. Defaults to "cpu".
         device_hf (str, optional): Device for the Hugging Face model. Defaults to "cpu".
+        checkpoint_path (str, optional): Path to the model checkpoint. Overrides config.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         modalities_config = load_app_config_dict(
             Path(modalities_config_path), experiment_id="-1", experiments_root_path=Path(tmpdir)
         )
+        if checkpoint_path is not None:
+            if "checkpointed_model" not in modalities_config:
+                modalities_config["checkpointed_model"] = {"config": {}}
+            modalities_config["checkpointed_model"]["config"]["checkpoint_path"] = checkpoint_path
+
         hf_model, modalities_model = convert_model_checkpoint(modalities_config)
 
     if num_testruns > 0:

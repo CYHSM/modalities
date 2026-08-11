@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import Any, Optional
 
 import click
-import click_pathlib
+try:
+    import click_pathlib
+except ImportError:
+    class _ClickPathLibFallback:
+        @staticmethod
+        def Path(*args, **kwargs):
+            return click.Path(path_type=Path, **kwargs)
+    click_pathlib = _ClickPathLibFallback
 from omegaconf import DictConfig
 from pydantic import FilePath
 

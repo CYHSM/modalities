@@ -1,0 +1,2 @@
+config_files/model_tests/base_gpt2_test.yaml
+config_files/model_tests/dualpath_test.yaml

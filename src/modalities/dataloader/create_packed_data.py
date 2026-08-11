@@ -9,7 +9,10 @@ from io import BufferedWriter
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
-import jq
+try:
+    import jq
+except ImportError:
+    jq = None
 import numpy as np
 from pydantic import FilePath
 from tqdm import tqdm

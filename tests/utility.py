@@ -4,7 +4,10 @@ import time
 from multiprocessing import Queue
 from multiprocessing.managers import SyncManager
 
-import debugpy
+try:
+    import debugpy
+except ImportError:
+    debugpy = None
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh

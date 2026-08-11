@@ -2,7 +2,12 @@ import dataclasses
 import os
 import pickle
 import string
+import sys
 from pathlib import Path
+
+# Ensure src directory is in sys.path when running pytest
+sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,7 +19,10 @@ from modalities.checkpointing.checkpoint_saving import CheckpointSaving
 from modalities.checkpointing.stateful.app_state import AppState
 from modalities.config.config import load_app_config_dict
 from modalities.dataloader.create_index import IndexGenerator
-from modalities.dataloader.create_packed_data import PackedDataGenerator
+try:
+    from modalities.dataloader.create_packed_data import PackedDataGenerator
+except ImportError:
+    PackedDataGenerator = None
 from modalities.dataloader.dataloader import LLMDataLoader
 from modalities.dataloader.large_file_lines_reader import LargeFileLinesReader
 from modalities.evaluator import Evaluator

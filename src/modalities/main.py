@@ -220,6 +220,13 @@ class Main:
 
         print_rank_0(report)
 
+        conversion_callback = (
+            components.model_converter.convert if hasattr(components, "model_converter") and components.model_converter is not None else None
+        )
+        downstream_evaluation_callback = (
+            components.downstream_evaluator.evaluate if hasattr(components, "downstream_evaluator") and components.downstream_evaluator is not None else None
+        )
+
         gym.run(
             train_data_loader=components.train_dataloader,
             evaluation_data_loaders=components.eval_dataloaders,
@@ -229,7 +236,13 @@ class Main:
             evaluation_interval_in_steps=components.settings.intervals.evaluation_interval_in_steps,
             training_log_interval_in_steps=components.settings.intervals.training_log_interval_in_steps,
             scheduled_pipeline=components.scheduled_pipeline,
+            conversion_callback=conversion_callback,
+            downstream_evaluation_callback=downstream_evaluation_callback,
         )
+
+        if hasattr(components, "downstream_evaluator") and components.downstream_evaluator is not None:
+            print_rank_0("Waiting for all downstream evaluations to complete before exit...")
+            components.downstream_evaluator.wait_for_evaluations()
 
     def get_logging_publishers(
         self,

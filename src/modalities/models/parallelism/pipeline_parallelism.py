@@ -14,10 +14,18 @@ from torch.distributed.pipelining import PipelineStage
 from torch.distributed.pipelining.schedules import (
     PipelineScheduleMulti,
     PipelineScheduleSingle,
-    ScheduleDualPipeV,
-    ScheduleZBVZeroBubble,
     get_schedule_class,
 )
+
+try:
+    from torch.distributed.pipelining.schedules import ScheduleDualPipeV
+except ImportError:
+    ScheduleDualPipeV = None
+
+try:
+    from torch.distributed.pipelining.schedules import ScheduleZBVZeroBubble
+except ImportError:
+    ScheduleZBVZeroBubble = None
 
 from modalities.loss_functions import Loss
 from modalities.models.model import NNModel

@@ -4,7 +4,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-import jq
+try:
+    import jq
+except ImportError:
+    jq = None
 import numpy as np
 from pydantic import BaseModel
 from torch.utils.data.dataset import Dataset as TorchdataSet

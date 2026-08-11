@@ -85,6 +85,11 @@ class CLMCrossEntropyLossConfig(BaseModel):
     prediction_key: str
 
 
+class CLMCrossEntropyWithPonderLossConfig(BaseModel):
+    target_key: str
+    prediction_key: str
+
+
 # Checkpointing
 class SaveEveryKStepsCheckpointingStrategyConfig(BaseModel):
     k: PositiveInt
@@ -535,6 +540,22 @@ class ParallelDegreeConfig(BaseModel):
 # Recursive type representing arbitrary-depth YAML config structures.
 YAMLPrimitive = str | int | float | bool | None
 YAMLValue: TypeAlias = YAMLPrimitive | Path | list["YAMLValue"] | dict[str, "YAMLValue"]
+
+
+class ModelConverterConfig(BaseModel):
+    command_template: str
+    checkpoint_dir: Path
+    global_rank: int
+    eval_interval: int
+
+
+class DownstreamEvaluatorConfig(BaseModel):
+    tokenizer: PydanticTokenizerIFType
+    tasks: list[str]
+    eval_interval: int
+    checkpoint_dir: Path
+    global_rank: int
+    olmes_command_template: str
 
 
 def load_app_config_dict(

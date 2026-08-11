@@ -41,6 +41,8 @@ class Gym:
         train_data_loader: LLMDataLoader,
         evaluation_data_loaders: list[LLMDataLoader],
         checkpoint_saving: CheckpointSaving,
+        conversion_callback: Callable[[int], None] | None = None,
+        downstream_evaluation_callback: Callable[[int], None] | None = None,
         scheduled_pipeline: Pipeline | None = None,
     ):
         """Runs the model training, including evaluation and checkpointing.
@@ -53,6 +55,8 @@ class Gym:
             train_data_loader (LLMDataLoader): Data loader with the training data.
             evaluation_data_loaders (list[LLMDataLoader]): List of data loaders with the evaluation data.
             checkpoint_saving (CheckpointSaving): Routine for saving checkpoints.
+            conversion_callback (Callable[[int], None] | None, optional): Callback for model conversion.
+            downstream_evaluation_callback (Callable[[int], None] | None, optional): Callback for downstream evaluation.
             scheduled_pipeline (Pipeline | None, optional): In case of pipeline parallelism, this is used to
                 operate the model. Defaults to None.
         """
@@ -78,6 +82,8 @@ class Gym:
             loss_fun=self.loss_fun,
             evaluation_callback=evaluation_callback,
             checkpointing_callback=checkpointing_callback,
+            conversion_callback=conversion_callback,
+            downstream_evaluation_callback=downstream_evaluation_callback,
             training_log_interval_in_steps=training_log_interval_in_steps,
             scheduled_pipeline=scheduled_pipeline,
         )

@@ -98,3 +98,9 @@ PydanticRemovableHandleType = Annotated[
     torch.utils.hooks.RemovableHandle, PydanticThirdPartyTypeIF(torch.utils.hooks.RemovableHandle)
 ]
 PydanticDebuggingType = Annotated[Debugging, PydanticThirdPartyTypeIF(Debugging)]
+
+from modalities.conversion.model_converter import ModelConverter
+from modalities.evaluator import DownstreamEvaluator
+
+PydanticModelConverterIFType = Annotated[ModelConverter, PydanticThirdPartyTypeIF(ModelConverter)]
+PydanticDownstreamEvaluatorIFType = Annotated[DownstreamEvaluator, PydanticThirdPartyTypeIF(DownstreamEvaluator)]

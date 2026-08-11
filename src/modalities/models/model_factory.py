@@ -40,6 +40,8 @@ from modalities.models.gpt2.gpt2_model import (
     SwiGLU,
     TransformerMLP,
 )
+
+from modalities.models.looped.dualpath import DualPathLLM, AdaptiveComputationConfig
 from modalities.models.model import ActivationType
 from modalities.nn.model_initialization.initialization_if import ModelInitializationIF
 from modalities.running_env.env_utils import FSDP2MixedPrecisionSettings, MixedPrecisionSettings
@@ -761,4 +763,65 @@ class GPT2ModelFactory:
                 parallelize_plan=transformer_block_tp_plan,
             )
 
+        return model
+
+class DualPathModelFactory:
+    @staticmethod
+    def get_dualpath_model(
+        sample_key: str,
+        prediction_key: str,
+        poe_type: PositionTypes,
+        sequence_length: int,
+        vocab_size: int,
+        n_layer: int,
+        n_head_q: int,
+        n_head_kv: int,
+        n_embd: int,
+        ffn_hidden: int,
+        dropout: float,
+        bias: bool,
+        activation_type: ActivationType,
+        attention_implementation: AttentionImplementation,
+        attention_config: AttentionConfig,
+        attention_norm_config: LayerNormWrapperConfig,
+        ffn_norm_config: LayerNormWrapperConfig,
+        lm_head_norm_config: LayerNormWrapperConfig,
+        use_weight_tying: bool,
+        adaptive_config: Optional[AdaptiveComputationConfig] = None,
+        use_meta_device: Optional[bool] = False,
+        enforce_swiglu_hidden_dim_multiple_of: int = 256,
+    ) -> DualPathLLM:
+        config = dict(
+            sample_key=sample_key,
+            prediction_key=prediction_key,
+            poe_type=poe_type,
+            sequence_length=sequence_length,
+            vocab_size=vocab_size,
+            n_layer=n_layer,
+            n_head_q=n_head_q,
+            n_head_kv=n_head_kv,
+            n_embd=n_embd,
+            ffn_hidden=ffn_hidden,
+            dropout=dropout,
+            bias=bias,
+            activation_type=activation_type,
+            attention_implementation=attention_implementation,
+            attention_config=attention_config,
+            attention_norm_config=attention_norm_config,
+            ffn_norm_config=ffn_norm_config,
+            lm_head_norm_config=lm_head_norm_config,
+            use_weight_tying=use_weight_tying,
+            adaptive_config=adaptive_config,
+            enforce_swiglu_hidden_dim_multiple_of=enforce_swiglu_hidden_dim_multiple_of,
+        )
+        if use_meta_device and use_weight_tying:
+            raise ValueError(
+                "Weight tying is not supported on meta device. "
+                "Please set at least use_meta_device=False or use_weight_tying=False."
+            )
+        if use_meta_device:
+            with torch.device("meta"):
+                model = DualPathLLM(**config)
+        else:
+            model = DualPathLLM(**config)
         return model

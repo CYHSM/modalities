@@ -11,11 +11,13 @@ from modalities.config.pydantic_if_types import (
     PydanticDatasetIFType,
     PydanticDebuggingType,
     PydanticDeviceMeshIFType,
+    PydanticDownstreamEvaluatorIFType,
     PydanticGradientClipperIFType,
     PydanticLLMDataLoaderIFType,
     PydanticLossIFType,
     PydanticMessageSubscriberIFType,
     PydanticMFUCalculatorABCType,
+    PydanticModelConverterIFType,
     PydanticPipelineType,
     PydanticPytorchDeviceType,
     PydanticPytorchModuleType,
@@ -193,6 +195,8 @@ class TrainingComponentsInstantiationModel(BaseModel):
     scheduled_pipeline: PydanticPipelineType | None = None
     device_mesh: PydanticDeviceMeshIFType | None = None
     model_raw: PydanticPytorchModuleType
+    model_converter: PydanticModelConverterIFType | None = None
+    downstream_evaluator: PydanticDownstreamEvaluatorIFType | None = None
 
     @model_validator(mode="after")
     def _check_token_amount_in_dataset(self) -> "TrainingComponentsInstantiationModel":
