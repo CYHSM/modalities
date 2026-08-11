@@ -494,6 +494,11 @@ class GPT2LLMCollateFnConfig(BaseModel):
     target_key: str
 
 
+class ExplicitTargetCollateFnConfig(BaseModel):
+    sample_key: str
+    target_key: str
+
+
 class LLMDataLoaderConfig(BaseModel):
     dataloader_tag: str
     dataset: PydanticDatasetIFType

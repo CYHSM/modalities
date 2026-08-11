@@ -34,10 +34,34 @@ from modalities.models.nemotron.nemotron_layers import (
     NemotronAttentionLayer,
     NemotronMLPLayer,
     NemotronMoELayer,
+    PerIterationNorm,
 )
 from modalities.models.nemotron.nemotron_mlp import SquaredReLUMLP
 
 PositiveInt = Annotated[int, Field(strict=True, ge=1)]
+
+
+def build_norm(norm_config: NormWrapperConfig, num_iterations: int) -> nn.Module:
+    """
+    Builds a layer's pre-normalization, giving each loop iteration its own when asked for.
+
+    Args:
+        norm_config (NormWrapperConfig): The normalization to instantiate.
+        num_iterations (int): Number of loop iterations that need their own normalization. One
+            (the default everywhere outside a per-iteration-norm loop group) yields a plain norm
+            module, so parameter names are unchanged for every pre-existing config.
+
+    Raises:
+        ValueError: If ``num_iterations`` is below one.
+
+    Returns:
+        nn.Module: The normalization module.
+    """
+    if num_iterations < 1:
+        raise ValueError(f"num_iterations must be at least 1, got {num_iterations}.")
+    if num_iterations == 1:
+        return norm_config.build()
+    return PerIterationNorm(norms=[norm_config.build() for _ in range(num_iterations)])
 
 
 class NemotronLayerSpecIF(ABC):
@@ -55,13 +79,17 @@ class NemotronLayerSpecIF(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def build(self, layer_idx: int) -> nn.Module:
+    def build(self, layer_idx: int, num_norm_iterations: int = 1) -> nn.Module:
         """
         Builds a fresh layer module with its own parameters.
 
         Args:
             layer_idx (int): The index of the layer within the model. Passed through for specs
                 that want depth-dependent behaviour; the current specs ignore it.
+            num_norm_iterations (int): Number of loop iterations that get their own
+                pre-normalization. One means a single shared norm, which is the behaviour of every
+                layer outside a loop group and of every loop group unless
+                ``loop_config.per_iteration_norm`` is enabled.
 
         Returns:
             nn.Module: A newly constructed layer.
@@ -105,7 +133,7 @@ class Mamba2LayerSpecConfig(BaseModel):
     def _validate_head_group_divisibility(self) -> "Mamba2LayerSpecConfig":
         if self.mamba_n_heads % self.mamba_n_groups != 0:
             raise ValueError(
-                f"mamba_n_heads ({self.mamba_n_heads}) must be divisible by " f"mamba_n_groups ({self.mamba_n_groups})."
+                f"mamba_n_heads ({self.mamba_n_heads}) must be divisible by mamba_n_groups ({self.mamba_n_groups})."
             )
         return self
 
@@ -126,7 +154,7 @@ class Mamba2LayerSpec(NemotronLayerSpecIF):
     def symbol(self) -> LayerSymbol:
         return LayerSymbol.MAMBA
 
-    def build(self, layer_idx: int) -> Mamba2Layer:
+    def build(self, layer_idx: int, num_norm_iterations: int = 1) -> Mamba2Layer:
         config = self.config
         mixer = Mamba2Mixer(
             n_embd=config.n_embd,
@@ -141,7 +169,7 @@ class Mamba2LayerSpec(NemotronLayerSpecIF):
             bias=config.bias,
             conv_bias=config.conv_bias,
         )
-        return Mamba2Layer(norm=config.norm_config.build(), mixer=mixer)
+        return Mamba2Layer(norm=build_norm(config.norm_config, num_norm_iterations), mixer=mixer)
 
 
 class NemotronAttentionLayerSpecConfig(BaseModel):
@@ -191,7 +219,7 @@ class NemotronAttentionLayerSpec(NemotronLayerSpecIF):
     def symbol(self) -> LayerSymbol:
         return LayerSymbol.ATTENTION
 
-    def build(self, layer_idx: int) -> NemotronAttentionLayer:
+    def build(self, layer_idx: int, num_norm_iterations: int = 1) -> NemotronAttentionLayer:
         config = self.config
         attn = NemotronSelfAttention(
             n_embd=config.n_embd,
@@ -202,7 +230,7 @@ class NemotronAttentionLayerSpec(NemotronLayerSpecIF):
             bias=config.bias,
             dropout=config.dropout,
         )
-        return NemotronAttentionLayer(norm=config.norm_config.build(), attn=attn)
+        return NemotronAttentionLayer(norm=build_norm(config.norm_config, num_norm_iterations), attn=attn)
 
 
 class NemotronMoELayerSpecConfig(BaseModel):
@@ -282,7 +310,7 @@ class NemotronMoELayerSpec(NemotronLayerSpecIF):
     def symbol(self) -> LayerSymbol:
         return LayerSymbol.MOE
 
-    def build(self, layer_idx: int) -> NemotronMoELayer:
+    def build(self, layer_idx: int, num_norm_iterations: int = 1) -> NemotronMoELayer:
         config = self.config
         router = TopKRouter(
             n_embd=config.n_embd,
@@ -310,7 +338,7 @@ class NemotronMoELayerSpec(NemotronLayerSpecIF):
             shared_experts=shared_experts,
             aux_loss_coeff=config.aux_loss_coeff,
         )
-        return NemotronMoELayer(norm=config.norm_config.build(), moe=moe)
+        return NemotronMoELayer(norm=build_norm(config.norm_config, num_norm_iterations), moe=moe)
 
 
 class NemotronMLPLayerSpecConfig(BaseModel):
@@ -346,7 +374,7 @@ class NemotronMLPLayerSpec(NemotronLayerSpecIF):
     def symbol(self) -> LayerSymbol:
         return LayerSymbol.MLP
 
-    def build(self, layer_idx: int) -> NemotronMLPLayer:
+    def build(self, layer_idx: int, num_norm_iterations: int = 1) -> NemotronMLPLayer:
         config = self.config
         mlp = SquaredReLUMLP(n_embd=config.n_embd, ffn_hidden=config.ffn_hidden, bias=config.bias)
-        return NemotronMLPLayer(norm=config.norm_config.build(), mlp=mlp)
+        return NemotronMLPLayer(norm=build_norm(config.norm_config, num_norm_iterations), mlp=mlp)

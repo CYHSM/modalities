@@ -193,6 +193,7 @@ class Main:
             progress_publisher=progress_publisher,
             evaluation_result_publisher=evaluation_result_publisher,
             device_mesh=components.device_mesh,
+            metrics=components.eval_metrics,
         )
 
         # Gym

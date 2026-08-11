@@ -52,6 +52,10 @@ class NumberConversionFromCheckpointPathConfig(BaseModel):
     checkpoint_path: Path
 
 
+class NumExecutedLayersFromLayerPatternConfig(BaseModel):
+    layer_pattern: str
+
+
 class NumTokensFromPackedMemMapDatasetContinuousConfig(BaseModel):
     dataset_path: Path
     sequence_length: Annotated[int, Field(strict=True, gt=0)]
@@ -85,6 +89,25 @@ class NumberConversion:
             )
         else:
             raise ValueError(f"No match found for pattern {pattern} in {string}")
+
+    @staticmethod
+    def get_num_executed_layers_from_layer_pattern(layer_pattern: str) -> int:
+        """Calculates the effective depth of a hybrid layer pattern, counting a looped layer
+        once per loop iteration.
+
+        This is what depth-scaled weight initialization has to be scaled by: the residual stream
+        grows with the number of layer applications, not with the number of weight sets. Deriving
+        it from the pattern keeps the two in sync when the pattern changes.
+
+        Args:
+            layer_pattern (str): The layer pattern, e.g. "M[ME]^3E".
+
+        Returns:
+            int: Number of layer applications per forward pass.
+        """
+        from modalities.models.nemotron.layer_pattern import get_num_layers
+
+        return get_num_layers(layer_pattern)
 
     @staticmethod
     def get_local_num_batches_from_num_samples(

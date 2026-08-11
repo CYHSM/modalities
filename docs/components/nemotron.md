@@ -89,6 +89,10 @@ model_raw:
 Changing the Mamba/attention/MoE ratio is a one-line edit to `layer_pattern` (plus `n_layer`, which
 is validated against it). Swapping an `E` for a `-` turns a sparse layer dense.
 
+The pattern can also contain **loop groups** written `[<symbols>]^<K>`, which execute a run of
+layers `K` times while reusing one set of weights, e.g. `"[ME]^3M*EMEMEM*E"`. See
+[nemotron_loops.md](nemotron_loops.md).
+
 ## Mamba-2 kernel backends
 
 The Mamba-2 mixer has two interchangeable state space scan implementations, selected via

@@ -2,6 +2,10 @@
 .env*
 data/datasets
 data/checkpoints
+# Tokenized copies of MATH and TriviaQA, rebuilt deterministically by
+# config_files/nemotron/loop_ablation/prepare_text_evals.py. Generated artifacts, and third-party
+# benchmark data that this repository should not redistribute.
+data/prepared_evals
 logs/
 .DS_Store
 *.whl

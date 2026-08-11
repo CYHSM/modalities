@@ -300,15 +300,36 @@ def test_moe_aux_loss_is_a_scalar_in_the_autograd_graph():
     assert moe.router.gate.weight.grad is not None
 
 
-def test_moe_aux_loss_is_overwritten_not_accumulated():
-    # Overwriting is what makes the loss correct under activation checkpointing, where the
-    # forward pass is replayed during the backward pass.
+def test_moe_aux_loss_accumulates_across_visits():
+    # A layer inside a loop group is visited several times per forward pass and routes
+    # independently each time, so every visit's imbalance has to be penalized. The model clears
+    # the accumulator via reset_aux_loss() at the start of each forward pass.
     moe = _make_moe(aux_loss_coeff=1e-2)
     x = torch.randn(2, 4, N_EMBD)
+    moe.reset_aux_loss()
     moe(x)
     first = moe.last_aux_loss.item()
     moe(x)
-    assert moe.last_aux_loss.item() == pytest.approx(first)
+    assert moe.last_aux_loss.item() == pytest.approx(2 * first)
+
+    moe.reset_aux_loss()
+    assert moe.last_aux_loss is None
+
+
+def test_moe_aux_loss_accumulation_does_not_mutate_an_already_captured_loss():
+    # Under activation checkpointing the forward pass is replayed during the backward pass, which
+    # visits the layer again. That must not change the tensor the model already handed to the
+    # loss, so the accumulation has to be out-of-place.
+    moe = _make_moe(aux_loss_coeff=1e-2)
+    x = torch.randn(2, 4, N_EMBD)
+    moe.reset_aux_loss()
+    moe(x)
+    captured = moe.last_aux_loss
+    captured_value = captured.item()
+
+    moe(x)  # the replay
+
+    assert captured.item() == pytest.approx(captured_value)
 
 
 def test_moe_aux_loss_is_minimal_for_perfectly_balanced_routing():

@@ -1,0 +1,827 @@
+# ================================================================================================
+# DENSE BASELINE: D2b_dense_param_matched_lr_double
+# D2 with max_lr doubled. Expected to be the least stable of the three; if it is not, the inherited LR was too conservative and the whole sweep is under-tuned.
+#
+#   matched on    : total parameters, at DOUBLE the base learning rate (9.0e-4)
+#   shape         : n_embd 2048 / n_layer 21 / ffn_hidden 5504 / 16 heads
+#   parameters    : 1110.5M (tied embeddings; measured, not derived)
+#   max_lr        : 0.0009   (warmup from and decay to max_lr/10)
+#
+# Everything else -- data, step profile, learning rate schedule, num_target_steps and
+# all six evaluation dataloaders -- is inherited from the Nemotron base config, so the
+# curves are comparable to the ablation arms step for step.
+#
+# GENERATED FILE -- do not edit. Edit the base config and re-run
+# config_files/nemotron/loop_ablation/generate_dense_baseline_configs.py.
+# ================================================================================================
+# Nemotron research-scale config for layer-loop ablations. 1x A100 80GB.
+#
+# PURPOSE
+# A small Nemotron that preserves the *cost structure* of Nemotron-3 Nano 30B-A3B, so that
+# conclusions about where to spend depth (loop M vs E vs * vs [ME] vs [M*]) transfer. The
+# two properties that had to be faithful are:
+#
+#   non-embedding active/total   9.7%  (reference: 9.3%)
+#   per-layer active cost M:*:E  1 : 0.59 : 2.01  (reference: 1 : 0.60 : 2.07)
+#
+# Obtained by geometric scale-down of the published hyperparameters: n_embd 2688 -> 1024,
+# 52 -> 12 layers, every ratio (mamba d_inner/d = 1.5, attention inner/d = 1.5, expert
+# ffn/d = 0.69, top-6 of 128) held fixed. 1.105B total / 225M active.
+#
+# The headline 20.4% active (vs the reference's 11.3%) is entirely the vocabulary tax: tied
+# Llama-3 embeddings are 131M, i.e. 12% of this model but 2.2% of the 30B. That term is a
+# constant added to every ablation arm and cancels in the comparison. Retokenizing to a 32k
+# vocab would give 12.7%, at the cost of regenerating the pbin files.
+#
+# COST
+# Training FLOPs scale with *active* parameters, so this trains at roughly the speed of a
+# 225M dense model. Only memory holds 1.1B: ~18 GiB of fp32 params + grads + Adam state,
+# plus activations. Measured peak is recorded in docs/components/nemotron_loops.md.
+#
+# RUNNING THE ABLATION
+# This file is the BASE / TEMPLATE, and is identical to the A0_baseline arm. The nine FLOP-matched
+# ablation arms are generated from it into config_files/nemotron/loop_ablation/ by
+#
+#   python config_files/nemotron/loop_ablation/generate_arm_configs.py
+#
+# Change a shared setting HERE and regenerate, so the arms cannot drift apart. Only `layer_pattern`
+# and `n_layer` differ between arms; `num_layers` for the initializer is derived from the pattern,
+# so effective depth never goes stale. The arm table and the reasoning are in
+# docs/components/nemotron_loops.md.
+#
+# Run with:
+#   CUDA_VISIBLE_DEVICES=5 torchrun --rdzv-endpoint localhost:1235 --nnodes 1 --nproc_per_node 1 \
+#     $(which modalities) run \
+#     --experiments_root_path /home/markus_frey/Github/modalities/results \
+#     --config_file_path config_files/nemotron/config_research_nemotron_loops_1gpu.yaml
+#
+# Use one virtual environment for both `torchrun` and `modalities`. Install fused Mamba kernels
+# with `pip install -e '.[mamba]'` and keep `ssd_backend: fused`; switch to `native` if unavailable.
+
+settings:
+  experiment_id: ${modalities_env:experiment_id}
+  config_file_path: ${modalities_env:config_file_path}
+  referencing_keys:
+    sample_key: input_ids
+    target_key: target_ids
+    prediction_key: logits
+  cuda_env:
+    local_rank: ${cuda_env:LOCAL_RANK}
+    global_rank: ${cuda_env:RANK}
+    world_size: ${cuda_env:WORLD_SIZE}
+  paths:
+    checkpoint_saving_path: data/checkpoints
+    train_dataset_path: /raid/s3/opengptx/max_lue/repositories/training_datasets/processed/fineweb_sample-10BT-shuffled_train-head-2B-tokens.pbin
+    test_dataset_path: /raid/s3/opengptx/max_lue/repositories/training_datasets/processed/fineweb_sample-10BT-shuffled_eval-tail-2M-tokens.pbin
+    experiments_root_path: ${modalities_env:experiments_root_path}
+  intervals:
+    training_log_interval_in_steps: 5
+    # Set beyond num_target_steps (8500) so that no checkpoint is written. These ablation runs
+    # are compared on their loss curves and do not need checkpoints; a 1.1B DCP checkpoint is
+    # ~13 GiB (N2_anchor_moe: ~24 GiB), which is more than the machine has spare. Lower this for
+    # a real training run on a machine with room.
+    checkpointing_interval_in_steps: 50000
+    evaluation_interval_in_steps: 250
+  consistency_enforcement:
+    enforce_tokens_per_step_consistency: true
+    enforce_last_step_logged: false
+    enforce_last_step_evaluated: false
+    enforce_last_step_checkpointed: false
+  step_profile:
+    # 4 accum steps x 8 micro batch x 1 rank = 32 sequences global.
+    # Micro batch 8 (not 1 + more accumulation) on purpose: with 128 experts and top-6, a micro
+    # batch of 1 gives ~96 tokens per expert, which is too few for grouped_mm to be efficient.
+    gradient_accumulation_steps: 4
+    local_train_micro_batch_size: 8
+    sequence_length: 2048
+    dp_degree:
+      instance_key: dp_degree
+      pass_type: BY_REFERENCE
+  training_target:
+    # LITERAL, NOT DERIVED FROM THE DATASET -- and this is the single most consequential number in
+    # the file after the layer pattern, because `lr_scheduler.total_steps` follows it.
+    #
+    # These were `num_tokens_from_packed_mem_map_dataset_continuous` /
+    # `num_steps_from_num_tokens`, i.e. the whole 2B-token training file = 30,517 steps. No run has
+    # ever come close: the arms are stopped by wall clock at 5-11k steps. The cosine therefore
+    # never decayed -- measured LR was still 4.32e-4 (96% of max_lr) at step 4750 -- and the loss
+    # flattened at the high-LR floor (3.90 at 2k, 3.72 at 3k, 3.64 at 4k, 3.63 at 4750). The decay
+    # phase, where the remaining drop lives, was never reached in waves 1-4a. Worse for the
+    # ablation than for the absolute number: at a constant peak LR every arm sits on the same noisy
+    # plateau, which is exactly the "all six arms within 0.01" non-result of wave 1.
+    #
+    # Set this to the number of steps you will ACTUALLY run, and keep it identical across arms --
+    # a per-arm value would give each arm a different LR curve and destroy the matched-step
+    # comparison. 8500 is what the slowest arm (A4, ~13.5 steps/min with two arms per GPU) reaches
+    # in ~10.5h, inside a 12h budget. It is also a multiple of evaluation_interval_in_steps, so the
+    # final step is evaluated.
+    #
+    # Running PAST total_steps would be worse than stopping short: torch's CosineAnnealingLR is
+    # periodic, so beyond T_max it sends the learning rate back UP. num_target_steps is what stops
+    # the trainer, which is why it is pinned here rather than only in the scheduler.
+    #
+    # num_target_tokens must stay num_target_steps * 65,536 tokens/step (8 micro batch x 4 accum
+    # x 2048 seq x 1 rank) or `enforce_tokens_per_step_consistency` rejects the config.
+    num_target_tokens: 557056000
+    num_target_steps: 8500
+  training_progress:
+    global_num_seen_tokens: 0
+    num_seen_steps: 0
+    num_seen_samples: 0
+    last_step: -1
+
+collate_fn:
+  component_key: collate_fn
+  variant_key: gpt_2_llm_collator
+  config:
+    sample_key: ${settings.referencing_keys.sample_key}
+    target_key: ${settings.referencing_keys.target_key}
+
+train_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: ${settings.paths.train_dataset_path}
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+    reuse_last_target: true
+
+train_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 2
+    pin_memory: true
+    dataloader_tag: train
+    dataset:
+      instance_key: train_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: ${settings.step_profile.local_train_micro_batch_size}
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: resumable_distributed_sampler
+          config:
+            dataset:
+              instance_key: train_dataset
+              pass_type: BY_REFERENCE
+            rank: ${settings.cuda_env.global_rank}
+            num_replicas: ${settings.cuda_env.world_size}
+            shuffle: true
+            seed: 42
+            drop_last: true
+            skip_num_global_samples: ${settings.training_progress.num_seen_samples}
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+test_dataset:
+  component_key: dataset
+  variant_key: packed_mem_map_dataset_continuous
+  config:
+    raw_data_path: ${settings.paths.test_dataset_path}
+    sequence_length: ${settings.step_profile.sequence_length}
+    sample_key: ${settings.referencing_keys.sample_key}
+    reuse_last_target: true
+
+test_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 2
+    pin_memory: true
+    dataloader_tag: test
+    dataset:
+      instance_key: test_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: 8
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: distributed_sampler
+          config:
+            rank: ${settings.cuda_env.global_rank}
+            num_replicas: ${settings.cuda_env.world_size}
+            shuffle: false
+            drop_last: true
+            dataset:
+              instance_key: test_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: collate_fn
+      pass_type: BY_REFERENCE
+
+# ----------------------------------------------------------------------------------------------
+# SYNTHETIC REASONING EVALUATIONS
+#
+# Perplexity is the wrong instrument for this ablation. Every published result on depth-wise weight
+# sharing says the same thing: looped models *lose* on validation perplexity under iso-FLOP
+# comparison and *win* on reasoning. A sweep that logs only loss therefore systematically
+# under-reports the effect it is trying to measure. See
+# docs/components/nemotron_loops_research_plan.md section 6.
+#
+# The tasks are parameterized by a hop count -- the number of serial lookups the answer needs -- so
+# the ladder itself is the experiment: p_hop_1 is a single associative recall that needs no depth
+# and acts as the control, while p_hop_3 cannot be resolved in fewer than three serial steps. An arm
+# that is better at everything moves all four dataloaders; an arm that buys usable depth moves the
+# high-hop ones and leaves the control alone. That dissociation is the result; a single number is
+# not.
+#
+# bind_3 differs from p_hop_3 in one deliberate way: its statements are shuffled, so recency
+# heuristics carry no signal and the chain has to be followed by content rather than by position.
+#
+# Targets are masked everywhere except the answer, so `test CLMCrossEntropyLoss` on these
+# dataloaders is the answer's negative log-likelihood -- but read the eval_metrics below instead:
+# they exclude the MoE auxiliary term, whose size depends on how often the MoE layers are visited,
+# i.e. on exactly what the loop arms vary.
+#
+# Chance accuracy is 1/26 = 0.0385 on all four. An arm at chance is telling you nothing yet.
+#
+# The token ids are ' A'..' Z' and ' ;', ' =' under the Meta-Llama-3-8B-Instruct tokenizer that the
+# fineweb pbin files were built with. Regenerate them with
+#   python config_files/nemotron/loop_ablation/derive_symbol_token_ids.py
+# if the training data is ever retokenized. They are ids, not strings, so evaluation carries no
+# runtime tokenizer dependency and the exact questions are reproducible from this file alone.
+# ----------------------------------------------------------------------------------------------
+
+masked_target_collate_fn:
+  component_key: collate_fn
+  variant_key: explicit_target_collator
+  config:
+    sample_key: ${settings.referencing_keys.sample_key}
+    target_key: ${settings.referencing_keys.target_key}
+
+p_hop_1_dataset:
+  component_key: dataset
+  variant_key: synthetic_reasoning
+  config:
+    task: p_hop_induction
+    # 2048 questions puts the standard error of an accuracy near 30% at ~1%, which is below the
+    # differences the literature reports between looped and non-looped models.
+    num_samples: 2048
+    num_hops: 1
+    prompt_length: 256
+    # The seed must be identical across every arm: arms are compared on their answers, so they have
+    # to be asked the same questions.
+    seed: 1234
+    symbol_token_ids: &reasoning_alphabet [
+      362, 426, 356, 423, 469, 435, 480, 473, 358, 622, 735, 445, 386,
+      452, 507, 393, 1229, 432, 328, 350, 549, 650, 468, 1630, 816, 1901
+    ]
+    sample_key: ${settings.referencing_keys.sample_key}
+    target_key: ${settings.referencing_keys.target_key}
+
+p_hop_1_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    # The dataset is generated once and held in memory, so worker processes would only add fork cost.
+    num_workers: 0
+    pin_memory: true
+    dataloader_tag: p_hop_1
+    dataset:
+      instance_key: p_hop_1_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        # These sequences are 256 tokens rather than 2048, so a larger batch costs no more memory
+        # than the language-modelling evaluation and spends far less time in kernel launch overhead.
+        batch_size: 64
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: distributed_sampler
+          config:
+            rank: ${settings.cuda_env.global_rank}
+            num_replicas: ${settings.cuda_env.world_size}
+            shuffle: false
+            drop_last: true
+            dataset:
+              instance_key: p_hop_1_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: masked_target_collate_fn
+      pass_type: BY_REFERENCE
+
+p_hop_2_dataset:
+  component_key: dataset
+  variant_key: synthetic_reasoning
+  config:
+    task: p_hop_induction
+    num_samples: 2048
+    num_hops: 2
+    prompt_length: 256
+    seed: 1234
+    symbol_token_ids: *reasoning_alphabet
+    sample_key: ${settings.referencing_keys.sample_key}
+    target_key: ${settings.referencing_keys.target_key}
+
+p_hop_2_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 0
+    pin_memory: true
+    dataloader_tag: p_hop_2
+    dataset:
+      instance_key: p_hop_2_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: 64
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: distributed_sampler
+          config:
+            rank: ${settings.cuda_env.global_rank}
+            num_replicas: ${settings.cuda_env.world_size}
+            shuffle: false
+            drop_last: true
+            dataset:
+              instance_key: p_hop_2_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: masked_target_collate_fn
+      pass_type: BY_REFERENCE
+
+p_hop_3_dataset:
+  component_key: dataset
+  variant_key: synthetic_reasoning
+  config:
+    task: p_hop_induction
+    num_samples: 2048
+    num_hops: 3
+    prompt_length: 256
+    seed: 1234
+    symbol_token_ids: *reasoning_alphabet
+    sample_key: ${settings.referencing_keys.sample_key}
+    target_key: ${settings.referencing_keys.target_key}
+
+p_hop_3_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 0
+    pin_memory: true
+    dataloader_tag: p_hop_3
+    dataset:
+      instance_key: p_hop_3_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: 64
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: distributed_sampler
+          config:
+            rank: ${settings.cuda_env.global_rank}
+            num_replicas: ${settings.cuda_env.world_size}
+            shuffle: false
+            drop_last: true
+            dataset:
+              instance_key: p_hop_3_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: masked_target_collate_fn
+      pass_type: BY_REFERENCE
+
+bind_3_dataset:
+  component_key: dataset
+  variant_key: synthetic_reasoning
+  config:
+    task: variable_binding
+    num_samples: 2048
+    num_hops: 3
+    # The answer is always a symbol that appears as a value but never as a variable, and there are
+    # exactly num_distractors + 1 of those -- so a model that has learned only the *format* reaches
+    # 1/(num_distractors + 1) without following the chain. Read bind_3 accuracy against 1/10 = 0.10,
+    # NOT against the 1/26 that applies to the p_hop tasks. 9 is the largest value that still leaves
+    # slack in a 26-symbol alphabet: 3 chain variables + 1 literal + 2*9 distractor symbols = 22.
+    num_distractors: 9
+    seed: 1234
+    symbol_token_ids: *reasoning_alphabet
+    # ' ;' separates statements, ' =' is the assignment operator.
+    delimiter_token_ids: [2652, 284]
+    sample_key: ${settings.referencing_keys.sample_key}
+    target_key: ${settings.referencing_keys.target_key}
+
+bind_3_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 0
+    pin_memory: true
+    dataloader_tag: bind_3
+    dataset:
+      instance_key: bind_3_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        batch_size: 64
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: distributed_sampler
+          config:
+            rank: ${settings.cuda_env.global_rank}
+            num_replicas: ${settings.cuda_env.world_size}
+            shuffle: false
+            drop_last: true
+            dataset:
+              instance_key: bind_3_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: masked_target_collate_fn
+      pass_type: BY_REFERENCE
+
+# ----------------------------------------------------------------------------------------------
+# BENCHMARK EVALUATIONS: MINERVA MATH (reasoning) AND TRIVIAQA (parametric-knowledge control)
+#
+# These two are read against each other. The claim about looped models is that weight sharing buys
+# reasoning without buying parameters, so they should move in OPPOSITE directions: looping is
+# expected to help on math and to be neutral or worse on closed-book recall, whose knowledge lives
+# in weights a loop does not add. Showing that dissociation is what makes a win on math credible
+# rather than an artifact of an arm simply training better.
+#
+# Negative log-likelihood, not accuracy: at 1.1B parameters and a few billion tokens a model scores
+# ~zero on both, so solve rate is a constant, not a measurement. The likelihood assigned to the
+# CORRECT answer is graded and moves long before accuracy leaves the floor. Only `answer_nll` is
+# meaningful here -- `answer_accuracy` is per-token next-token accuracy over a reference solution
+# and is reported for completeness, not as a benchmark score.
+#
+# `minerva_math` is the lm-evaluation-harness `minerva_math` task, not plain Hendrycks MATH: same
+# test split, but Minerva's "Problem:\n{problem}\n\nSolution:" prompt and its verbatim 4-shot
+# prefix. Minerva's SymPy answer checking only scores a *generated* answer for exact match and has
+# no counterpart in a likelihood evaluation.
+#
+# Both are tokenized ONCE, offline, so every arm is scored on byte-identical token sequences and
+# training needs no tokenizer. Build them before the first run:
+#   python config_files/nemotron/loop_ablation/prepare_text_evals.py
+# minerva_math: 1024 problems, 214 scored tokens each. triviaqa: 8192 questions, 3.0 each.
+# ----------------------------------------------------------------------------------------------
+
+minerva_math_dataset:
+  component_key: dataset
+  variant_key: prepared_eval
+  config:
+    prepared_path: data/prepared_evals/minerva_math.npz
+    sample_key: ${settings.referencing_keys.sample_key}
+    target_key: ${settings.referencing_keys.target_key}
+
+minerva_math_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 0
+    pin_memory: true
+    dataloader_tag: minerva_math
+    dataset:
+      instance_key: minerva_math_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        # These sequences run to 1997 tokens (the 4-shot prefix is ~500), so the logits tensor is
+        # the same size as the language-modelling split's at batch 8 -- about 3.9 GiB in bf16 at
+        # a 128k vocab -- and the metric copies the scored rows on top of that. Batch 4 keeps this
+        # evaluation's peak strictly below the `test` split's, so attaching it cannot make an arm
+        # OOM that previously fit. N2_anchor_moe already peaks at 47.8 GiB.
+        batch_size: 4
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: distributed_sampler
+          config:
+            rank: ${settings.cuda_env.global_rank}
+            num_replicas: ${settings.cuda_env.world_size}
+            shuffle: false
+            drop_last: true
+            dataset:
+              instance_key: minerva_math_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: masked_target_collate_fn
+      pass_type: BY_REFERENCE
+
+triviaqa_dataset:
+  component_key: dataset
+  variant_key: prepared_eval
+  config:
+    prepared_path: data/prepared_evals/triviaqa.npz
+    sample_key: ${settings.referencing_keys.sample_key}
+    target_key: ${settings.referencing_keys.target_key}
+
+triviaqa_dataloader:
+  component_key: data_loader
+  variant_key: default
+  config:
+    num_workers: 0
+    pin_memory: true
+    dataloader_tag: triviaqa
+    dataset:
+      instance_key: triviaqa_dataset
+      pass_type: BY_REFERENCE
+    batch_sampler:
+      component_key: batch_sampler
+      variant_key: default
+      config:
+        # 142 tokens per question, so a large batch costs little.
+        batch_size: 64
+        drop_last: true
+        sampler:
+          component_key: sampler
+          variant_key: distributed_sampler
+          config:
+            rank: ${settings.cuda_env.global_rank}
+            num_replicas: ${settings.cuda_env.world_size}
+            shuffle: false
+            drop_last: true
+            dataset:
+              instance_key: triviaqa_dataset
+              pass_type: BY_REFERENCE
+    collate_fn:
+      instance_key: masked_target_collate_fn
+      pass_type: BY_REFERENCE
+
+eval_dataloaders:
+  - instance_key: test_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: p_hop_1_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: p_hop_2_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: p_hop_3_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: bind_3_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: minerva_math_dataloader
+    pass_type: BY_REFERENCE
+  - instance_key: triviaqa_dataloader
+    pass_type: BY_REFERENCE
+
+# Reported per dataloader as "<dataloader_tag> <tag>" in wandb, e.g. "p_hop_3 answer_accuracy".
+# Restricted to the synthetic dataloaders by tag: on the language-modelling `test` split no target
+# is masked, so an "answer accuracy" there would be next-token accuracy over ordinary text, which
+# is a different quantity wearing the same name.
+eval_metrics:
+  - component_key: evaluation_metric
+    variant_key: masked_token_accuracy
+    config:
+      tag: answer_accuracy
+      target_key: ${settings.referencing_keys.target_key}
+      prediction_key: ${settings.referencing_keys.prediction_key}
+      dataloader_tags: &reasoning_dataloader_tags
+        [p_hop_1, p_hop_2, p_hop_3, bind_3, minerva_math, triviaqa]
+  # Accuracy is pinned at chance until the model can do the task at all; the answer's negative
+  # log-likelihood moves before that and is what to watch early in a run.
+  - component_key: evaluation_metric
+    variant_key: masked_token_nll
+    config:
+      tag: answer_nll
+      target_key: ${settings.referencing_keys.target_key}
+      prediction_key: ${settings.referencing_keys.prediction_key}
+      dataloader_tags: *reasoning_dataloader_tags
+
+checkpoint_saving:
+  component_key: checkpoint_saving
+  variant_key: default
+  config:
+    checkpoint_saving_strategy:
+      component_key: checkpoint_saving_strategy
+      variant_key: save_k_most_recent_checkpoints_strategy
+      config:
+        k: 1
+    checkpoint_saving_execution:
+      component_key: checkpoint_saving_execution
+      variant_key: dcp
+      config:
+        checkpoint_path: ${settings.paths.checkpoint_saving_path}
+        global_rank: ${settings.cuda_env.global_rank}
+        experiment_id: ${settings.experiment_id}
+
+loss_fn:
+  component_key: loss
+  variant_key: clm_cross_entropy_loss
+  config:
+    target_key: ${settings.referencing_keys.target_key}
+    prediction_key: ${settings.referencing_keys.prediction_key}
+device_mesh:
+  component_key: device_mesh
+  variant_key: default
+  config:
+    device_type: cuda
+    data_parallel_replicate_degree: 1
+    data_parallel_shard_degree: -1
+    world_size: ${settings.cuda_env.world_size}
+
+dp_degree:
+  component_key: number_conversion
+  variant_key: parallel_degree
+  config:
+    device_mesh:
+      instance_key: device_mesh
+      pass_type: BY_REFERENCE
+    parallelism_methods: [dp_shard, dp_replicate]
+
+app_state:
+  component_key: app_state
+  variant_key: raw
+  config:
+    model:
+      instance_key: initialized_model
+      pass_type: BY_REFERENCE
+    optimizer:
+      instance_key: optimizer
+      pass_type: BY_REFERENCE
+    lr_scheduler:
+      instance_key: lr_scheduler
+      pass_type: BY_REFERENCE
+
+initialized_model:
+  component_key: model
+  variant_key: model_initialized
+  config:
+    model:
+      instance_key: fsdp_model
+      pass_type: BY_REFERENCE
+    model_initializer:
+      component_key: model_initialization
+      variant_key: composed
+      config:
+        model_type: gpt2
+        weight_init_type: scaled
+        mean: 0.0
+        std: auto
+        hidden_dim: ${model_raw.config.n_embd}
+        # A dense model executes each layer exactly once, so effective depth IS n_layer. The
+        # Nemotron arms derive this from the layer pattern because a loop group executes its
+        # layers more than once; there is no such distinction here.
+        num_layers: ${model_raw.config.n_layer}
+fsdp_model:
+  component_key: model
+  variant_key: fsdp2_wrapped
+  config:
+    model:
+      instance_key: activation_checkpointed_model
+      pass_type: BY_REFERENCE
+    device_mesh:
+      instance_key: device_mesh
+      pass_type: BY_REFERENCE
+    mixed_precision_settings:
+      param_dtype: BF_16
+      reduce_dtype: FP_32
+    layers_per_fsdp_unit: 1
+    block_names: [GPT2Block]
+activation_checkpointed_model:
+  component_key: model
+  variant_key: activation_checkpointed
+  config:
+    model:
+      instance_key: model_raw
+      pass_type: BY_REFERENCE
+    ac_variant: full_activation_checkpointing
+    layers_fqn: transformer.h
+    ac_fun_params: {}
+
+model_raw:
+  component_key: model
+  variant_key: gpt2
+  config:
+    use_meta_device: false
+    # Tied, exactly as the Nemotron arms are. At a 128k vocabulary the embedding is a large share
+    # of a model this size, so untying here would change the parameter accounting the match rests
+    # on.
+    use_weight_tying: true
+    sample_key: ${settings.referencing_keys.sample_key}
+    prediction_key: ${settings.referencing_keys.prediction_key}
+    sequence_length: ${settings.step_profile.sequence_length}
+    vocab_size: 128256
+    n_layer: 21
+    n_head_q: 16
+    # Multi-head, not grouped-query: this is the plain reference architecture, and GQA is a
+    # memory-bandwidth optimization that would only muddy a parameter-matched comparison.
+    n_head_kv: 16
+    ffn_hidden: 5504
+    n_embd: 2048
+    dropout: 0.0
+    bias: false
+    # RoPE, because a dense transformer has no other source of positional information. The
+    # Nemotron arms use none at all -- their Mamba-2 mixers carry position -- so this is a real
+    # architectural difference, not a settings mismatch, and it favours neither side.
+    poe_type: NOPE
+    attention_config:
+      qkv_transforms:
+        - type_hint: RotaryTransform
+          config:
+            n_embd: ${model_raw.config.n_embd}
+            n_head: ${model_raw.config.n_head_q}
+            seq_length_dim: -2
+            base_freq: 10000
+    attention_implementation: pytorch_flash
+    activation_type: swiglu
+    attention_norm_config: &dense_norm_config
+      norm_type: rms_norm
+      config:
+        ndim: ${model_raw.config.n_embd}
+        bias: false
+        epsilon: 1e-5
+    ffn_norm_config: *dense_norm_config
+    lm_head_norm_config: *dense_norm_config
+lr_scheduler:
+  component_key: scheduler
+  variant_key: linear_warmup_cosine_annealing_lr
+  config:
+    optimizer:
+      instance_key: optimizer
+      pass_type: BY_REFERENCE
+    warmup_steps: 750
+    # Follows num_target_steps (8500), which is now a literal chosen to match the wall-clock budget
+    # rather than the size of the training file. See the comment there: when this was 30,517 the
+    # cosine never decayed within a run and every arm plateaued at the peak-LR floor.
+    total_steps: ${settings.training_target.num_target_steps}
+    initial_lr: 9e-05
+    max_lr: 0.0009
+    final_lr: 9e-05
+
+optimizer:
+  component_key: optimizer
+  variant_key: adam_w
+  config:
+    # Must equal lr_scheduler.max_lr; the scheduler factory rejects any mismatch.
+    lr: 0.0009
+    betas: [0.9, 0.95]
+    eps: 1e-8
+    weight_decay: 0.1
+    weight_decay_groups_excluded: [embedding, layernorm]
+    wrapped_model:
+      instance_key: initialized_model
+      pass_type: BY_REFERENCE
+gradient_clipper:
+  component_key: gradient_clipper
+  variant_key: fsdp2
+  config:
+    wrapped_model:
+      instance_key: initialized_model
+      pass_type: BY_REFERENCE
+    norm_type: P2_NORM
+    max_norm: 1.0
+    device_mesh:
+      instance_key: device_mesh
+      pass_type: BY_REFERENCE
+
+progress_subscriber:
+  component_key: progress_subscriber
+  variant_key: rich
+  config:
+    global_rank: ${settings.cuda_env.global_rank}
+    num_seen_steps: ${settings.training_progress.num_seen_steps}
+    num_target_steps: ${settings.training_target.num_target_steps}
+    train_dataloader_tag: ${train_dataloader.config.dataloader_tag}
+    eval_dataloaders:
+      instance_key: eval_dataloaders
+      pass_type: BY_REFERENCE
+
+evaluation_subscriber:
+  component_key: results_subscriber
+  variant_key: wandb
+  config:
+    global_rank: ${settings.cuda_env.global_rank}
+    project: nemo
+    mode: ONLINE
+    experiment_id: ${settings.experiment_id}
+    directory: wandb_storage
+    config_file_path: ${settings.config_file_path}
+
+mfu_calculator:
+  component_key: mfu_calculator
+  variant_key: gpt2
+  config:
+    n_layer: ${model_raw.config.n_layer}
+    sequence_length: ${settings.step_profile.sequence_length}
+    n_embd: ${model_raw.config.n_embd}
+    world_size: ${settings.cuda_env.world_size}
+    wrapped_model:
+      instance_key: initialized_model
+      pass_type: BY_REFERENCE
+    device_mesh:
+      instance_key: device_mesh
+      pass_type: BY_REFERENCE

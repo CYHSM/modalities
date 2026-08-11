@@ -1,0 +1,386 @@
+% Loopotron: depth-wise weight sharing in a hybrid Mamba-Transformer MoE stack.
+%
+% Compile with: pdflatex loopotron.tex  (twice, for references)
+% Dependencies are deliberately limited to standard TeX Live packages.
+%
+% NOTE: this file has not been compiled -- no LaTeX toolchain was available on the machine where
+% it was written. If a package is missing, the likely culprits are booktabs and hyperref.
+
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+% Layer-pattern strings contain ^, * and brackets; \lp{} keeps them typeset literally.
+\newcommand{\lp}[1]{\texttt{#1}}
+% \textasciicircum, not \^{}: the latter is a circumflex *accent* and renders raised and undersized
+% in typewriter font, which matters because the layer-pattern strings are load-bearing here.
+\newcommand{\caret}{\textasciicircum}
+
+\title{\textbf{Loopotron}\\[0.3em]
+\large Where is extra depth worth spending in a hybrid Mamba--Transformer MoE?}
+\author{}
+\date{Experiments run 2026-08-06 -- 2026-08-11}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+A Nemotron-style hybrid language model is a stack of single-operator residual layers --- Mamba-2
+mixers, sparse mixture-of-experts feed-forwards, and grouped-query attention --- described by a
+pattern string. Because each layer is a self-contained residual block, a \emph{loop} (executing a
+run of layers several times while reusing one set of weights) can be placed around any subset of
+layer types. This trades parameters for effective depth, and lets us ask where extra depth is worth
+spending. We train ten models at a matched budget of 557M tokens: an unlooped hybrid baseline,
+three looped variants, three conditioning refinements, an iso-FLOP fresh-weight anchor, and two
+vanilla dense transformers. Three results survive a measured seed-noise floor. First, \textbf{every
+looped variant beats the unlooped hybrid} on held-out loss, by 12--48 standard deviations of
+run-to-run noise. Second, \textbf{the fresh-weight anchor still beats every looped variant} at
+matched FLOPs, reproducing the published perplexity penalty for weight sharing. Third, and
+largest, \textbf{the hybrid beats an iso-FLOP dense transformer by 0.198 nats}. We also report two
+negative results: per-iteration normalization and input injection have no measurable effect, and a
+synthetic reasoning suite designed to detect the reasoning-over-perplexity trade-off has
+insufficient resolution at this budget --- a claim we initially made from it, and here retract.
+\end{abstract}
+
+\section{Introduction}
+
+Nemotron-style hybrid models~\cite{nemotron} interleave three operator types according to a layer
+pattern string, in which \lp{M} denotes a Mamba-2 mixer, \lp{E} a sparse mixture-of-experts
+feed-forward, \lp{*} grouped-query attention, and \lp{-} a dense feed-forward. Unlike a classical
+transformer block, which bundles attention and a feed-forward network, every layer here wraps
+exactly one operator in a pre-norm residual connection,
+\begin{equation}
+x \leftarrow x + f(\mathrm{norm}(x)),
+\end{equation}
+so the ratio of Mamba to attention to MoE layers is tunable independently.
+
+This structure makes a natural experiment available. Because each layer is self-contained, a
+\emph{loop} --- executing a run of layers several times while reusing one set of weights, as in a
+Universal Transformer --- can be placed around any subset of layer types. Looping holds parameters
+fixed while raising FLOPs, so it converts parameters into effective depth. The question this work
+asks is: \textbf{where is that depth worth spending --- on the Mamba mixers, the MoE
+feed-forwards, the attention layers, or on mixed blocks?}
+
+The published consensus is that depth-wise weight sharing loses on perplexity and wins on
+reasoning~\cite{saunshi,lssm}. That expectation shaped the design: we measure held-out loss and a
+synthetic reasoning suite together, and we include a fresh-weight \emph{anchor} for the leading
+looped variant so that ``more compute helps'' can be separated from ``sharing works''.
+
+\section{Method}
+
+\subsection{Loop grammar}
+
+A loop group is written \lp{[\textless symbols\textgreater]\caret K} inside a layer pattern; for
+example \lp{M[ME]\caret3*E} builds one Mamba and one MoE layer and executes the pair three times.
+The repeat operator is \lp{\caret} rather than \lp{*}, because \lp{*} is the attention symbol and
+\lp{M[ME]*3*E} would read as though the 3 were multiplied by an attention layer. Nesting is
+unsupported. Bracket-free patterns parse exactly as before, so all pre-existing configurations are
+unaffected. Throughout, \emph{built} layers count sets of weights and \emph{executed} layers count
+applications per token, so \lp{M[ME]\caret3E} has 4 built and 8 executed layers.
+
+The implementation keeps the layer container flat, with one entry per set of weights, and puts the
+loop in a separate execution schedule. This is what allows activation checkpointing, FSDP2 block
+wrapping, the weight-decay group regular expressions and the initialization parameter filters to
+work on looped models unchanged, since parameter names are untouched.
+
+Three quantities must follow \emph{executions} rather than parameters, and getting any of them
+wrong biases an ablation silently rather than raising an error:
+\begin{itemize}
+  \item \textbf{Effective depth} for depth-scaled initialization. Residual variance grows with the
+    number of layer applications, so a looped variant must be initialized for its executed depth.
+    This is the single most important detail; the configuration derives it from the pattern so it
+    cannot go stale.
+  \item \textbf{The MoE auxiliary load-balancing loss}, which is accumulated across visits and
+    reset per forward pass. A looped MoE layer routes independently on each visit.
+  \item \textbf{Active parameters} for the FLOPs estimate, which are execution-weighted.
+\end{itemize}
+
+\subsection{The research model}
+
+All models are a geometric scale-down of Nemotron-3 Nano 30B-A3B that preserves the reference's
+\emph{cost structure}, which is what makes conclusions about where to spend depth transferable
+(Table~\ref{tab:scaledown}).
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Property & Reference 30B-A3B & This work \\
+\midrule
+Model dimension / built layers      & 2688 / 52          & 1024 / 12 \\
+Parameters                          & 31.58B / 3.58B act.& 1.105B / 225M act. \\
+Non-embedding active / total        & 9.3\%              & 9.7\% \\
+Per-layer active cost $M : * : E$   & $1 : 0.60 : 2.07$  & $1 : 0.59 : 2.01$ \\
+Expert sparsity                     & top-6 of 128       & top-6 of 128 \\
+\bottomrule
+\end{tabular}
+\caption{The research model preserves the reference's per-layer cost ratios and expert sparsity.}
+\label{tab:scaledown}
+\end{table}
+
+The model is 1.1B rather than 400M by necessity: the embedding table and the Mamba layers are dense
+and always active, so a 400M model with a 128k vocabulary cannot be $\sim$10\% active, and forcing
+the size down distorts the $M : * : E$ cost ratio, which is exactly what the ablation is about.
+Training FLOPs scale with \emph{active} parameters, so these models train at roughly the speed of a
+225M dense model; only memory holds 1.1B.
+
+\subsection{Training setup}
+
+Every run is identical except where stated: FineWeb (2B-token shard), sequence length 2048, global
+batch $8 \times 4 \times 2048 = 65{,}536$ tokens per step, AdamW ($\beta = (0.9, 0.95)$, weight
+decay 0.1 excluding embeddings, norms, SSM parameters and the router), linear warmup over 750 steps
+followed by cosine annealing from $4.5\times10^{-4}$ to $4.5\times10^{-5}$, bf16 mixed precision,
+full activation checkpointing, one A100-80GB per run. All models train for
+\textbf{8500 steps = 557M tokens}, and the learning-rate schedule completes within that budget.
+
+That last point is not a detail. An earlier wave derived the schedule length from the size of the
+training file (30{,}517 steps) while stopping runs on wall clock at 5--11k steps, so the cosine
+never decayed: the learning rate was still at 96\% of its peak at step 4750 and the loss flattened
+at 3.63 against the 3.34 reached once the schedule completed. Worse for an ablation than for the
+absolute number, a constant peak learning rate puts every variant on the same noisy plateau. All
+results below use the completed schedule.
+
+\subsection{Evaluations}
+
+Because the published effect is expected to live in reasoning rather than perplexity, we log four
+held-out measures alongside the language-modelling loss. Two are real benchmarks scored by the
+negative log-likelihood of the answer span: \textbf{Minerva MATH} (4-shot) and closed-book
+\textbf{TriviaQA}, the latter acting as a parametric-knowledge control, since closed-book recall
+lives in weights that a loop does not add. Accuracy on both is meaningless at this scale and is not
+reported.
+
+Two are synthetic and deterministic, parameterized by a \emph{hop count} --- the number of serial
+lookups the answer requires --- over a 26-symbol alphabet, giving a chance accuracy of
+$1/26 = 3.85\%$. In \textbf{$p$-hop induction}, a sequence of 256 random symbols is presented; the
+last symbol is the query, and one hop finds its most recent earlier occurrence and reads off the
+symbol that follows it. Each further hop repeats this, searching only to the left of the previous
+match, so hop $k+1$ cannot begin until hop $k$ has produced both its symbol and its position. One
+hop is exactly the induction-head operation and acts as the control. For example, over a 6-symbol
+alphabet:
+\begin{center}
+\begin{tabular}{@{}l@{}}
+\ttfamily E~A~B~B~B~E~F~D~A~A~B~C~D~C~B~A~E~E~A~A \\[-0.2em]
+\ttfamily \phantom{E~A~B~B~B~E~F~D~A~A~B~C~D~C~B~}$\uparrow$\phantom{A~E~}$\uparrow$~$\uparrow$ \\[-0.2em]
+\ttfamily \phantom{E~A~B~B~B~E~F~D~A~A~B~C~D~C~B~}\,2\phantom{A~E~}\,1~q \\
+\end{tabular}
+\end{center}
+Reading right to left: \texttt{q} marks the query \texttt{A}; hop 1 finds its most recent earlier
+occurrence and takes the symbol following it, again \texttt{A}; hop 2 searches only further left,
+finds \texttt{A} at position 15 and takes \texttt{E}, the 2-hop answer. In \textbf{variable binding}, a
+\emph{shuffled} list of assignments dereferences a chain to one literal, so recency heuristics do
+not help; a real sample is
+\begin{center}
+\ttfamily ; F = S ; E = H ; L = A ; T = U ; P = G ; Z = V ; N = D ; H = N ; O = K ; W = Y ; J = C ; Q = R ; E =
+\end{center}
+whose answer is \texttt{D} via $E \to H \to N \to D$. This task has a format-aware shortcut: the
+answer is always a symbol appearing as a value but never as a variable, and there are exactly ten
+such, so a guesser exploiting the format reaches 10\% without following the chain. It produced no
+signal in any run and is not reported below.
+
+Every sample is emitted pre-shifted and masked so that only the answer position is scored; the
+reported figure is therefore the negative log-likelihood, or accuracy, of the answer alone, with
+each scored token weighted equally rather than each batch.
+
+\subsection{Variants}
+
+Table~\ref{tab:main} lists the models. The looped variants are matched on \textbf{FLOPs, not loop
+count}: an extra MoE execution costs about twice an extra Mamba execution and attention about
+1.65$\times$, so equal $K$ across types would compare unequal compute budgets. The loop is also
+spread over \emph{every} layer of the relevant type rather than concentrated on one, so ``which
+layer happened to be looped'' is not a confound.
+
+Two comparisons matter. Against the unlooped baseline \textbf{A0} (iso-parameter) the question is
+whether looping buys usable compute. Against the \emph{anchor} \textbf{N4} --- a bracket-free model
+with the same executed count of every layer type, the same active parameters and the same FLOPs as
+A6, differing only in that its executions use fresh weights --- the question is whether sharing is
+as good as not sharing. Two vanilla dense transformers (pre-norm, RoPE, SwiGLU, multi-head
+attention, tied embeddings) supply the reference the hybrid literature usually omits: \textbf{D1}
+matches A0's \emph{active} parameters and therefore its FLOPs per token, while \textbf{D2} matches
+A0's \emph{total} parameters and consequently spends about 4.9$\times$ the compute per token.
+
+Finally, three conditioning refinements are applied to A6. \textbf{Per-iteration normalization}
+gives each loop iteration its own pre-norm while the operator stays shared, adding $(K-1) \cdot
+d_{\text{model}}$ parameters per looped layer (4096 in total here). \textbf{Input injection} adds
+the loop group's input back to the hidden states at the start of every iteration after the first,
+adding no parameters. Both are described in the literature as near-prerequisites for scaling past
+two or three loop iterations, and both are deliberately optional so that weight sharing and
+per-iteration conditioning remain separable.
+
+\section{Results}
+
+\subsection{Main comparison}
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llcrrcccc}
+\toprule
+& & Built/ & & & & \multicolumn{3}{c}{Held-out} \\
+\cmidrule(l){7-9}
+Model & Layer pattern & exec. & Params & Active & FLOPs & LM loss & MATH & TriviaQA \\
+\midrule
+\multicolumn{9}{l}{\emph{Dense transformer baselines}} \\
+D1 & 9 layers, $d{=}1024$   & 9/9   & 226M   & 226M   & 1.00 & 3.5383 & 4.4253 & 6.7404 \\
+D2 & 21 layers, $d{=}2048$  & 21/21 & 1.111B & 1.111B & 4.90 & \textbf{3.2591} & \textbf{4.1053} & \textbf{6.2516} \\
+\midrule
+\multicolumn{9}{l}{\emph{Hybrid, no loop}} \\
+A0 & \lp{MEM*EMEMEM*E}      & 12/12 & 1.105B & 226M & 1.000 & 3.3404 & 4.1415 & 6.4363 \\
+N4 & \lp{MEM*E*EMEMEM*E*E}  & 16/16 & 1.487B & 256M & 1.179 & \textbf{3.3021} & 4.0818 & 6.2288 \\
+\midrule
+\multicolumn{9}{l}{\emph{Looped variants} (ordered by LM loss)} \\
+A5 & \lp{ME[M*]\caret3EMEME[M*]\caret3E}            & 12/20 & 1.105B & 262M & 1.261 & 3.3168 & 4.0949 & 6.4924 \\
+A4 & \lp{[ME]\caret2M*E[ME]\caret2[ME]\caret2M*E}   & 12/18 & 1.105B & 278M & 1.220 & 3.3222 & 4.1754 & 6.4295 \\
+A6 & \lp{MEM[*E]\caret2MEMEM[*E]\caret2}            & 12/16 & 1.105B & 256M & 1.179 & 3.3243 & 4.1569 & 6.4342 \\
+A6a & \quad + per-iteration norm                    & 12/16 & 1.105B & 256M & 1.179 & 3.3246 & 4.1681 & 6.3929 \\
+    & \multicolumn{5}{r}{\emph{(4 seeds, s.d.)}}                                    & $\pm$0.0005 & $\pm$0.0177 & $\pm$0.0629 \\
+A6c & \quad + norm and injection                    & 12/16 & 1.105B & 256M & 1.179 & 3.3301 & 4.2102 & 6.4325 \\
+A6b & \quad + input injection                       & 12/16 & 1.105B & 256M & 1.179 & 3.3339 & 4.2258 & 6.5063 \\
+\bottomrule
+\end{tabular}
+\caption{All models at 8500 steps (557M tokens), identical data, schedule and evaluations.
+``Built/exec.'' is sets of weights over layer applications per token; FLOPs are relative to A0 per
+token. LM loss is held-out cross-entropy; MATH and TriviaQA are the negative log-likelihood of the
+answer span (lower is better throughout). D2 is not an iso-FLOP comparison. A6a and A6c carry 4096
+extra parameters for their per-iteration norms.}
+\label{tab:main}
+\end{table}
+
+\subsection{The seed-noise floor}
+
+Every number in Table~\ref{tab:main} except A6a's is a single run, so the differences are
+meaningless without a measure of run-to-run variation. Four runs of A6a from identical
+configurations --- the weight initialization is unseeded, so each run draws different weights while
+the data order is held fixed --- give Table~\ref{tab:noise}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+Metric & Mean & s.d. & Range \\
+\midrule
+Held-out LM loss        & 3.3246 & \textbf{0.0005} & 0.0011 \\
+$p$-hop-1 accuracy      & 0.0952 & \textbf{0.0172} & 0.0708 -- 0.1079 \\
+$p$-hop-1 nll           & 3.276  & 0.114  & 0.245 \\
+Minerva MATH nll        & 4.1681 & 0.0177 & --- \\
+TriviaQA nll            & 6.3929 & 0.0629 & --- \\
+\bottomrule
+\end{tabular}
+\caption{Four replicates of A6a. The two instruments differ in resolution by more than two orders
+of magnitude relative to the effects being measured.}
+\label{tab:noise}
+\end{table}
+
+The consequences point in opposite directions.
+
+\paragraph{Held-out loss resolves the ordering.} At a standard deviation of $0.0005$, every
+difference in Table~\ref{tab:main} is far outside noise. N4 versus A0 (0.038) is roughly 76 standard
+deviations; even the smallest gap, A6b versus A0 (0.006), is roughly 12. The ordering
+anchor $>$ looped variants $>$ unlooped baseline $>$ iso-FLOP dense is therefore real.
+
+\paragraph{The reasoning suite does not resolve anything.} The seed standard deviation on
+$p$-hop-1 accuracy (0.0172) exceeds the entire spread across hybrid variants, and the standard
+deviations on MATH ($\pm0.0177$) and TriviaQA ($\pm0.0629$) cover every difference between hybrid
+rows in Table~\ref{tab:main}. Resolving a 0.02 difference in $p$-hop accuracy at two standard
+deviations would require roughly twelve runs per variant. Crucially, more evaluation questions
+would not help: the sampling standard error over 2048 questions is 0.007, so the dominant variance
+is in the model, not the question sample.
+
+\subsection{Findings}
+
+\paragraph{1. Looping helps, modestly and reliably.} Every looped variant beats the unlooped
+baseline A0 by 0.006--0.024 nats, or 12--48 standard deviations. The best is A5, which loops
+Mamba-plus-attention pairs three times.
+
+\paragraph{2. Fresh weights still beat shared weights at matched FLOPs.} N4 (3.3021) beats A6
+(3.3243), its exact iso-FLOP anchor, by 0.022 nats. This reproduces the published perplexity
+penalty for depth-wise weight sharing. What the loop buys instead is memory: A6 reaches the same
+executed depth with 1.105B parameters against N4's 1.487B.
+
+\paragraph{3. The hybrid beats an iso-FLOP dense transformer by 0.198 nats}, comparing A0 to D1.
+This is by far the largest effect measured, and it is the comparison most often missing from
+hybrid-architecture ablations. It comes with a caveat: D1 trains at 34.5 samples/s against A0's
+23.3 (MFU 0.36 versus 0.22), because dense attention and a plain SwiGLU use the hardware far better
+than Mamba and MoE kernels. Per unit of \emph{wall clock} rather than of FLOPs, the hybrid's
+advantage is substantially smaller.
+
+\paragraph{4. Per-iteration normalization and input injection do nothing measurable.} A6a
+(3.3246), A6c (3.3301) and A6b (3.3339) straddle A6 (3.3243). We initially reported that
+per-iteration norms improved $p$-hop-1 accuracy from 0.073 to 0.108, a nominal 3.9 standard
+deviations. That figure used the \emph{sampling} standard error over the evaluation set (0.007) in
+place of run-to-run noise (0.017), which it understates by a factor of 2.5. Under replication,
+0.108 proved to be the top of A6a's own seed range and A6's 0.073 essentially the bottom of it; the
+difference is 1.2 standard deviations. \textbf{We retract the claim.} Sampling error is a lower
+bound on measurement error, never a substitute for it.
+
+\paragraph{5. The expected reasoning-over-perplexity dissociation did not appear.} MATH and
+TriviaQA were included expecting them to move in opposite directions if a variant bought reasoning
+without buying parameters. They do not: both track held-out loss almost perfectly across all ten
+models, with N4 among the best and D1 the worst on all three. No variant is trading knowledge for
+reasoning at this budget.
+
+\paragraph{6. Block-loop underperforms layer- and pair-loop.} A4, which repeats a Mamba-plus-MoE
+block, trails on every reasoning measure, consistent with reports that repeating each layer in
+place beats repeating the stack.
+
+\paragraph{7. A dense-model anomaly, resolved by scale.} D1 scores 0.0073 average $p$-hop accuracy
+--- reliably \emph{below} the 0.0385 chance level, which requires structure rather than ignorance
+--- while scoring normally on variable binding, which uses the same alphabet and the same
+evaluation path. D2, the same architecture with 4.9$\times$ the compute, does not collapse
+(0.0527). The effect is therefore one of scale and budget, not of architecture class: a small dense
+transformer at 557M tokens has not formed the in-context machinery to notice that the answer must
+be one of the 26 symbols present, whereas Mamba's recurrent state tracks the in-context
+distribution essentially for free, and every hybrid lands near $\ln 26 = 3.26$ nats.
+
+\section{Limitations}
+
+\paragraph{Budget.} 557M tokens is roughly 12\% of a compute-optimal allocation for a 225M-active
+model. Differences of 0.01--0.04 nats at this scale need not survive to convergence, and the
+published loop results are reported at 250B tokens and above.
+
+\paragraph{Seeds.} Only A6a is replicated, and its four runs vary weight initialization only, with
+the data order held fixed. Run-to-run noise under a varying data seed can only be larger, so
+Table~\ref{tab:noise} is a lower bound. Every other row of Table~\ref{tab:main} is $n=1$.
+
+\paragraph{Incomplete arm coverage.} The three single-layer-type loops --- Mamba alone at $K=3$,
+MoE alone at $K=2$, attention alone at $K=4$ --- have not yet been run with the evaluation suite,
+and they are precisely the variants that would answer the titular question most directly. Only
+mixed-block loops appear above. Anchors for A4 and A5 have also not been constructed.
+
+\paragraph{Reasoning measures.} The synthetic suite is under-powered here, and the $p$-hop task may
+additionally be mis-scaled: at a prompt length of 256 over a 26-symbol alphabet the query appears
+about 9.8 times, so even a perfectly functioning induction head returns a mixture over roughly ten
+candidate successors and lands near 10\% --- which is approximately where the best models sit. A
+shorter prompt would make the most-recent match near-unique and give the task room to discriminate.
+
+\section{Conclusion}
+
+At a matched 557M-token budget, depth-wise weight sharing in a hybrid Mamba--Transformer MoE stack
+gives a small but reliable improvement in held-out loss over an unlooped model of the same size,
+while remaining behind an iso-FLOP model with fresh weights --- buying memory rather than quality.
+The hybrid architecture itself, however, is worth considerably more than the loop: it beats an
+iso-FLOP dense transformer by an order of magnitude larger a margin than any difference among the
+looped variants, though part of that advantage is returned as lower hardware utilization.
+
+The methodological finding may be the more useful one. Held-out loss and the reasoning suite differ
+in measurement resolution by more than two orders of magnitude relative to the effects of interest,
+and a nominally 3.9-sigma result computed from sampling error alone did not survive four
+replications. Any claim from a suite of this kind should be accompanied by a measured seed-noise
+floor before it is believed --- including, and especially, one's own.
+
+\begin{thebibliography}{9}
+\bibitem{nemotron} NVIDIA. \emph{Nemotron-3 Nano}. arXiv:2512.20848.
+\bibitem{saunshi} Saunshi et al. \emph{Reasoning with Latent Thoughts: On the Power of Looped
+  Transformers}. arXiv:2502.17416.
+\bibitem{lssm} \emph{Looped State-Space Language Models}. arXiv:2607.10110.
+\bibitem{phi} \emph{How Much Is One Recurrence Worth?} arXiv:2604.21106.
+\bibitem{loopie} \emph{Loopie: Looped Mixture-of-Experts}. arXiv:2607.16051.
+\end{thebibliography}
+
+\end{document}

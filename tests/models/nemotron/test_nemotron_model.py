@@ -388,7 +388,7 @@ def test_factory_rejects_weight_tying_on_meta_device():
 
 
 def test_config_rejects_layer_count_mismatch():
-    with pytest.raises(ValueError, match="does not match the length of layer_pattern"):
+    with pytest.raises(ValueError, match="does not match the number of layers built by"):
         NemotronLLMConfig(**_model_kwargs(n_layer=7))
 
 

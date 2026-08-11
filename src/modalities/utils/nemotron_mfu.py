@@ -140,9 +140,20 @@ class NemotronMFUCalculator(MFUCalculatorABC):
         """
         Counts the parameters a single token actually visits.
 
-        Every parameter counts once, except the routed experts of an MoE layer: only ``top_k`` of
-        ``num_experts`` are evaluated per token, so their contribution is scaled accordingly. The
-        router, the shared experts and all dense layers are always active.
+        Every parameter counts once, except:
+
+        * the routed experts of an MoE layer, of which only ``top_k`` of ``num_experts`` are
+          evaluated per token, so their contribution is scaled accordingly (the router, the shared
+          experts and all dense layers are always active); and
+        * the parameters of a **looped** layer, which a token visits once per loop iteration and
+          which therefore count once per iteration. Without this the FLOPs of a looped model would
+          be understated and its MFU correspondingly overstated.
+
+        With ``loop_config.per_iteration_norm`` a looped layer holds ``K`` norms of which each
+        iteration visits one, while this counts all ``K`` on every iteration. The overcount is
+        ``K * (K - 1) * n_embd`` per looped layer -- 2048 parameters of 225M for the ``K=2`` MoE
+        arm -- i.e. far below the accuracy of the estimate itself, and not worth a special case
+        that would have to be kept in sync with the layer internals.
 
         Works on plain and FSDP2-wrapped models: ``numel()`` on a ``DTensor`` reports the unsharded
         size, so the result is the global count regardless of sharding.
@@ -157,8 +168,6 @@ class NemotronMFUCalculator(MFUCalculatorABC):
         Returns:
             int: The number of active parameters.
         """
-        from modalities.models.components.moe.moe import MoE
-
         if model is None:
             raise ValueError("num_active_params was omitted but no model was provided to derive it from.")
         if isinstance(model, list):
@@ -167,12 +176,69 @@ class NemotronMFUCalculator(MFUCalculatorABC):
                 "only a subset of the layers. Pass num_active_params explicitly."
             )
 
-        total = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        for module in model.modules():
-            if not isinstance(module, MoE):
+        layers = NemotronMFUCalculator._get_layer_module_dict(model)
+        if layers is None:
+            # No recognizable layer stack (e.g. a bare module in a test): count everything once.
+            return NemotronMFUCalculator._count_active_parameters_of_module(model)
+
+        execution_counts = NemotronMFUCalculator._get_execution_counts(model)
+        # Everything outside the layer stack (embeddings, final norm, LM head) is visited once.
+        layer_parameter_ids = {id(p) for p in layers.parameters()}
+        total = sum(p.numel() for p in model.parameters() if p.requires_grad and id(p) not in layer_parameter_ids)
+        for layer_key, layer in layers.items():
+            total += NemotronMFUCalculator._count_active_parameters_of_module(layer) * execution_counts.get(
+                layer_key, 1
+            )
+        return total
+
+    @staticmethod
+    def _get_layer_module_dict(model: torch.nn.Module) -> Optional[torch.nn.ModuleDict]:
+        """
+        Returns the model's layer ``ModuleDict``, or None if the model does not expose one.
+
+        Args:
+            model (nn.Module): The (possibly wrapped) model.
+
+        Returns:
+            nn.ModuleDict | None: The layer stack.
+        """
+        transformer = getattr(model, "transformer", None)
+        return getattr(transformer, "h", None) if transformer is not None else None
+
+    @staticmethod
+    def _get_execution_counts(model: torch.nn.Module) -> dict[str, int]:
+        """
+        Returns how often each layer of the stack is executed per forward pass.
+
+        Args:
+            model (nn.Module): The (possibly wrapped) model.
+
+        Returns:
+            dict[str, int]: Layer key to execution count; empty if the model does not report any,
+                in which case every layer is assumed to run once.
+        """
+        get_counts = getattr(model, "get_execution_counts", None)
+        return get_counts() if callable(get_counts) else {}
+
+    @staticmethod
+    def _count_active_parameters_of_module(module: torch.nn.Module) -> int:
+        """
+        Counts the parameters of one module that a single token visits, discounting routed experts.
+
+        Args:
+            module (nn.Module): The module, typically one layer.
+
+        Returns:
+            int: The number of active parameters.
+        """
+        from modalities.models.components.moe.moe import MoE
+
+        total = sum(p.numel() for p in module.parameters() if p.requires_grad)
+        for submodule in module.modules():
+            if not isinstance(submodule, MoE):
                 continue
-            routed = sum(p.numel() for p in module.experts.parameters())
-            active_fraction = module.router.top_k / module.router.num_experts
+            routed = sum(p.numel() for p in submodule.experts.parameters())
+            active_fraction = submodule.router.top_k / submodule.router.num_experts
             total -= int(routed * (1.0 - active_fraction))
         return total
 

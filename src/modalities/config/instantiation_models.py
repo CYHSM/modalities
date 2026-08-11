@@ -11,6 +11,7 @@ from modalities.config.pydantic_if_types import (
     PydanticDatasetIFType,
     PydanticDebuggingType,
     PydanticDeviceMeshIFType,
+    PydanticEvaluationMetricIFType,
     PydanticGradientClipperIFType,
     PydanticLLMDataLoaderIFType,
     PydanticLossIFType,
@@ -184,6 +185,9 @@ class TrainingComponentsInstantiationModel(BaseModel):
     train_dataset: PydanticDatasetIFType
     train_dataloader: PydanticLLMDataLoaderIFType
     eval_dataloaders: list[PydanticLLMDataLoaderIFType]
+    # Metrics reported alongside the evaluation loss. Optional so that every existing config keeps working;
+    # each metric selects the evaluation dataloaders it applies to by tag.
+    eval_metrics: list[PydanticEvaluationMetricIFType] = Field(default_factory=list)
     progress_subscriber: PydanticMessageSubscriberIFType
     evaluation_subscriber: PydanticMessageSubscriberIFType
     checkpoint_saving: PydanticCheckpointSavingIFType

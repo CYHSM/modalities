@@ -25,6 +25,18 @@ SHIPPED_CONFIGS = [
     REPO_ROOT / "config_files" / "training" / "config_nemotron3_nano_30b_a3b_fsdp2.yaml",
     REPO_ROOT / "config_files" / "training" / "config_lorem_ipsum_nemotron_nano_fsdp2.yaml",
     REPO_ROOT / "config_files" / "training" / "config_fineweb_nemotron_nano_fsdp2.yaml",
+    # The layer-loop ablation base config and one generated arm. The arm is included so that a
+    # change to the base that the generator fails to propagate shows up here rather than in a run.
+    REPO_ROOT / "config_files" / "nemotron" / "config_research_nemotron_loops_1gpu.yaml",
+    REPO_ROOT / "config_files" / "nemotron" / "loop_ablation" / "config_A2_loop_moe.yaml",
+    # The 2x2 cell that switches both loop refinements on, so a rename of a loop_config key shows
+    # up here too.
+    REPO_ROOT / "config_files" / "nemotron" / "loop_ablation" / "config_A6c_loop_attention_moe_norm_and_injection.yaml",
+    # The dense reference. Generated from the same base config by swapping six model-specific
+    # blocks, so it catches both a base-config change the generator fails to propagate and a
+    # regression in the gpt2 component keys -- the latter having already cost one failed launch
+    # (GPT2MFUCalculatorConfig accepts only the alias `wrapped_model`, never `model_parts`).
+    REPO_ROOT / "config_files" / "nemotron" / "loop_ablation" / "config_D1_dense_flops_matched.yaml",
     REPO_ROOT / "tests" / "test_yaml_configs" / "nemotron_config_initialization.yaml",
     REPO_ROOT / "tests" / "fsdp2_parallelization" / "nemotron_fsdp2_config.yaml",
 ]

@@ -37,6 +37,7 @@ from modalities.config.config import (
     DummyProgressSubscriberConfig,
     DummyResultSubscriberConfig,
     EvaluationResultToDiscSubscriberConfig,
+    ExplicitTargetCollateFnConfig,
     FSDP1ActivationCheckpointedModelConfig,
     FSDP1CheckpointedModelConfig,
     FSDP1CheckpointedOptimizerConfig,
@@ -75,11 +76,15 @@ from modalities.dataloader.collate_fns.collator_fn_wrapper_for_loss_masking impo
     LossMaskingCollateFnWrapper,
     LossMaskingCollateFnWrapperConfig,
 )
+from modalities.dataloader.collate_fns.explicit_target_collator import ExplicitTargetCollateFn
 from modalities.dataloader.dataloader_factory import DataloaderFactory
 from modalities.dataloader.dataset import DummyDatasetConfig
 from modalities.dataloader.dataset_factory import DatasetFactory
+from modalities.dataloader.prepared_eval import PreparedEvalDataset, PreparedEvalDatasetConfig
 from modalities.dataloader.sampler_factory import ResumableDistributedMultiDimSamplerConfig, SamplerFactory
 from modalities.dataloader.samplers import ResumableDistributedSampler
+from modalities.dataloader.synthetic_reasoning import SyntheticReasoningDataset, SyntheticReasoningDatasetConfig
+from modalities.evaluation_metrics import MaskedTokenAccuracy, MaskedTokenMetricConfig, MaskedTokenNLL
 from modalities.logging_broker.subscriber_impl.subscriber_factory import (
     ProgressSubscriberFactory,
     ResultsSubscriberFactory,
@@ -159,6 +164,7 @@ from modalities.utils.number_conversion import (
     LocalNumBatchesFromNumTokensConfig,
     NumberConversion,
     NumberConversionFromCheckpointPathConfig,
+    NumExecutedLayersFromLayerPatternConfig,
     NumSamplesFromNumTokensConfig,
     NumStepsFromNumSamplesConfig,
     NumStepsFromNumTokensConfig,
@@ -286,6 +292,9 @@ COMPONENTS = [
     ComponentEntity("loss", "clm_cross_entropy_loss", CLMCrossEntropyLoss, CLMCrossEntropyLossConfig),
     ComponentEntity("loss", "moe_aux_loss", MoEAuxLoss, MoEAuxLossConfig),
     ComponentEntity("loss", "weighted_sum", WeightedSumLoss, WeightedSumLossConfig),
+    # evaluation metrics
+    ComponentEntity("evaluation_metric", "masked_token_accuracy", MaskedTokenAccuracy, MaskedTokenMetricConfig),
+    ComponentEntity("evaluation_metric", "masked_token_nll", MaskedTokenNLL, MaskedTokenMetricConfig),
     # optimizers
     ComponentEntity(
         "optimizer", "adam", maybe_model_list_for_optimizer(OptimizerFactory.get_adam), AdamOptimizerConfig
@@ -354,6 +363,8 @@ COMPONENTS = [
     ),
     ComponentEntity("dataset", "dummy_dataset", DatasetFactory.get_dummy_dataset, DummyDatasetConfig),
     ComponentEntity("dataset", "combined", DatasetFactory.get_combined_dataset, CombinedDatasetConfig),
+    ComponentEntity("dataset", "synthetic_reasoning", SyntheticReasoningDataset, SyntheticReasoningDatasetConfig),
+    ComponentEntity("dataset", "prepared_eval", PreparedEvalDataset, PreparedEvalDatasetConfig),
     # samplers
     ComponentEntity("sampler", "sequential_sampler", SequentialSampler, SequentialSamplerConfig),
     ComponentEntity("sampler", "distributed_sampler", DistributedSampler, DistributedSamplerConfig),
@@ -372,6 +383,7 @@ COMPONENTS = [
     # collators
     ComponentEntity("collate_fn", "gpt_2_llm_collator", GPT2LLMCollateFn, GPT2LLMCollateFnConfig),
     ComponentEntity("collate_fn", "coca_collator", CoCaCollatorFn, CoCaCollateFnConfig),
+    ComponentEntity("collate_fn", "explicit_target_collator", ExplicitTargetCollateFn, ExplicitTargetCollateFnConfig),
     ComponentEntity(
         "collate_fn", "mask_loss_collator_wrapper", LossMaskingCollateFnWrapper, LossMaskingCollateFnWrapperConfig
     ),
@@ -469,6 +481,12 @@ COMPONENTS = [
         "local_num_batches_from_num_tokens",
         NumberConversion.get_local_num_batches_from_num_tokens,
         LocalNumBatchesFromNumTokensConfig,
+    ),
+    ComponentEntity(
+        "number_conversion",
+        "num_executed_layers_from_layer_pattern",
+        NumberConversion.get_num_executed_layers_from_layer_pattern,
+        NumExecutedLayersFromLayerPatternConfig,
     ),
     ComponentEntity(
         "number_conversion",

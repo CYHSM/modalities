@@ -6,7 +6,7 @@ import torch
 
 from modalities.models.components.norms import NormWrapperConfig
 from modalities.models.nemotron.nemotron_layer_specs import NemotronLayerSpecIF
-from modalities.models.nemotron.nemotron_model import NemotronLLM
+from modalities.models.nemotron.nemotron_model import LoopConfig, NemotronLLM
 
 
 class NemotronModelFactory:
@@ -23,6 +23,7 @@ class NemotronModelFactory:
         layer_pattern: str,
         layer_specs: dict[str, NemotronLayerSpecIF],
         lm_head_norm_config: NormWrapperConfig | dict,
+        loop_config: Optional[LoopConfig | dict] = None,
         use_weight_tying: bool = False,
         aux_loss_key: Optional[str] = None,
         use_meta_device: Optional[bool] = False,
@@ -43,6 +44,8 @@ class NemotronModelFactory:
             lm_head_norm_config (NormWrapperConfig | dict): Normalization before the language model
                 head. A plain dict is accepted so that the factory can also be called directly,
                 outside the component factory that would normally validate it.
+            loop_config (LoopConfig | dict | None): How the iterations of a layer pattern loop
+                group are combined. A plain dict is accepted for the same reason.
             use_weight_tying (bool): Whether to tie the embedding and the output projection.
             aux_loss_key (str | None): Key under which the summed MoE auxiliary loss is exposed.
             use_meta_device (bool): Whether to build the model on the meta device. Materialization
@@ -59,6 +62,8 @@ class NemotronModelFactory:
         del enforce_tensor_core_alignment  # validated by NemotronLLMConfig
         if not isinstance(lm_head_norm_config, NormWrapperConfig):
             lm_head_norm_config = NormWrapperConfig.model_validate(lm_head_norm_config)
+        if loop_config is not None and not isinstance(loop_config, LoopConfig):
+            loop_config = LoopConfig.model_validate(loop_config)
         config = dict(
             sample_key=sample_key,
             prediction_key=prediction_key,
@@ -69,6 +74,7 @@ class NemotronModelFactory:
             layer_pattern=layer_pattern,
             layer_specs=layer_specs,
             lm_head_norm_config=lm_head_norm_config,
+            loop_config=loop_config,
             use_weight_tying=use_weight_tying,
             aux_loss_key=aux_loss_key,
         )

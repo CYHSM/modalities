@@ -72,8 +72,13 @@ class MoE(nn.Module):
         self.experts = experts
         self.shared_experts = shared_experts
         self.aux_loss_coeff = aux_loss_coeff
-        # Overwritten on every forward pass. Deliberately not a buffer: it must stay in the
-        # autograd graph and must not be checkpointed.
+        # Accumulated over the forward passes of one micro batch. Deliberately not a buffer: it
+        # must stay in the autograd graph and must not be checkpointed.
+        #
+        # A layer visited more than once per micro batch (a looped layer, see the layer pattern's
+        # loop groups) routes independently on each visit, so every visit's imbalance has to be
+        # penalized. Overwriting here would penalize only the last visit and leave the earlier
+        # iterations' routing unconstrained.
         self.last_aux_loss: torch.Tensor | None = None
 
     def _compute_aux_loss(self, scores: torch.Tensor, top_indices: torch.Tensor, batch_size: int) -> torch.Tensor:
@@ -114,6 +119,15 @@ class MoE(nn.Module):
         per_sequence_loss = num_experts * (fraction_per_expert * prob_per_expert).sum(dim=-1)
         return self.aux_loss_coeff * per_sequence_loss.mean()
 
+    def reset_aux_loss(self) -> None:
+        """
+        Clears the accumulated auxiliary loss.
+
+        Called by the model at the start of each forward pass, so that the accumulation in
+        :meth:`forward` spans exactly the layer visits of one micro batch.
+        """
+        self.last_aux_loss = None
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the MoE layer.
@@ -129,11 +143,11 @@ class MoE(nn.Module):
 
         top_weights, top_indices, scores = self.router(x_flat)
 
-        self.last_aux_loss = (
-            self._compute_aux_loss(scores=scores, top_indices=top_indices, batch_size=batch_size)
-            if self.aux_loss_coeff > 0
-            else None
-        )
+        if self.aux_loss_coeff > 0:
+            aux_loss = self._compute_aux_loss(scores=scores, top_indices=top_indices, batch_size=batch_size)
+            self.last_aux_loss = aux_loss if self.last_aux_loss is None else self.last_aux_loss + aux_loss
+        else:
+            self.last_aux_loss = None
 
         # Flatten the (token, slot) pairs and sort them by expert so that every expert's tokens
         # form one contiguous block, which is what the grouped matmul requires.
@@ -144,7 +158,6 @@ class MoE(nn.Module):
         sorted_token_indices = sort_order // self.router.top_k
 
         tokens_per_expert = torch.bincount(sorted_expert_indices, minlength=self.router.num_experts)
-
         # Track expert load for the auxiliary-loss-free bias update. Under activation
         # checkpointing the forward pass runs twice, so counts are inflated by a constant factor.
         # The bias update only uses the sign of the deviation from the mean, so this is harmless.
