@@ -1,0 +1,11 @@
+A0_baseline
+A1_loop_mamba
+A2_loop_moe
+A3_loop_attention
+A4_loop_mamba_moe
+A5_loop_mamba_attention
+A6_loop_attention_moe
+N1_anchor_mamba
+N2_anchor_moe
+N3_anchor_attention
+N4_anchor_attention_moe

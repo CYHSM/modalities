@@ -1,0 +1,101 @@
+{
+ "arm": "A5_loop_mamba_attention",
+ "config": "config_A5_loop_mamba_attention.yaml",
+ "checkpoint": "/leonardo_scratch/large/userexternal/mfrey000/experiments_nemotron_5b_cluster/A5_loop_mamba_attention/checkpoints/eid_A5_loop_mamba_attention-seen_steps_75000-seen_tokens_4915200000-target_steps_76250-target_tokens_4997120000",
+ "layer_pattern": "ME[M*]^3EMEME[M*]^3E",
+ "n_executed_layers": 20,
+ "trained_num_loops": 3,
+ "evaluation": {
+  "num_sequences": 128,
+  "sequence_length": 2048
+ },
+ "baseline_loss": 3.0003621578216553,
+ "per_group_ablation": [
+  {
+   "schedule_index": 2,
+   "executed_position": 2,
+   "num_loops": 3,
+   "num_member_layers": 2,
+   "delta": 0.2572031319141388,
+   "standard_error": 0.00537349795922637,
+   "baseline_loss": 3.0003621578216553,
+   "ablated_loss": 3.2575652599334717,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "schedule_index": 8,
+   "executed_position": 13,
+   "num_loops": 3,
+   "num_member_layers": 2,
+   "delta": 0.35492536425590515,
+   "standard_error": 0.009282243438065052,
+   "baseline_loss": 3.0003621578216553,
+   "ablated_loss": 3.3552873134613037,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  }
+ ],
+ "global_depth_sweep": [
+  {
+   "num_loops": 1,
+   "n_executed_layers": 12,
+   "delta": 0.6513796448707581,
+   "standard_error": 0.012322918511927128,
+   "baseline_loss": 3.0003621578216553,
+   "ablated_loss": 3.6517419815063477,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 2,
+   "n_executed_layers": 16,
+   "delta": 0.09568357467651367,
+   "standard_error": 0.003361072624102235,
+   "baseline_loss": 3.0003621578216553,
+   "ablated_loss": 3.0960452556610107,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 3,
+   "n_executed_layers": 20,
+   "delta": 5.852937761119392e-07,
+   "standard_error": 3.959070454584435e-06,
+   "baseline_loss": 3.0003621578216553,
+   "ablated_loss": 3.0003628730773926,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 4,
+   "n_executed_layers": 24,
+   "delta": 0.2913229465484619,
+   "standard_error": 0.005807443521916866,
+   "baseline_loss": 3.0003621578216553,
+   "ablated_loss": 3.291685104370117,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 6,
+   "n_executed_layers": 32,
+   "delta": 1.565540075302124,
+   "standard_error": 0.017609136179089546,
+   "baseline_loss": 3.0003621578216553,
+   "ablated_loss": 4.565902233123779,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 8,
+   "n_executed_layers": 40,
+   "delta": 4.1504411697387695,
+   "standard_error": 0.041608814150094986,
+   "baseline_loss": 3.0003621578216553,
+   "ablated_loss": 7.150803565979004,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  }
+ ]
+}

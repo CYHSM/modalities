@@ -1,0 +1,137 @@
+{
+ "arm": "A1_loop_mamba",
+ "config": "config_A1_loop_mamba.yaml",
+ "checkpoint": "/leonardo_scratch/large/userexternal/mfrey000/experiments_nemotron_5b_cluster/A1_loop_mamba/checkpoints/eid_A1_loop_mamba-seen_steps_75000-seen_tokens_4915200000-target_steps_76250-target_tokens_4997120000",
+ "layer_pattern": "[M]^3E[M]^3*E[M]^3E[M]^3E[M]^3*E",
+ "n_executed_layers": 22,
+ "trained_num_loops": 3,
+ "evaluation": {
+  "num_sequences": 128,
+  "sequence_length": 2048
+ },
+ "baseline_loss": 2.758012294769287,
+ "per_group_ablation": [
+  {
+   "schedule_index": 0,
+   "executed_position": 0,
+   "num_loops": 3,
+   "num_member_layers": 1,
+   "delta": 0.1604486107826233,
+   "standard_error": 0.00466822599992156,
+   "baseline_loss": 2.758012294769287,
+   "ablated_loss": 2.9184608459472656,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "schedule_index": 2,
+   "executed_position": 4,
+   "num_loops": 3,
+   "num_member_layers": 1,
+   "delta": 0.24624015390872955,
+   "standard_error": 0.00530227180570364,
+   "baseline_loss": 2.758012294769287,
+   "ablated_loss": 3.0042521953582764,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "schedule_index": 5,
+   "executed_position": 9,
+   "num_loops": 3,
+   "num_member_layers": 1,
+   "delta": 0.04024115204811096,
+   "standard_error": 0.0026228907518088818,
+   "baseline_loss": 2.758012294769287,
+   "ablated_loss": 2.798253297805786,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "schedule_index": 7,
+   "executed_position": 13,
+   "num_loops": 3,
+   "num_member_layers": 1,
+   "delta": 0.036615967750549316,
+   "standard_error": 0.004586843773722649,
+   "baseline_loss": 2.758012294769287,
+   "ablated_loss": 2.794628143310547,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "schedule_index": 9,
+   "executed_position": 17,
+   "num_loops": 3,
+   "num_member_layers": 1,
+   "delta": 0.17198605835437775,
+   "standard_error": 0.004983603022992611,
+   "baseline_loss": 2.758012294769287,
+   "ablated_loss": 2.9299981594085693,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  }
+ ],
+ "global_depth_sweep": [
+  {
+   "num_loops": 1,
+   "n_executed_layers": 12,
+   "delta": 1.4515314102172852,
+   "standard_error": 0.022164640948176384,
+   "baseline_loss": 2.758012294769287,
+   "ablated_loss": 4.209543228149414,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 2,
+   "n_executed_layers": 17,
+   "delta": 0.4566137194633484,
+   "standard_error": 0.012337715364992619,
+   "baseline_loss": 2.758012294769287,
+   "ablated_loss": 3.214625835418701,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 3,
+   "n_executed_layers": 22,
+   "delta": 7.600650064887304e-07,
+   "standard_error": 4.2099882193724625e-06,
+   "baseline_loss": 2.758012294769287,
+   "ablated_loss": 2.7580127716064453,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 4,
+   "n_executed_layers": 27,
+   "delta": 3.4944381713867188,
+   "standard_error": 0.04141957312822342,
+   "baseline_loss": 2.758012294769287,
+   "ablated_loss": 6.252449989318848,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 6,
+   "n_executed_layers": 37,
+   "delta": 6.115366458892822,
+   "standard_error": 0.03325040265917778,
+   "baseline_loss": 2.758012294769287,
+   "ablated_loss": 8.873379707336426,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 8,
+   "n_executed_layers": 47,
+   "delta": 7.362114906311035,
+   "standard_error": 0.04979071393609047,
+   "baseline_loss": 2.758012294769287,
+   "ablated_loss": 10.120126724243164,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  }
+ ]
+}

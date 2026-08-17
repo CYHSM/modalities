@@ -1,0 +1,101 @@
+{
+ "arm": "A6_loop_attention_moe_seed2_redo",
+ "config": "config_A6_loop_attention_moe_seed2_redo.yaml",
+ "checkpoint": "/leonardo_scratch/large/userexternal/mfrey000/experiments_nemotron_5b_cluster/A6_loop_attention_moe_seed2_redo/checkpoints/eid_A6_loop_attention_moe_seed2_redo-seen_steps_75000-seen_tokens_4915200000-target_steps_76250-target_tokens_4997120000",
+ "layer_pattern": "MEM[*E]^2MEMEM[*E]^2",
+ "n_executed_layers": 16,
+ "trained_num_loops": 2,
+ "evaluation": {
+  "num_sequences": 128,
+  "sequence_length": 2048
+ },
+ "baseline_loss": 2.9192042350769043,
+ "per_group_ablation": [
+  {
+   "schedule_index": 3,
+   "executed_position": 3,
+   "num_loops": 2,
+   "num_member_layers": 2,
+   "delta": 0.11288183927536011,
+   "standard_error": 0.001518673961982131,
+   "baseline_loss": 2.9192042350769043,
+   "ablated_loss": 3.032086133956909,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "schedule_index": 9,
+   "executed_position": 12,
+   "num_loops": 2,
+   "num_member_layers": 2,
+   "delta": 0.8523820638656616,
+   "standard_error": 0.009216699749231339,
+   "baseline_loss": 2.9192042350769043,
+   "ablated_loss": 3.7715864181518555,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  }
+ ],
+ "global_depth_sweep": [
+  {
+   "num_loops": 1,
+   "n_executed_layers": 12,
+   "delta": 0.873574435710907,
+   "standard_error": 0.008534497581422329,
+   "baseline_loss": 2.9192042350769043,
+   "ablated_loss": 3.792778730392456,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 2,
+   "n_executed_layers": 16,
+   "delta": 2.9425218599499203e-06,
+   "standard_error": 2.539817160140956e-06,
+   "baseline_loss": 2.9192042350769043,
+   "ablated_loss": 2.9192073345184326,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 3,
+   "n_executed_layers": 20,
+   "delta": 0.3375389873981476,
+   "standard_error": 0.0046950438991189,
+   "baseline_loss": 2.9192042350769043,
+   "ablated_loss": 3.2567434310913086,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 4,
+   "n_executed_layers": 24,
+   "delta": 0.6662893295288086,
+   "standard_error": 0.00740037253126502,
+   "baseline_loss": 2.9192042350769043,
+   "ablated_loss": 3.585493803024292,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 6,
+   "n_executed_layers": 32,
+   "delta": 1.4674696922302246,
+   "standard_error": 0.014396607875823975,
+   "baseline_loss": 2.9192042350769043,
+   "ablated_loss": 4.386673927307129,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  },
+  {
+   "num_loops": 8,
+   "n_executed_layers": 40,
+   "delta": 2.2065606117248535,
+   "standard_error": 0.020491307601332664,
+   "baseline_loss": 2.9192042350769043,
+   "ablated_loss": 5.125764846801758,
+   "n_sequences": 128,
+   "n_tokens": 262144
+  }
+ ]
+}

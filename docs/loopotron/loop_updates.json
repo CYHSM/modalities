@@ -1,0 +1,1557 @@
+{
+ "A0": {
+  "n_seeds": 1,
+  "runs": [
+   {
+    "arm": "A0_baseline",
+    "n_executed_layers": 12,
+    "sanity_batch_loss": 2.6978020668029785,
+    "groups": [],
+    "pooled_update_cosine": null,
+    "pooled_relative_step_norm": null,
+    "stack_update_cosine": 0.06909477778456428
+   }
+  ]
+ },
+ "A1": {
+  "n_seeds": 3,
+  "runs": [
+   {
+    "arm": "A1_loop_mamba",
+    "n_executed_layers": 22,
+    "sanity_batch_loss": 2.6016223430633545,
+    "groups": [
+     {
+      "first_executed_index": 0,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 1.8141838312149048,
+      "update_cosine": -0.6293967813253403,
+      "update_cosine_per_pair": [
+       -0.43655452132225037,
+       -0.8222390413284302
+      ],
+      "relative_step_norm": 2.6223344008127847,
+      "relative_step_norm_per_iteration": [
+       3.35223126411438,
+       2.307222843170166,
+       2.2075490951538086
+      ],
+      "first_to_last_step_ratio": 0.6585312650668262,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 4,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 8.712162017822266,
+      "update_cosine": 0.44601648300886154,
+      "update_cosine_per_pair": [
+       0.22895251214504242,
+       0.6630804538726807
+      ],
+      "relative_step_norm": 0.41986151536305744,
+      "relative_step_norm_per_iteration": [
+       0.41991084814071655,
+       0.4374186396598816,
+       0.4022550582885742
+      ],
+      "first_to_last_step_ratio": 0.9579534800534001,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 9,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 24.621795654296875,
+      "update_cosine": 0.6805797815322876,
+      "update_cosine_per_pair": [
+       0.5107621550559998,
+       0.8503974080085754
+      ],
+      "relative_step_norm": 0.2424804369608561,
+      "relative_step_norm_per_iteration": [
+       0.2505362629890442,
+       0.24608854949474335,
+       0.23081649839878082
+      ],
+      "first_to_last_step_ratio": 0.9212897791521473,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 13,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 45.45616912841797,
+      "update_cosine": 0.7417854964733124,
+      "update_cosine_per_pair": [
+       0.7069726586341858,
+       0.776598334312439
+      ],
+      "relative_step_norm": 0.268765926361084,
+      "relative_step_norm_per_iteration": [
+       0.2858685255050659,
+       0.2717224955558777,
+       0.24870675802230835
+      ],
+      "first_to_last_step_ratio": 0.8700039907607842,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 17,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 87.11872863769531,
+      "update_cosine": 0.4961404353380203,
+      "update_cosine_per_pair": [
+       0.5731041431427002,
+       0.41917672753334045
+      ],
+      "relative_step_norm": 0.26523446043332416,
+      "relative_step_norm_per_iteration": [
+       0.3121931552886963,
+       0.26694661378860474,
+       0.2165636122226715
+      ],
+      "first_to_last_step_ratio": 0.6936846902437925,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     }
+    ],
+    "pooled_update_cosine": 0.34702508300542834,
+    "pooled_relative_step_norm": 0.7637353479862213,
+    "stack_update_cosine": 0.19332086463414488
+   },
+   {
+    "arm": "A1_loop_mamba_seed2",
+    "n_executed_layers": 22,
+    "sanity_batch_loss": 2.465336799621582,
+    "groups": [
+     {
+      "first_executed_index": 0,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 1.7978508472442627,
+      "update_cosine": -0.7518094778060913,
+      "update_cosine_per_pair": [
+       -0.5655398368835449,
+       -0.9380791187286377
+      ],
+      "relative_step_norm": 3.1099459330240884,
+      "relative_step_norm_per_iteration": [
+       3.500638008117676,
+       2.9183883666992188,
+       2.910811424255371
+      ],
+      "first_to_last_step_ratio": 0.8315088328200322,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 4,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 8.84528923034668,
+      "update_cosine": 0.5806854963302612,
+      "update_cosine_per_pair": [
+       0.6162270307540894,
+       0.5451439619064331
+      ],
+      "relative_step_norm": 0.37103821833928424,
+      "relative_step_norm_per_iteration": [
+       0.37807753682136536,
+       0.37244364619255066,
+       0.36259347200393677
+      ],
+      "first_to_last_step_ratio": 0.9590452663556562,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 9,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 23.45660400390625,
+      "update_cosine": 0.796898365020752,
+      "update_cosine_per_pair": [
+       0.737267017364502,
+       0.856529712677002
+      ],
+      "relative_step_norm": 0.2463922252257665,
+      "relative_step_norm_per_iteration": [
+       0.2584916353225708,
+       0.23902291059494019,
+       0.2416621297597885
+      ],
+      "first_to_last_step_ratio": 0.9348934229853093,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 13,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 45.40245819091797,
+      "update_cosine": 0.7767748236656189,
+      "update_cosine_per_pair": [
+       0.7686904668807983,
+       0.7848591804504395
+      ],
+      "relative_step_norm": 0.2968047559261322,
+      "relative_step_norm_per_iteration": [
+       0.2709910571575165,
+       0.3058875799179077,
+       0.3135356307029724
+      ],
+      "first_to_last_step_ratio": 1.156996227077436,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 17,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 94.90431213378906,
+      "update_cosine": 0.37918107211589813,
+      "update_cosine_per_pair": [
+       0.40255969762802124,
+       0.355802446603775
+      ],
+      "relative_step_norm": 0.25005777180194855,
+      "relative_step_norm_per_iteration": [
+       0.2965126633644104,
+       0.25500059127807617,
+       0.19866006076335907
+      ],
+      "first_to_last_step_ratio": 0.6699884534752848,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     }
+    ],
+    "pooled_update_cosine": 0.3563460558652878,
+    "pooled_relative_step_norm": 0.8548477808634439,
+    "stack_update_cosine": 0.19184418519337973
+   },
+   {
+    "arm": "A1_loop_mamba_seed3",
+    "n_executed_layers": 22,
+    "sanity_batch_loss": 2.5339856147766113,
+    "groups": [
+     {
+      "first_executed_index": 0,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 1.8126475811004639,
+      "update_cosine": -0.70429927110672,
+      "update_cosine_per_pair": [
+       -0.4649723172187805,
+       -0.9436262249946594
+      ],
+      "relative_step_norm": 3.0267114639282227,
+      "relative_step_norm_per_iteration": [
+       3.3673667907714844,
+       2.900630474090576,
+       2.8121371269226074
+      ],
+      "first_to_last_step_ratio": 0.8351145870504738,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 4,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 8.28596305847168,
+      "update_cosine": 0.7325917780399323,
+      "update_cosine_per_pair": [
+       0.7060897946357727,
+       0.7590937614440918
+      ],
+      "relative_step_norm": 0.3720230559508006,
+      "relative_step_norm_per_iteration": [
+       0.35721179842948914,
+       0.3716343641281128,
+       0.3872230052947998
+      ],
+      "first_to_last_step_ratio": 1.0840151613055822,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 9,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 22.584699630737305,
+      "update_cosine": 0.7660283148288727,
+      "update_cosine_per_pair": [
+       0.7134712338447571,
+       0.8185853958129883
+      ],
+      "relative_step_norm": 0.24121362467606863,
+      "relative_step_norm_per_iteration": [
+       0.23724231123924255,
+       0.24248723685741425,
+       0.24391132593154907
+      ],
+      "first_to_last_step_ratio": 1.0281105619713058,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 13,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 45.672096252441406,
+      "update_cosine": 0.7351083755493164,
+      "update_cosine_per_pair": [
+       0.672538161277771,
+       0.7976785898208618
+      ],
+      "relative_step_norm": 0.2587845375140508,
+      "relative_step_norm_per_iteration": [
+       0.2794487476348877,
+       0.2560326159000397,
+       0.24087224900722504
+      ],
+      "first_to_last_step_ratio": 0.8619550133820439,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 17,
+      "composition": "M",
+      "num_loops": 3,
+      "group_input_norm": 87.3110122680664,
+      "update_cosine": 0.30511190742254257,
+      "update_cosine_per_pair": [
+       0.5114541053771973,
+       0.09876970946788788
+      ],
+      "relative_step_norm": 0.2693620026111603,
+      "relative_step_norm_per_iteration": [
+       0.2965383529663086,
+       0.2928534746170044,
+       0.21869418025016785
+      ],
+      "first_to_last_step_ratio": 0.7374903720296003,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     }
+    ],
+    "pooled_update_cosine": 0.36690822094678877,
+    "pooled_relative_step_norm": 0.8336189369360605,
+    "stack_update_cosine": 0.19920190687601766
+   }
+  ]
+ },
+ "A2": {
+  "n_seeds": 3,
+  "runs": [
+   {
+    "arm": "A2_loop_moe",
+    "n_executed_layers": 17,
+    "sanity_batch_loss": 2.7061924934387207,
+    "groups": [
+     {
+      "first_executed_index": 1,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 9.967072486877441,
+      "update_cosine": 0.9850113391876221,
+      "update_cosine_per_pair": [
+       0.9850113391876221
+      ],
+      "relative_step_norm": 0.11949745193123817,
+      "relative_step_norm_per_iteration": [
+       0.1394272744655609,
+       0.09956762939691544
+      ],
+      "first_to_last_step_ratio": 0.7141187388089483,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 5,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 15.946507453918457,
+      "update_cosine": 0.785176694393158,
+      "update_cosine_per_pair": [
+       0.785176694393158
+      ],
+      "relative_step_norm": 0.3894949108362198,
+      "relative_step_norm_per_iteration": [
+       0.480673223733902,
+       0.2983165979385376
+      ],
+      "first_to_last_step_ratio": 0.6206224586865775,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 8,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 29.248546600341797,
+      "update_cosine": 0.7237194776535034,
+      "update_cosine_per_pair": [
+       0.7237194776535034
+      ],
+      "relative_step_norm": 0.35949769616127014,
+      "relative_step_norm_per_iteration": [
+       0.3961573541164398,
+       0.32283803820610046
+      ],
+      "first_to_last_step_ratio": 0.8149237540374195,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 11,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 51.025238037109375,
+      "update_cosine": 0.5407305359840393,
+      "update_cosine_per_pair": [
+       0.5407305359840393
+      ],
+      "relative_step_norm": 0.4408271610736847,
+      "relative_step_norm_per_iteration": [
+       0.42511433362960815,
+       0.45653998851776123
+      ],
+      "first_to_last_step_ratio": 1.073922830641447,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 15,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 111.63802337646484,
+      "update_cosine": 0.5791875123977661,
+      "update_cosine_per_pair": [
+       0.5791875123977661
+      ],
+      "relative_step_norm": 1.0346393585205078,
+      "relative_step_norm_per_iteration": [
+       0.9044800996780396,
+       1.164798617362976
+      ],
+      "first_to_last_step_ratio": 1.2878101107781144,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     }
+    ],
+    "pooled_update_cosine": 0.7227651119232178,
+    "pooled_relative_step_norm": 0.4687913157045841,
+    "stack_update_cosine": 0.2667572879581712
+   },
+   {
+    "arm": "A2_loop_moe_seed2",
+    "n_executed_layers": 17,
+    "sanity_batch_loss": 2.6241202354431152,
+    "groups": [
+     {
+      "first_executed_index": 1,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 10.364238739013672,
+      "update_cosine": 0.9634082913398743,
+      "update_cosine_per_pair": [
+       0.9634082913398743
+      ],
+      "relative_step_norm": 0.19052371382713318,
+      "relative_step_norm_per_iteration": [
+       0.24203196167945862,
+       0.13901546597480774
+      ],
+      "first_to_last_step_ratio": 0.5743682157107685,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 5,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 18.29520034790039,
+      "update_cosine": 0.7373409867286682,
+      "update_cosine_per_pair": [
+       0.7373409867286682
+      ],
+      "relative_step_norm": 0.38495782017707825,
+      "relative_step_norm_per_iteration": [
+       0.4571382403373718,
+       0.31277740001678467
+      ],
+      "first_to_last_step_ratio": 0.6842074725272432,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 8,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 34.3372802734375,
+      "update_cosine": 0.7334154844284058,
+      "update_cosine_per_pair": [
+       0.7334154844284058
+      ],
+      "relative_step_norm": 0.3560538589954376,
+      "relative_step_norm_per_iteration": [
+       0.38931769132614136,
+       0.3227900266647339
+      ],
+      "first_to_last_step_ratio": 0.8291172835357344,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 11,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 53.91386413574219,
+      "update_cosine": 0.5958523750305176,
+      "update_cosine_per_pair": [
+       0.5958523750305176
+      ],
+      "relative_step_norm": 0.4025207757949829,
+      "relative_step_norm_per_iteration": [
+       0.3975648283958435,
+       0.4074767231941223
+      ],
+      "first_to_last_step_ratio": 1.0249315183092853,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 15,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 114.32693481445312,
+      "update_cosine": 0.4963604211807251,
+      "update_cosine_per_pair": [
+       0.4963604211807251
+      ],
+      "relative_step_norm": 0.9084672927856445,
+      "relative_step_norm_per_iteration": [
+       0.7749918699264526,
+       1.0419427156448364
+      ],
+      "first_to_last_step_ratio": 1.344456317643329,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     }
+    ],
+    "pooled_update_cosine": 0.7052755117416382,
+    "pooled_relative_step_norm": 0.4485046923160553,
+    "stack_update_cosine": 0.2541461989021627
+   },
+   {
+    "arm": "A2_loop_moe_seed3",
+    "n_executed_layers": 17,
+    "sanity_batch_loss": 2.6584525108337402,
+    "groups": [
+     {
+      "first_executed_index": 1,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 10.543758392333984,
+      "update_cosine": 0.9879471063613892,
+      "update_cosine_per_pair": [
+       0.9879471063613892
+      ],
+      "relative_step_norm": 0.1076158843934536,
+      "relative_step_norm_per_iteration": [
+       0.12461765110492706,
+       0.09061411768198013
+      ],
+      "first_to_last_step_ratio": 0.7271371019959586,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 5,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 16.81853485107422,
+      "update_cosine": 0.7799797058105469,
+      "update_cosine_per_pair": [
+       0.7799797058105469
+      ],
+      "relative_step_norm": 0.34866732358932495,
+      "relative_step_norm_per_iteration": [
+       0.4290713667869568,
+       0.2682632803916931
+      ],
+      "first_to_last_step_ratio": 0.6252183230042746,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 8,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 29.671916961669922,
+      "update_cosine": 0.680119514465332,
+      "update_cosine_per_pair": [
+       0.680119514465332
+      ],
+      "relative_step_norm": 0.3877020478248596,
+      "relative_step_norm_per_iteration": [
+       0.41736727952957153,
+       0.3580368161201477
+      ],
+      "first_to_last_step_ratio": 0.8578459157692065,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 11,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 52.274269104003906,
+      "update_cosine": 0.5887671709060669,
+      "update_cosine_per_pair": [
+       0.5887671709060669
+      ],
+      "relative_step_norm": 0.4216959923505783,
+      "relative_step_norm_per_iteration": [
+       0.40874162316322327,
+       0.43465036153793335
+      ],
+      "first_to_last_step_ratio": 1.0633865916913579,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 15,
+      "composition": "E",
+      "num_loops": 2,
+      "group_input_norm": 112.2358169555664,
+      "update_cosine": 0.566865086555481,
+      "update_cosine_per_pair": [
+       0.566865086555481
+      ],
+      "relative_step_norm": 0.9703872799873352,
+      "relative_step_norm_per_iteration": [
+       0.8142284154891968,
+       1.1265461444854736
+      ],
+      "first_to_last_step_ratio": 1.3835750792468144,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     }
+    ],
+    "pooled_update_cosine": 0.7207357168197632,
+    "pooled_relative_step_norm": 0.44721370562911034,
+    "stack_update_cosine": 0.2518331432947889
+   }
+  ]
+ },
+ "A3": {
+  "n_seeds": 3,
+  "runs": [
+   {
+    "arm": "A3_loop_attention",
+    "n_executed_layers": 18,
+    "sanity_batch_loss": 2.847235679626465,
+    "groups": [
+     {
+      "first_executed_index": 3,
+      "composition": "*",
+      "num_loops": 4,
+      "group_input_norm": 16.44819450378418,
+      "update_cosine": 0.28969302276770276,
+      "update_cosine_per_pair": [
+       0.0690140575170517,
+       0.2759699523448944,
+       0.5240950584411621
+      ],
+      "relative_step_norm": 0.18171241506934166,
+      "relative_step_norm_per_iteration": [
+       0.2244701236486435,
+       0.18627572059631348,
+       0.16510391235351562,
+       0.15099990367889404
+      ],
+      "first_to_last_step_ratio": 0.6726948835081936,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 13,
+      "composition": "*",
+      "num_loops": 4,
+      "group_input_norm": 106.13861846923828,
+      "update_cosine": 0.5639119942982992,
+      "update_cosine_per_pair": [
+       0.43173569440841675,
+       0.4940366744995117,
+       0.765963613986969
+      ],
+      "relative_step_norm": 0.22650916129350662,
+      "relative_step_norm_per_iteration": [
+       0.2212197184562683,
+       0.22777661681175232,
+       0.25775855779647827,
+       0.1992817521095276
+      ],
+      "first_to_last_step_ratio": 0.9008317771135871,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     }
+    ],
+    "pooled_update_cosine": 0.42680250853300095,
+    "pooled_relative_step_norm": 0.20411078818142414,
+    "stack_update_cosine": 0.17424230211797884
+   },
+   {
+    "arm": "A3_loop_attention_seed2",
+    "n_executed_layers": 18,
+    "sanity_batch_loss": 2.7397854328155518,
+    "groups": [
+     {
+      "first_executed_index": 3,
+      "composition": "*",
+      "num_loops": 4,
+      "group_input_norm": 17.174100875854492,
+      "update_cosine": 0.32473577558994293,
+      "update_cosine_per_pair": [
+       0.22636616230010986,
+       0.1886376589536667,
+       0.5592035055160522
+      ],
+      "relative_step_norm": 0.18160372599959373,
+      "relative_step_norm_per_iteration": [
+       0.2063997983932495,
+       0.18214553594589233,
+       0.1756422519683838,
+       0.1622273176908493
+      ],
+      "first_to_last_step_ratio": 0.7859858340644343,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 13,
+      "composition": "*",
+      "num_loops": 4,
+      "group_input_norm": 105.09196472167969,
+      "update_cosine": 0.5563744803269705,
+      "update_cosine_per_pair": [
+       0.3658997118473053,
+       0.5193815231323242,
+       0.7838422060012817
+      ],
+      "relative_step_norm": 0.2244800589978695,
+      "relative_step_norm_per_iteration": [
+       0.2282075732946396,
+       0.24507689476013184,
+       0.2518811821937561,
+       0.17275458574295044
+      ],
+      "first_to_last_step_ratio": 0.7570063659539747,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     }
+    ],
+    "pooled_update_cosine": 0.4405551279584567,
+    "pooled_relative_step_norm": 0.2030418924987316,
+    "stack_update_cosine": 0.1842440682298997
+   },
+   {
+    "arm": "A3_loop_attention_seed3",
+    "n_executed_layers": 18,
+    "sanity_batch_loss": 2.7056922912597656,
+    "groups": [
+     {
+      "first_executed_index": 3,
+      "composition": "*",
+      "num_loops": 4,
+      "group_input_norm": 17.214630126953125,
+      "update_cosine": 0.2500939443707466,
+      "update_cosine_per_pair": [
+       0.0674828514456749,
+       0.16833758354187012,
+       0.5144613981246948
+      ],
+      "relative_step_norm": 0.20860513299703598,
+      "relative_step_norm_per_iteration": [
+       0.2619762420654297,
+       0.20226189494132996,
+       0.18926116824150085,
+       0.18092122673988342
+      ],
+      "first_to_last_step_ratio": 0.6906016565223406,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     },
+     {
+      "first_executed_index": 13,
+      "composition": "*",
+      "num_loops": 4,
+      "group_input_norm": 113.75279235839844,
+      "update_cosine": 0.5179098049799601,
+      "update_cosine_per_pair": [
+       0.3698176145553589,
+       0.4823678731918335,
+       0.701543927192688
+      ],
+      "relative_step_norm": 0.21932630613446236,
+      "relative_step_norm_per_iteration": [
+       0.2290087640285492,
+       0.22262106835842133,
+       0.23607128858566284,
+       0.18960410356521606
+      ],
+      "first_to_last_step_ratio": 0.8279338320064433,
+      "between_member_cosine": null,
+      "member_types": null,
+      "member_step_norms": null
+     }
+    ],
+    "pooled_update_cosine": 0.38400187467535335,
+    "pooled_relative_step_norm": 0.21396571956574917,
+    "stack_update_cosine": 0.1668150239788434
+   }
+  ]
+ },
+ "A4": {
+  "n_seeds": 3,
+  "runs": [
+   {
+    "arm": "A4_loop_mamba_moe",
+    "n_executed_layers": 18,
+    "sanity_batch_loss": 2.595060348510742,
+    "groups": [
+     {
+      "first_executed_index": 0,
+      "composition": "ME",
+      "num_loops": 2,
+      "group_input_norm": 1.8062639236450195,
+      "update_cosine": 0.054451100528240204,
+      "update_cosine_per_pair": [
+       0.054451100528240204
+      ],
+      "relative_step_norm": 2.3505722284317017,
+      "relative_step_norm_per_iteration": [
+       3.532965660095215,
+       1.1681787967681885
+      ],
+      "first_to_last_step_ratio": 0.33065104763478104,
+      "between_member_cosine": 0.1518479436635971,
+      "member_types": [
+       "M",
+       "E"
+      ],
+      "member_step_norms": [
+       2.1855416297912598,
+       0.5460957884788513
+      ]
+     },
+     {
+      "first_executed_index": 7,
+      "composition": "ME",
+      "num_loops": 2,
+      "group_input_norm": 13.769264221191406,
+      "update_cosine": 0.7294481992721558,
+      "update_cosine_per_pair": [
+       0.7294481992721558
+      ],
+      "relative_step_norm": 0.8229377865791321,
+      "relative_step_norm_per_iteration": [
+       0.7574117183685303,
+       0.8884638547897339
+      ],
+      "first_to_last_step_ratio": 1.1730262857610532,
+      "between_member_cosine": -0.031982608838006854,
+      "member_types": [
+       "M",
+       "E"
+      ],
+      "member_step_norms": [
+       0.5017052739858627,
+       0.6550808548927307
+      ]
+     },
+     {
+      "first_executed_index": 11,
+      "composition": "ME",
+      "num_loops": 2,
+      "group_input_norm": 31.254329681396484,
+      "update_cosine": 0.6744941473007202,
+      "update_cosine_per_pair": [
+       0.6744941473007202
+      ],
+      "relative_step_norm": 1.007992923259735,
+      "relative_step_norm_per_iteration": [
+       0.9279168844223022,
+       1.088068962097168
+      ],
+      "first_to_last_step_ratio": 1.17259312807372,
+      "between_member_cosine": 0.03809627890586853,
+      "member_types": [
+       "M",
+       "E"
+      ],
+      "member_step_norms": [
+       0.5751812905073166,
+       0.7909578680992126
+      ]
+     }
+    ],
+    "pooled_update_cosine": 0.4861311490337054,
+    "pooled_relative_step_norm": 1.3938343127568562,
+    "stack_update_cosine": 0.028586108538815203
+   },
+   {
+    "arm": "A4_loop_mamba_moe_seed2_redo",
+    "n_executed_layers": 18,
+    "sanity_batch_loss": 2.753464698791504,
+    "groups": [
+     {
+      "first_executed_index": 0,
+      "composition": "ME",
+      "num_loops": 2,
+      "group_input_norm": 1.83482027053833,
+      "update_cosine": 0.28507959842681885,
+      "update_cosine_per_pair": [
+       0.28507959842681885
+      ],
+      "relative_step_norm": 2.6238796710968018,
+      "relative_step_norm_per_iteration": [
+       3.3092031478881836,
+       1.93855619430542
+      ],
+      "first_to_last_step_ratio": 0.5858075517492898,
+      "between_member_cosine": 0.17527224030345678,
+      "member_types": [
+       "M",
+       "E"
+      ],
+      "member_step_norms": [
+       2.3518369793891907,
+       0.7299089133739471
+      ]
+     },
+     {
+      "first_executed_index": 7,
+      "composition": "ME",
+      "num_loops": 2,
+      "group_input_norm": 15.318039894104004,
+      "update_cosine": 0.7015978097915649,
+      "update_cosine_per_pair": [
+       0.7015978097915649
+      ],
+      "relative_step_norm": 0.7389987111091614,
+      "relative_step_norm_per_iteration": [
+       0.6965932846069336,
+       0.7814041376113892
+      ],
+      "first_to_last_step_ratio": 1.1217508909123517,
+      "between_member_cosine": -0.06958804838359356,
+      "member_types": [
+       "M",
+       "E"
+      ],
+      "member_step_norms": [
+       0.46378636360168457,
+       0.593412309885025
+      ]
+     },
+     {
+      "first_executed_index": 11,
+      "composition": "ME",
+      "num_loops": 2,
+      "group_input_norm": 31.370304107666016,
+      "update_cosine": 0.7111715078353882,
+      "update_cosine_per_pair": [
+       0.7111715078353882
+      ],
+      "relative_step_norm": 1.0446930527687073,
+      "relative_step_norm_per_iteration": [
+       0.982650876045227,
+       1.1067352294921875
+      ],
+      "first_to_last_step_ratio": 1.126275116088381,
+      "between_member_cosine": 0.057041941210627556,
+      "member_types": [
+       "M",
+       "E"
+      ],
+      "member_step_norms": [
+       0.6104799509048462,
+       0.7922468781471252
+      ]
+     }
+    ],
+    "pooled_update_cosine": 0.5659496386845907,
+    "pooled_relative_step_norm": 1.4691904783248901,
+    "stack_update_cosine": 0.01805278719128931
+   },
+   {
+    "arm": "A4_loop_mamba_moe_seed3_redo",
+    "n_executed_layers": 18,
+    "sanity_batch_loss": 2.7330031394958496,
+    "groups": [
+     {
+      "first_executed_index": 0,
+      "composition": "ME",
+      "num_loops": 2,
+      "group_input_norm": 1.8175854682922363,
+      "update_cosine": 0.1583734154701233,
+      "update_cosine_per_pair": [
+       0.1583734154701233
+      ],
+      "relative_step_norm": 2.4881721138954163,
+      "relative_step_norm_per_iteration": [
+       3.512723922729492,
+       1.4636203050613403
+      ],
+      "first_to_last_step_ratio": 0.41666249248647563,
+      "between_member_cosine": 0.18446049466729164,
+      "member_types": [
+       "M",
+       "E"
+      ],
+      "member_step_norms": [
+       2.3047415018081665,
+       0.4982287883758545
+      ]
+     },
+     {
+      "first_executed_index": 7,
+      "composition": "ME",
+      "num_loops": 2,
+      "group_input_norm": 15.65986442565918,
+      "update_cosine": 0.7061339616775513,
+      "update_cosine_per_pair": [
+       0.7061339616775513
+      ],
+      "relative_step_norm": 0.8314288854598999,
+      "relative_step_norm_per_iteration": [
+       0.773902416229248,
+       0.8889553546905518
+      ],
+      "first_to_last_step_ratio": 1.1486659507045942,
+      "between_member_cosine": -0.05873111914843321,
+      "member_types": [
+       "M",
+       "E"
+      ],
+      "member_step_norms": [
+       0.5334261655807495,
+       0.6569380760192871
+      ]
+     },
+     {
+      "first_executed_index": 11,
+      "composition": "ME",
+      "num_loops": 2,
+      "group_input_norm": 34.67374801635742,
+      "update_cosine": 0.687390923500061,
+      "update_cosine_per_pair": [
+       0.687390923500061
+      ],
+      "relative_step_norm": 0.8479779958724976,
+      "relative_step_norm_per_iteration": [
+       0.7894678115844727,
+       0.9064881801605225
+      ],
+      "first_to_last_step_ratio": 1.1482269028058134,
+      "between_member_cosine": 0.04781607864424586,
+      "member_types": [
+       "M",
+       "E"
+      ],
+      "member_step_norms": [
+       0.45515842735767365,
+       0.6776512265205383
+      ]
+     }
+    ],
+    "pooled_update_cosine": 0.5172994335492452,
+    "pooled_relative_step_norm": 1.3891929984092712,
+    "stack_update_cosine": 0.0237609295941451
+   }
+  ]
+ },
+ "A5": {
+  "n_seeds": 3,
+  "runs": [
+   {
+    "arm": "A5_loop_mamba_attention",
+    "n_executed_layers": 20,
+    "sanity_batch_loss": 2.816110610961914,
+    "groups": [
+     {
+      "first_executed_index": 2,
+      "composition": "M*",
+      "num_loops": 3,
+      "group_input_norm": 12.532867431640625,
+      "update_cosine": 0.14883840549737215,
+      "update_cosine_per_pair": [
+       0.0219960305839777,
+       0.2756807804107666
+      ],
+      "relative_step_norm": 0.5645172595977783,
+      "relative_step_norm_per_iteration": [
+       0.5475989580154419,
+       0.5229322910308838,
+       0.6230205297470093
+      ],
+      "first_to_last_step_ratio": 1.1377314011058446,
+      "between_member_cosine": -0.031501000126202904,
+      "member_types": [
+       "M",
+       "*"
+      ],
+      "member_step_norms": [
+       0.4519017239411672,
+       0.32915767033894855
+      ]
+     },
+     {
+      "first_executed_index": 13,
+      "composition": "M*",
+      "num_loops": 3,
+      "group_input_norm": 87.44608306884766,
+      "update_cosine": 0.03432954475283623,
+      "update_cosine_per_pair": [
+       -0.042911119759082794,
+       0.11157020926475525
+      ],
+      "relative_step_norm": 0.5667036573092142,
+      "relative_step_norm_per_iteration": [
+       0.5255923271179199,
+       0.5774149298667908,
+       0.5971037149429321
+      ],
+      "first_to_last_step_ratio": 1.1360586601732643,
+      "between_member_cosine": 0.16016808152198792,
+      "member_types": [
+       "M",
+       "*"
+      ],
+      "member_step_norms": [
+       0.399676650762558,
+       0.32827718059221905
+      ]
+     }
+    ],
+    "pooled_update_cosine": 0.09158397512510419,
+    "pooled_relative_step_norm": 0.5656104584534962,
+    "stack_update_cosine": 0.032575862874325956
+   },
+   {
+    "arm": "A5_loop_mamba_attention_seed2_redo",
+    "n_executed_layers": 20,
+    "sanity_batch_loss": 2.9118494987487793,
+    "groups": [
+     {
+      "first_executed_index": 2,
+      "composition": "M*",
+      "num_loops": 3,
+      "group_input_norm": 13.262475967407227,
+      "update_cosine": 0.13950349390506744,
+      "update_cosine_per_pair": [
+       -0.03970056772232056,
+       0.31870755553245544
+      ],
+      "relative_step_norm": 0.5335540771484375,
+      "relative_step_norm_per_iteration": [
+       0.5179605484008789,
+       0.5074796676635742,
+       0.5752220153808594
+      ],
+      "first_to_last_step_ratio": 1.1105517923262036,
+      "between_member_cosine": 0.0531747875114282,
+      "member_types": [
+       "M",
+       "*"
+      ],
+      "member_step_norms": [
+       0.42745837569236755,
+       0.28329096734523773
+      ]
+     },
+     {
+      "first_executed_index": 13,
+      "composition": "M*",
+      "num_loops": 3,
+      "group_input_norm": 85.58283996582031,
+      "update_cosine": 0.15705318003892899,
+      "update_cosine_per_pair": [
+       0.05504794418811798,
+       0.25905841588974
+      ],
+      "relative_step_norm": 0.5458206733067831,
+      "relative_step_norm_per_iteration": [
+       0.4832661747932434,
+       0.5774098634719849,
+       0.5767859816551208
+      ],
+      "first_to_last_step_ratio": 1.193516144393694,
+      "between_member_cosine": 0.13120349744955698,
+      "member_types": [
+       "M",
+       "*"
+      ],
+      "member_step_norms": [
+       0.4041880965232849,
+       0.29874664545059204
+      ]
+     }
+    ],
+    "pooled_update_cosine": 0.14827833697199821,
+    "pooled_relative_step_norm": 0.5396873752276103,
+    "stack_update_cosine": 0.04911809370509888
+   },
+   {
+    "arm": "A5_loop_mamba_attention_seed3_redo",
+    "n_executed_layers": 20,
+    "sanity_batch_loss": 2.8475661277770996,
+    "groups": [
+     {
+      "first_executed_index": 2,
+      "composition": "M*",
+      "num_loops": 3,
+      "group_input_norm": 12.576469421386719,
+      "update_cosine": 0.1108347475528717,
+      "update_cosine_per_pair": [
+       -0.08227404952049255,
+       0.30394354462623596
+      ],
+      "relative_step_norm": 0.5632547537485758,
+      "relative_step_norm_per_iteration": [
+       0.5932694673538208,
+       0.5100404024124146,
+       0.5864543914794922
+      ],
+      "first_to_last_step_ratio": 0.9885126805788167,
+      "between_member_cosine": 0.01333390719567736,
+      "member_types": [
+       "M",
+       "*"
+      ],
+      "member_step_norms": [
+       0.47837701439857483,
+       0.26841456691424054
+      ]
+     },
+     {
+      "first_executed_index": 13,
+      "composition": "M*",
+      "num_loops": 3,
+      "group_input_norm": 85.93408203125,
+      "update_cosine": 0.12296116724610329,
+      "update_cosine_per_pair": [
+       0.040755875408649445,
+       0.20516645908355713
+      ],
+      "relative_step_norm": 0.5247044761975607,
+      "relative_step_norm_per_iteration": [
+       0.4795067310333252,
+       0.5388810634613037,
+       0.555725634098053
+      ],
+      "first_to_last_step_ratio": 1.1589527281514442,
+      "between_member_cosine": 0.1016064981619517,
+      "member_types": [
+       "M",
+       "*"
+      ],
+      "member_step_norms": [
+       0.3679981430371602,
+       0.32566404342651367
+      ]
+     }
+    ],
+    "pooled_update_cosine": 0.1168979573994875,
+    "pooled_relative_step_norm": 0.5439796149730682,
+    "stack_update_cosine": 0.032049796556269654
+   }
+  ]
+ },
+ "A6": {
+  "n_seeds": 3,
+  "runs": [
+   {
+    "arm": "A6_loop_attention_moe",
+    "n_executed_layers": 16,
+    "sanity_batch_loss": 2.8692173957824707,
+    "groups": [
+     {
+      "first_executed_index": 3,
+      "composition": "*E",
+      "num_loops": 2,
+      "group_input_norm": 14.887741088867188,
+      "update_cosine": 0.4270154535770416,
+      "update_cosine_per_pair": [
+       0.4270154535770416
+      ],
+      "relative_step_norm": 0.548925131559372,
+      "relative_step_norm_per_iteration": [
+       0.4984068274497986,
+       0.5994434356689453
+      ],
+      "first_to_last_step_ratio": 1.2027191496074028,
+      "between_member_cosine": -0.02566638682037592,
+      "member_types": [
+       "*",
+       "E"
+      ],
+      "member_step_norms": [
+       0.32391858100891113,
+       0.418405219912529
+      ]
+     },
+     {
+      "first_executed_index": 12,
+      "composition": "*E",
+      "num_loops": 2,
+      "group_input_norm": 84.24522399902344,
+      "update_cosine": 0.4185362458229065,
+      "update_cosine_per_pair": [
+       0.4185362458229065
+      ],
+      "relative_step_norm": 1.59977388381958,
+      "relative_step_norm_per_iteration": [
+       1.0320184230804443,
+       2.167529344558716
+      ],
+      "first_to_last_step_ratio": 2.1002816384700917,
+      "between_member_cosine": 0.06841696426272392,
+      "member_types": [
+       "*",
+       "E"
+      ],
+      "member_step_norms": [
+       0.4962412416934967,
+       1.4484443068504333
+      ]
+     }
+    ],
+    "pooled_update_cosine": 0.42277584969997406,
+    "pooled_relative_step_norm": 1.074349507689476,
+    "stack_update_cosine": 0.0447308505885303
+   },
+   {
+    "arm": "A6_loop_attention_moe_seed2_redo",
+    "n_executed_layers": 16,
+    "sanity_batch_loss": 2.752457618713379,
+    "groups": [
+     {
+      "first_executed_index": 3,
+      "composition": "*E",
+      "num_loops": 2,
+      "group_input_norm": 15.099842071533203,
+      "update_cosine": 0.4141501784324646,
+      "update_cosine_per_pair": [
+       0.4141501784324646
+      ],
+      "relative_step_norm": 0.559613436460495,
+      "relative_step_norm_per_iteration": [
+       0.5506637692451477,
+       0.5685631036758423
+      ],
+      "first_to_last_step_ratio": 1.0325050156381834,
+      "between_member_cosine": -0.03404493071138859,
+      "member_types": [
+       "*",
+       "E"
+      ],
+      "member_step_norms": [
+       0.3260878324508667,
+       0.4293266236782074
+      ]
+     },
+     {
+      "first_executed_index": 12,
+      "composition": "*E",
+      "num_loops": 2,
+      "group_input_norm": 89.14727783203125,
+      "update_cosine": 0.4468221068382263,
+      "update_cosine_per_pair": [
+       0.4468221068382263
+      ],
+      "relative_step_norm": 1.4917523264884949,
+      "relative_step_norm_per_iteration": [
+       0.9907565116882324,
+       1.9927481412887573
+      ],
+      "first_to_last_step_ratio": 2.011339938501285,
+      "between_member_cosine": 0.09035378322005272,
+      "member_types": [
+       "*",
+       "E"
+      ],
+      "member_step_norms": [
+       0.47825759649276733,
+       1.3161540031433105
+      ]
+     }
+    ],
+    "pooled_update_cosine": 0.43048614263534546,
+    "pooled_relative_step_norm": 1.025682881474495,
+    "stack_update_cosine": 0.0478472371896108
+   },
+   {
+    "arm": "A6_loop_attention_moe_seed3",
+    "n_executed_layers": 16,
+    "sanity_batch_loss": 2.838956117630005,
+    "groups": [
+     {
+      "first_executed_index": 3,
+      "composition": "*E",
+      "num_loops": 2,
+      "group_input_norm": 15.019948959350586,
+      "update_cosine": 0.4082746207714081,
+      "update_cosine_per_pair": [
+       0.4082746207714081
+      ],
+      "relative_step_norm": 0.5752934813499451,
+      "relative_step_norm_per_iteration": [
+       0.5519802570343018,
+       0.5986067056655884
+      ],
+      "first_to_last_step_ratio": 1.084471225260488,
+      "between_member_cosine": -0.040823470801115036,
+      "member_types": [
+       "*",
+       "E"
+      ],
+      "member_step_norms": [
+       0.3273176997900009,
+       0.45890340209007263
+      ]
+     },
+     {
+      "first_executed_index": 12,
+      "composition": "*E",
+      "num_loops": 2,
+      "group_input_norm": 85.66525268554688,
+      "update_cosine": 0.42793652415275574,
+      "update_cosine_per_pair": [
+       0.42793652415275574
+      ],
+      "relative_step_norm": 1.563696801662445,
+      "relative_step_norm_per_iteration": [
+       1.060327410697937,
+       2.067066192626953
+      ],
+      "first_to_last_step_ratio": 1.9494603004428157,
+      "between_member_cosine": 0.10007969290018082,
+      "member_types": [
+       "*",
+       "E"
+      ],
+      "member_step_norms": [
+       0.47778061032295227,
+       1.3988933861255646
+      ]
+     }
+    ],
+    "pooled_update_cosine": 0.4181055724620819,
+    "pooled_relative_step_norm": 1.069495141506195,
+    "stack_update_cosine": 0.047438010945916174
+   }
+  ]
+ },
+ "N1": {
+  "n_seeds": 1,
+  "runs": [
+   {
+    "arm": "N1_anchor_mamba",
+    "n_executed_layers": 22,
+    "sanity_batch_loss": 2.517184019088745,
+    "groups": [],
+    "pooled_update_cosine": null,
+    "pooled_relative_step_norm": null,
+    "stack_update_cosine": 0.1335818034020208
+   }
+  ]
+ },
+ "N2": {
+  "n_seeds": 1,
+  "runs": [
+   {
+    "arm": "N2_anchor_moe",
+    "n_executed_layers": 17,
+    "sanity_batch_loss": 2.773991584777832,
+    "groups": [],
+    "pooled_update_cosine": null,
+    "pooled_relative_step_norm": null,
+    "stack_update_cosine": 0.14883385528810322
+   }
+  ]
+ },
+ "N3": {
+  "n_seeds": 1,
+  "runs": [
+   {
+    "arm": "N3_anchor_attention",
+    "n_executed_layers": 18,
+    "sanity_batch_loss": 2.884652614593506,
+    "groups": [],
+    "pooled_update_cosine": null,
+    "pooled_relative_step_norm": null,
+    "stack_update_cosine": 0.06335822735255693
+   }
+  ]
+ },
+ "N4": {
+  "n_seeds": 1,
+  "runs": [
+   {
+    "arm": "N4_anchor_attention_moe",
+    "n_executed_layers": 16,
+    "sanity_batch_loss": 2.753830909729004,
+    "groups": [],
+    "pooled_update_cosine": null,
+    "pooled_relative_step_norm": null,
+    "stack_update_cosine": 0.07098157200962305
+   }
+  ]
+ }
+}

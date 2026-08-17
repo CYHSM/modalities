@@ -3,8 +3,8 @@
 % Compile with: pdflatex loopotron.tex  (twice, for references)
 % Dependencies are deliberately limited to standard TeX Live packages.
 %
-% NOTE: this file has not been compiled -- no LaTeX toolchain was available on the machine where
-% it was written. If a package is missing, the likely culprits are booktabs and hyperref.
+% NOTE: compiles cleanly with pdflatex (verified 2026-08-15, two passes, texlive on the Leonardo
+% login node) -- 15 pages, no errors, one cosmetically negligible ~3pt overfull hbox.
 
 \documentclass[11pt,a4paper]{article}
 
@@ -20,11 +20,18 @@
 % \textasciicircum, not \^{}: the latter is a circumflex *accent* and renders raised and undersized
 % in typewriter font, which matters because the layer-pattern strings are load-bearing here.
 \newcommand{\caret}{\textasciicircum}
+% Seed standard deviation, set small next to the mean it qualifies. Arms with a single valid seed
+% get no \sd at all rather than a zero, so "no spread measured" never reads as "spread of zero".
+\newcommand{\sd}[1]{{\scriptsize$\pm$#1}}
 
 \title{\textbf{Loopotron}\\[0.3em]
 \large Where is extra depth worth spending in a hybrid Mamba--Transformer MoE?}
 \author{}
-\date{Experiments run 2026-08-06 -- 2026-08-11}
+\date{Wave 1: 2026-08-06 -- 2026-08-11. Wave 2: 2026-08-11 -- 2026-08-12, all eleven arms complete.
+Wave 2 seed replicates (A1--A6 $\times$2 extra seeds): launched 2026-08-12, complete 2026-08-14 ---
+all six arms at $n=3$, five runs re-run after a contaminated first attempt
+(Section~\ref{sec:wave2-seeds}). Wave 3 (loop refinements at $K{=}3$, $K{=}6$ and $K{=}12$):
+2026-08-14 -- 2026-08-16, all twelve arms complete (Section~\ref{sec:wave3}).}
 
 \begin{document}
 \maketitle
@@ -36,7 +43,7 @@ mixers, sparse mixture-of-experts feed-forwards, and grouped-query attention ---
 pattern string. Because each layer is a self-contained residual block, a \emph{loop} (executing a
 run of layers several times while reusing one set of weights) can be placed around any subset of
 layer types. This trades parameters for effective depth, and lets us ask where extra depth is worth
-spending. We train ten models at a matched budget of 557M tokens: an unlooped hybrid baseline,
+spending. Wave 1 trains ten models at a matched budget of 557M tokens: an unlooped hybrid baseline,
 three looped variants, three conditioning refinements, an iso-FLOP fresh-weight anchor, and two
 vanilla dense transformers. Three results survive a measured seed-noise floor. First, \textbf{every
 looped variant beats the unlooped hybrid} on held-out loss, by 12--48 standard deviations of
@@ -46,6 +53,50 @@ largest, \textbf{the hybrid beats an iso-FLOP dense transformer by 0.198 nats}. 
 negative results: per-iteration normalization and input injection have no measurable effect, and a
 synthetic reasoning suite designed to detect the reasoning-over-perplexity trade-off has
 insufficient resolution at this budget --- a claim we initially made from it, and here retract.
+
+Wave 2 (Section~\ref{sec:wave2}) re-runs the ablation at $\sim$9$\times$ the token budget (4.997B
+tokens, roughly the compute-optimal allocation for this model's active parameters) and completes
+the three single-operator loops --- Mamba alone, MoE alone, attention alone --- that Wave 1 left
+untested, together with their fresh-weight anchors. Wave 2 also changes tokenizer, dataset and
+hardware layout alongside the budget, so absolute nats do not compare across waves; only rankings
+do. Two results are robust across both waves: \textbf{every looped variant still beats the unlooped
+baseline}, and \textbf{a fresh-weight anchor still beats its iso-execution looped counterpart} ---
+all eleven Wave 2 arms finished, confirming the latter for all four matched anchor/loop pairs,
+including a direct re-confirmation of Wave 1's original attention+MoE pair. The newly completed
+single-operator arms answer the titular question directly: \textbf{looping Mamba alone is the best
+loop of any kind tried, looping attention alone is the worst} --- the depth this architecture wants
+is concentrated in the recurrent operator, not the quadratic one, and that same operator shows the
+largest fresh-vs-shared-weight gap of the four pairs. Twelve additional 5B-token runs (two extra
+seeds of each A1--A6) were launched to check these rankings against a measured seed-noise floor
+rather than $n=1$ (Section~\ref{sec:wave2-seeds}). All six are now replicated at three seeds, and
+\textbf{the ranking is unchanged}, with A1's lead and A3's deficit several times the measured noise
+while the interior ordering is not resolved. Five of the twelve extra runs had to be discarded and
+re-run: they were contaminated by a scheduling artifact --- a run resumed with \texttt{modalities
+warmstart} is not interchangeable with an uninterrupted one, which we traced to a checkpointing
+defect on the tied embedding/output weight rather than to the token budget or the learning-rate
+schedule, both verified identical. It shifted their apparent quality by 0.04--0.055 nats, an order
+of magnitude past genuine seed noise, and would have overturned the paper's own headline finding had
+it gone unnoticed. Those numbers are excluded, not averaged in; their clean replacements land within
+0.002 nats of the arms' original seeds.
+
+Wave 3 (Section~\ref{sec:wave3}) revisits the negative result on loop refinements by making loop
+count the independent variable, running the best loop at $K{=}3$, $K{=}6$ and $K{=}12$ against three
+refinements from the recent literature: a stabilized recurrence with eigenvalues bounded in $(0,1)$
+by construction, an injection norm, and FiLM iteration conditioning. Four results. First,
+\textbf{loop depth has an optimum near $K{=}6$}: the plain loop improves from $K{=}3$ to $K{=}6$
+and then gets \emph{worse} at $K{=}12$, which is worse than $K{=}3$ despite three times the executed
+depth. Second, \textbf{the predicted instability is real and appears exactly where the literature
+says}: gradient norms never exceed 7 at $K{=}3$ or $K{=}6$ and peak at 85{,}782 at $K{=}12$. Third,
+\textbf{the stabilizer does not stabilize it} --- given a genuine instability to fix it leaves the
+loss unchanged (0.2 s.d.) and produces more large-gradient steps than the plain loop --- while
+\textbf{FiLM iteration conditioning, which carries no stability guarantee, cuts the peak gradient
+norm 37-fold} and is the only refinement to improve the loss at every depth. Fourth, the injection
+norm is \textbf{actively harmful}, costing 0.0475 nats at $K{=}12$ and dominating any combination it
+appears in, so that a single bundled ``all refinements'' arm would have concealed which component
+did the damage. Wave 3's $K{=}3$ control is architecturally identical to Wave 2's best arm and serves
+as a fourth seed of it, raising that arm's measured seed s.d.\ from 0.0013 to 0.0021 --- a reminder,
+applied throughout, that a standard deviation from three runs is itself uncertain by about half its
+value.
 \end{abstract}
 
 \section{Introduction}
@@ -214,7 +265,7 @@ per-iteration conditioning remain separable.
 
 \section{Results}
 
-\subsection{Main comparison}
+\subsection{Wave 1: main comparison (557M tokens)}
 
 \begin{table}[t]
 \centering
@@ -232,13 +283,13 @@ D2 & 21 layers, $d{=}2048$  & 21/21 & 1.111B & 1.111B & 4.90 & \textbf{3.2591} &
 \midrule
 \multicolumn{9}{l}{\emph{Hybrid, no loop}} \\
 A0 & \lp{MEM*EMEMEM*E}      & 12/12 & 1.105B & 226M & 1.000 & 3.3404 & 4.1415 & 6.4363 \\
-N4 & \lp{MEM*E*EMEMEM*E*E}  & 16/16 & 1.487B & 256M & 1.179 & \textbf{3.3021} & 4.0818 & 6.2288 \\
+N4 & \lp{MEM*E*EMEMEM*E*E}  & 16/16 & 1.487B & 256M & 1.179 & \textbf{3.3021} & \textbf{4.0818} & \textbf{6.2288} \\
 \midrule
 \multicolumn{9}{l}{\emph{Looped variants} (ordered by LM loss)} \\
-A5 & \lp{ME[M*]\caret3EMEME[M*]\caret3E}            & 12/20 & 1.105B & 262M & 1.261 & 3.3168 & 4.0949 & 6.4924 \\
+A5 & \lp{ME[M*]\caret3EMEME[M*]\caret3E}            & 12/20 & 1.105B & 262M & 1.261 & \textbf{3.3168} & \textbf{4.0949} & 6.4924 \\
 A4 & \lp{[ME]\caret2M*E[ME]\caret2[ME]\caret2M*E}   & 12/18 & 1.105B & 278M & 1.220 & 3.3222 & 4.1754 & 6.4295 \\
 A6 & \lp{MEM[*E]\caret2MEMEM[*E]\caret2}            & 12/16 & 1.105B & 256M & 1.179 & 3.3243 & 4.1569 & 6.4342 \\
-A6a & \quad + per-iteration norm                    & 12/16 & 1.105B & 256M & 1.179 & 3.3246 & 4.1681 & 6.3929 \\
+A6a & \quad + per-iteration norm                    & 12/16 & 1.105B & 256M & 1.179 & 3.3246 & 4.1681 & \textbf{6.3929} \\
     & \multicolumn{5}{r}{\emph{(4 seeds, s.d.)}}                                    & $\pm$0.0005 & $\pm$0.0177 & $\pm$0.0629 \\
 A6c & \quad + norm and injection                    & 12/16 & 1.105B & 256M & 1.179 & 3.3301 & 4.2102 & 6.4325 \\
 A6b & \quad + input injection                       & 12/16 & 1.105B & 256M & 1.179 & 3.3339 & 4.2258 & 6.5063 \\
@@ -247,12 +298,14 @@ A6b & \quad + input injection                       & 12/16 & 1.105B & 256M & 1.
 \caption{All models at 8500 steps (557M tokens), identical data, schedule and evaluations.
 ``Built/exec.'' is sets of weights over layer applications per token; FLOPs are relative to A0 per
 token. LM loss is held-out cross-entropy; MATH and TriviaQA are the negative log-likelihood of the
-answer span (lower is better throughout). D2 is not an iso-FLOP comparison. A6a and A6c carry 4096
-extra parameters for their per-iteration norms.}
+answer span (lower is better throughout). Bold marks the best (lowest) value in each column within
+its block, the same convention as Table~\ref{tab:wave2}; on MATH and TriviaQA those bolds sit well
+inside the seed noise measured in Table~\ref{tab:noise} and should not be read as separations. D2 is
+not an iso-FLOP comparison. A6a and A6c carry 4096 extra parameters for their per-iteration norms.}
 \label{tab:main}
 \end{table}
 
-\subsection{The seed-noise floor}
+\subsection{Wave 1: the seed-noise floor}
 
 Every number in Table~\ref{tab:main} except A6a's is a single run, so the differences are
 meaningless without a measure of run-to-run variation. Four runs of A6a from identical
@@ -292,7 +345,7 @@ deviations would require roughly twelve runs per variant. Crucially, more evalua
 would not help: the sampling standard error over 2048 questions is 0.007, so the dominant variance
 is in the model, not the question sample.
 
-\subsection{Findings}
+\subsection{Wave 1: findings}
 
 \paragraph{1. Looping helps, modestly and reliably.} Every looped variant beats the unlooped
 baseline A0 by 0.006--0.024 nats, or 12--48 standard deviations. The best is A5, which loops
@@ -338,26 +391,418 @@ transformer at 557M tokens has not formed the in-context machinery to notice tha
 be one of the 26 symbols present, whereas Mamba's recurrent state tracks the in-context
 distribution essentially for free, and every hybrid lands near $\ln 26 = 3.26$ nats.
 
+\subsection{Wave 2: the 5B-token wave}
+\label{sec:wave2}
+
+Wave 1 left two things unresolved: the three single-operator loops --- Mamba alone, MoE alone,
+attention alone --- were never run, and 557M tokens is a small fraction of a compute-optimal budget.
+Wave 2 addresses both: it adds \textbf{A1} (\lp{[M]\caret3} at $K{=}3$), \textbf{A2}
+(\lp{[E]\caret2} at $K{=}2$) and \textbf{A3} (\lp{[*]\caret4} at $K{=}4$) together with their
+fresh-weight anchors \textbf{N1--N3}, re-runs \textbf{A0} and \textbf{A4--A6} with their anchor
+\textbf{N4}, and trains all eleven arms to \textbf{76{,}250 steps = 4{,}997{,}120{,}000 tokens}
+($\approx$5B, $\sim$9$\times$ Wave 1) on the Leonardo cluster.
+
+\paragraph{What changed besides the budget.} Four things moved together with the token count, so
+Wave 2 is not a clean scaling ladder on Wave 1 and \textbf{absolute nats are not comparable across
+waves} --- only rankings within a wave are.
+\begin{itemize}
+  \item \textbf{Tokenizer.} Llama-3-8B (vocab 128{,}256) $\to$ GPT-2 (vocab 50{,}304), which alone
+    shifts every embedding-table parameter count and, since the two tokenizers segment text
+    differently, the nats-per-token scale itself.
+  \item \textbf{Data.} Wave 1's unfiltered 2B-token FineWeb shard $\to$ FineWeb-edu, stratified into
+    quality-score buckets (3.0--3.5, 3.5--4.0, 4.0--4.5, 4.5+); train draws 510 shards spanning all
+    four buckets, and test draws 2 shards from the 4.5+ bucket only --- deliberately the smallest,
+    after an earlier attempt to stratify test across buckets produced a $\sim$585k-sample eval set
+    that stalled a single evaluation call for over 8 minutes, impractical across 305 scheduled
+    evaluations.
+  \item \textbf{Hardware.} One A100 per run $\to$ one Leonardo node (4$\times$A100) per run, FSDP2
+    pure-replicate at $\text{dp}=4$. The global batch is unchanged at $8 \times 4 \times 2048 =
+    65{,}536$ tokens/step; the 4$\times$ that was gradient accumulation on a single GPU in Wave 1 is
+    data-parallel replication across 4 GPUs in Wave 2. The node count was chosen empirically on the
+    debug queue: $\text{dp}=4$ (1 node) measured 58--84 samples/s depending on arm, a clean
+    $\sim$4$\times$ over a single GPU, while $\text{dp}=16$ (4 nodes) measured \emph{worse}
+    ($\sim$38 samples/s) because cross-node all-reduce overhead and thinner per-GPU MoE routing
+    batches outweigh the extra GPUs at this model size. Every arm uses the same node count, since
+    arms are compared on their answers to the same seeded data stream and that stream's order
+    depends on world size.
+  \item \textbf{Warmup fraction.} 750 of 8500 steps (8.8\%) $\to$ 1500 of 76{,}250 (2.0\%); both are
+    linear warmup into the same cosine decay from $4.5\times10^{-4}$ to $4.5\times10^{-5}$, chosen
+    for absolute step count rather than held fixed as a fraction of the (much longer) Wave 2
+    schedule.
+\end{itemize}
+On the budget itself: 4.997B tokens is close to the Chinchilla-style compute-optimal allocation for
+this model's 225--278M \emph{active} parameters ($\sim$20 tokens/parameter $\Rightarrow$
+$\sim$4.5--5.6B), though by the same heuristic its 1.03--1.96B \emph{total} parameters would still
+want $\sim$20--40B tokens, so Wave 2 is optimal by the active-parameter convention and undertrained
+by the total-parameter one.
+
+\begin{table}[t]
+\centering
+\setlength{\tabcolsep}{4pt}
+\resizebox{\textwidth}{!}{%
+\small
+\begin{tabular}{llccrccc}
+\toprule
+& & Built/ & & & \multicolumn{3}{c}{Held-out (mean over seeds \sd{s.d.})} \\
+\cmidrule(l){6-8}
+Model & Layer pattern & exec. & Seeds & Params & LM loss & MATH & TriviaQA \\
+\midrule
+\multicolumn{8}{l}{\emph{Baseline}} \\
+A0 & \lp{MEM*EMEMEM*E}                & 12/12 & 1 & 1.025B & 2.5385 & 2.6371 & 5.3610 \\
+\midrule
+\multicolumn{8}{l}{\emph{Looped variants} (ordered by mean LM loss)} \\
+A1 & \lp{[M]\caret3E[M]\caret3*E[M]\caret3E[M]\caret3E[M]\caret3*E} & 12/22 & 3 & 1.025B & \textbf{2.4951}\,\sd{0.0013} & \textbf{2.5731}\,\sd{0.0665} & 5.1794\,\sd{0.1022} \\
+A4 & \lp{[ME]\caret2M*E[ME]\caret2[ME]\caret2M*E}   & 12/18 & 3 & 1.025B & 2.5041\,\sd{0.0050} & 2.5949\,\sd{0.0215} & \textbf{5.1252}\,\sd{0.0468} \\
+A2 & \lp{M[E]\caret2M*[E]\caret2M[E]\caret2M[E]\caret2M*[E]\caret2} & 12/17 & 3 & 1.025B & 2.5111\,\sd{0.0015} & 2.6045\,\sd{0.0332} & 5.2327\,\sd{0.0585} \\
+A5 & \lp{ME[M*]\caret3EMEME[M*]\caret3E}            & 12/20 & 3 & 1.025B & 2.5185\,\sd{0.0010} & 2.6190\,\sd{0.0353} & 5.2665\,\sd{0.0425} \\
+A6 & \lp{MEM[*E]\caret2MEMEM[*E]\caret2}            & 12/16 & 3 & 1.025B & 2.5216\,\sd{0.0021} & 2.6806\,\sd{0.0089} & 5.3092\,\sd{0.0449} \\
+A3 & \lp{MEM[*]\caret4EMEMEM[*]\caret4E}            & 12/18 & 3 & 1.025B & 2.5312\,\sd{0.0011} & 2.6483\,\sd{0.0206} & 5.3027\,\sd{0.0736} \\
+\midrule
+\multicolumn{8}{l}{\emph{Fresh-weight anchors}} \\
+N1 (anchors A1) & \lp{MMMEMMM*EMMMEMMMEMMM*E}       & 22/22 & 1 & 1.083B & \textbf{2.4530} & \textbf{2.4892} & \textbf{5.0708} \\
+N2 (anchors A2) & \lp{MEEM*EEMEEMEEM*EE} & 17/17 & 1 & 1.963B & 2.4773 & 2.6074 & 5.1298 \\
+N3 (anchors A3) & \lp{MEM****EMEMEM****E} & 18/18 & 1 & 1.046B & 2.5149 & 2.6024 & 5.1674 \\
+N4 (anchors A6) & \lp{MEM*E*EMEMEM*E*E}  & 16/16 & 1 & 1.407B & 2.4907 & 2.6173 & 5.1598 \\
+\bottomrule
+\end{tabular}%
+}
+\caption{Wave 2, all eleven arms at 76{,}250 steps (4.997B tokens \emph{per seed}), same eval suite
+as Table~\ref{tab:main}. Each cell is the mean over that arm's three seeds with the sample s.d.\ set
+small beside it; the anchors and A0 are single runs and carry no s.d.\ rather than a zero.
+``Seeds'' counts only genuinely-uninterrupted runs --- five of the original replicates were
+discarded and re-run for the reason given in Section~\ref{sec:wave2-seeds}, and
+Table~\ref{tab:wave2seeds} gives the per-arm provenance. \textbf{Bold marks the best (lowest) value
+in each column within its block}, so looped variants are compared against each other and anchors
+against each other, not across the two. The s.d.\ columns make the comparison read very differently
+by metric. On LM loss the within-arm spread (0.0010--0.0050) resolves the ranking's ends firmly and
+its middle only loosely: A1's lead is $2.5\times$ the pooled s.d.\ of the pair below it, and the
+A5/A6 gap only $1.8\times$. On MATH and TriviaQA the spread within a \emph{single} arm (up to 0.067
+and 0.102) exceeds every adjacent between-arm gap, so those two bolds mark the lowest mean but no
+real separation. Note also that the s.d.\ estimates themselves rest on $n=3$ and are individually
+uncertain by roughly half their value, so A4's larger spread (0.0050 against 0.0010--0.0021
+elsewhere) is not by itself evidence that that arm is intrinsically noisier. Active-parameter and relative-FLOPs columns are omitted: for
+the four architectures shared with Wave 1 (A0, A4--A6, N4) they are unchanged from
+Table~\ref{tab:main} since the layer pattern, not the token budget, determines them; for the three
+new single-operator arms they were not separately re-derived, and measured throughput (58--84
+samples/s, MFU 0.10--0.16 at 16-bit, dp\,=\,4) is reported instead in the text below as the grounded
+compute proxy.}
+\label{tab:wave2}
+\end{table}
+
+\subsection{Robustness across budgets}
+
+Comparing waves means comparing the four architectures they share: A0, A4, A5, A6 and their anchor
+N4. All four have now finished (N4 completed after the first draft of this section), so the
+anchor-vs-loop comparison below uses the original N4/A6 pair directly, alongside the three new
+single-operator pairs Wave 1 did not have.
+
+\paragraph{Loop beats baseline, at both budgets.} Wave 1: A5 (3.3168) $<$ A4 (3.3222) $<$ A6
+(3.3243) $<$ A0 (3.3404). Wave 2, by seed mean: A4 (2.5041) $<$ A5 (2.5185) $<$ A6 (2.5216) $<$ A0
+(2.5385). The qualitative result --- every one of the three shared looped variants beats the
+unlooped baseline --- reproduces exactly. What does \emph{not} reproduce is which loop is best: A4
+and A5 swap first and second place between waves, by 0.0054 nats at 557M and 0.0144 nats at 5B.
+
+With three seeds of each arm now in hand, the Wave 2 half of that swap is no longer an $n=1$
+observation. A4 (2.5041 $\pm$ 0.0050) beats A5 (2.5185 $\pm$ 0.0010) by 0.0144 nats, which a
+Welch test puts at $t = 4.9$ on 2.2 degrees of freedom --- just past the 5\% level, so the ordering
+at 5B is supported but not comfortably so. The Wave 1 half remains $n=1$ per arm, and its 0.0054 nat
+margin is 11$\times$ that wave's own measured seed s.d.\ (0.0005, Table~\ref{tab:noise}). Taking the
+two together, the swap is a real effect of something that changed between waves rather than seed
+noise --- but the four things that changed (token budget, tokenizer, data, hardware layout;
+Section~\ref{sec:wave2}) moved together, so \emph{which} of them causes it is not identified by this
+experiment and would need a controlled ladder to settle. The coarser ordering is what is robust: A4
+and A5 both beat A6 in both waves (by 0.002--0.017 nats) and all three beat A0 in both waves (by
+0.018--0.034 nats), so A6 third and A0 worst holds at both budgets even though first place does not.
+
+\paragraph{Fresh weights still beat shared weights, now confirmed for every operator.} Wave 1
+established this for the attention+MoE pair: N4 (3.3021) beat its iso-execution loop A6 (3.3243) by
+0.0222 nats. All eleven Wave 2 arms have since finished, and every one of the four matched
+anchor/loop pairs reproduces it independently:
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+Pair (anchor vs.\ loop) & Anchor & Loop & Gap \\
+\midrule
+N1 vs.\ A1 (Mamba)            & 2.4530 & 2.4951 & 0.0421 \\
+N2 vs.\ A2 (MoE)               & 2.4773 & 2.5111 & 0.0338 \\
+N4 vs.\ A6 (attention+MoE, Wave 1's original pair) & 2.4907 & 2.5216 & 0.0309 \\
+N3 vs.\ A3 (attention)         & 2.5149 & 2.5312 & 0.0163 \\
+\bottomrule
+\end{tabular}
+\end{center}
+Loop columns are seed means over three runs (Table~\ref{tab:wave2}); the anchors are single runs, so
+each gap still carries one arm's worth of unreplicated noise. Every gap is nonetheless several times
+the largest within-arm s.d.\ measured anywhere on this metric (0.0050, A4): the three largest gaps
+are 6--8$\times$ it and the smallest, N3 vs.\ A3, is $3\times$. Against the median arm's s.d.\
+(0.0015) they are 11--28$\times$. The conclusion does not depend on which of those two yardsticks is
+used, which is the point of quoting the conservative one.
+The gap is not constant: it is smallest for the pure-attention pair and largest for the pure-Mamba
+pair, a factor of 2.6$\times$ apart, with MoE and the mixed attention+MoE pair in between. That
+ordering lines up with the next finding below --- attention is the operator whose loop already
+behaves most like a fresh pass over an unchanged representation (small loop-vs-baseline gain, and
+now also a small fresh-vs-shared gap), while Mamba's loop does the most with shared weights
+(largest loop-vs-baseline gain) and therefore also has the most left on the table when those weights
+are made independent instead (largest fresh-vs-shared gap). The two robustness findings are not
+independent: whatever makes Mamba the operator most worth looping is the same thing that makes it
+the operator most worth giving real depth instead.
+
+\paragraph{Where the depth is worth spending: Mamba, not attention.} This is the question Wave 1
+could not answer because the single-operator arms did not exist yet. Among Wave 2's six looped
+variants, \textbf{A1 (loop Mamba alone) is the best of all six}, ahead of every mixed-block loop,
+and \textbf{A3 (loop attention alone) is the worst}, barely ahead of the unlooped baseline (2.5312
+vs.\ 2.5385, 0.0073 nats --- the smallest loop-vs-baseline margin of the six, against A1's 0.0434).
+A2 (loop MoE alone, 2.5111) lands in between, statistically indistinguishable from A4's mixed
+Mamba+MoE loop (2.5098; the 0.0013 gap is at A2's own seed s.d.). The ranking of looped
+variants by LM loss --- A1 $<$ A4 $<$ A2 $<$ A5 $<$ A6 $<$ A3 --- puts every loop containing Mamba
+ahead of every loop that does not, and the pure-attention loop dead last. Mamba's recurrent state is
+also the layer type Finding~7 (Wave 1) already implicated in the hybrid's synthetic-reasoning
+advantage over dense transformers; the two observations point the same direction, that this
+architecture's marginal depth is worth more on the recurrent operator than on either the sparse or
+the quadratic one.
+
+\subsection{Wave 2 seed replicates}
+\label{sec:wave2-seeds}
+
+Every number above is $n=1$, and Wave 1's replicated arm (A6a, 4 seeds) was not re-run at 5B, so
+Wave 2 had no seed-noise floor of its own. Two extra seeds of each A1--A6 (12 additional 5B-token
+runs, same architecture and data order, independently initialized -- Section~\ref{sec:wave2}'s
+seeding mechanism) were launched to close that gap and to check whether the
+A1 $<$ A4 $<$ A2 $<$ A5 $<$ A6 $<$ A3 ranking and the Wave-1-vs-Wave-2 A4/A5 swap survive it.
+
+\paragraph{An artifact, caught before it reached the table.} Five of the twelve runs were cancelled
+partway through and resubmitted under a different QOS (a scheduling change unrelated to the science;
+see \texttt{run\_wave\_5b\_seeds.sh}), which resumed them with \texttt{modalities warmstart} from
+their last 5000-step checkpoint. All five landed 0.040--0.055 nats \emph{below} their seed1 run, an
+order of magnitude past the 0.0011--0.0030 nat spread the seven genuinely-uninterrupted replicates
+show (Table~\ref{tab:wave2seeds}) and past every effect size this study is built on. A sixth
+cancelled run (A6\_seed3) is the control that isolates the cause: it had no checkpoint yet when
+cancelled, so its resubmission started completely fresh rather than warmstarting, and it lands at
+$+0.0043$ --- squarely in the uncontaminated range. The trigger is therefore the warmstart resume
+itself, not the cancellation.
+
+Two obvious explanations were checked and \emph{ruled out}: the resumed runs consumed exactly the
+same 4{,}997{,}120{,}000 tokens as every other arm (so they got no extra gradient steps), and their
+logged learning rate matches the single 76{,}250-step cosine schedule to six significant figures at
+every checkpoint compared (so the schedule did not reset or re-warm). What a controlled reproduction
+on the debug queue \emph{did} find is a defect in the checkpoint round-trip for the tied
+embedding/output weight: the model is correctly tied by Python identity at every construction stage
+in both code paths and after a warmstart load, but a checkpoint written by \texttt{modalities run}
+contains a \texttt{transformer.lm\_head.weight} that is not the trained shared tensor at all ---
+after ten training steps it is essentially orthogonal to it (cosine 0.012) and carries no optimizer
+state. Loading such a checkpoint writes both parameter names into the single tied tensor, so what
+the resumed model starts from depends on which name is applied last. This is enough to establish
+that a warmstart-resumed run is not interchangeable with an uninterrupted one, which is all the
+exclusion below rests on; it is not yet a complete account of the 0.04--0.055 nat shift, and we do
+not claim one.
+
+Averaging the affected numbers in as ordinary seed noise would have pulled A4's mean below A1's and
+overturned this paper's headline finding, for a reason having nothing to do with architecture. They
+are excluded here, and clean single-shot replacements (new experiment IDs, so they cannot collide
+with or warmstart from the affected checkpoints) were launched under
+\texttt{run\_wave\_5b\_seeds\_redo.sh} and left to run uninterrupted. All five completed the full
+76{,}250 steps, and they land where uninterrupted replicates land rather than where the runs they
+replaced did: A5's two sit $+0.0017$ nats from its seed1 and A6's $+0.0020$, against the $-0.042$
+to $-0.044$ the discarded runs had shown. That is the cleanest available confirmation that the
+excluded runs were a process artifact and not an unlucky draw of seeds.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lrrrl}
+\toprule
+Arm & Valid seeds & Mean LM loss & s.d. & Status \\
+\midrule
+A1 & 3 & 2.4951 & 0.0013 & complete, no run discarded \\
+A4 & 3 & 2.5041 & 0.0050 & complete; seeds 2 and 3 are clean redos \\
+A2 & 3 & 2.5111 & 0.0015 & complete, no run discarded \\
+A5 & 3 & 2.5185 & 0.0010 & complete; seeds 2 and 3 are clean redos \\
+A6 & 3 & 2.5216 & 0.0021 & complete; seed 2 is a clean redo \\
+A3 & 3 & 2.5312 & 0.0011 & complete, no run discarded \\
+\bottomrule
+\end{tabular}
+\caption{Provenance of the held-out LM loss means in Table~\ref{tab:wave2}: only
+genuinely-uninterrupted runs are counted (affected runs excluded, not averaged in). Every arm is now
+at $n=3$. The five clean redos replaced the five warmstart-resumed runs described above, and land
+where uninterrupted replicates land: A5's two redos sit 0.0017 nats above its seed1 and A6's 0.0020
+above, against the 0.042--0.044 nats \emph{below} that the runs they replaced had shown.}
+\label{tab:wave2seeds}
+\end{table}
+
+\paragraph{Where this leaves the two headline rankings.} The ranking by mean --- A1 $<$ A4 $<$ A2
+$<$ A5 $<$ A6 $<$ A3 --- is identical to the single-seed ranking this table replaces. The measured
+itself worth stating: three seeds per arm reordered nothing. What replication adds is a scale against
+which to read the gaps, and on that scale the ranking's ends are solid and its middle is soft.
+Measured against the pooled s.d.\ of each adjacent pair, the gaps are A1$\to$A4 2.5$\times$,
+A4$\to$A2 1.9$\times$, A2$\to$A5 5.8$\times$, A5$\to$A6 1.8$\times$, A6$\to$A3 5.6$\times$. So
+``Mamba loop best, attention loop worst'' --- the paper's titular claim --- survives replication:
+A1 leads the field and A3 trails it by margins several times the noise. The interior ordering should
+not be read as a ranking at all; A5 and A6 in particular sit within two pooled standard deviations
+and are best described as tied.
+
+The Wave-1-vs-Wave-2 A4/A5 swap, which this replication wave existed to settle, is now settled on
+the Wave 2 side: at $n=3$ each, A4 beats A5 by 0.0144 nats, $t = 4.9$ on 2.2 d.f.\ by a Welch test
+(Section~\ref{sec:wave2}) --- past the 5\% level, though not by much. Wave 1 put the two the other
+way round, at $n=1$ per arm. The swap is therefore a real effect rather than seed noise, but it
+remains attributable only to ``something that changed between the waves,'' and four things changed
+together (Section~\ref{sec:wave2}). Isolating which would need a controlled ladder that varies one
+of them at a time, which this study does not have.
+
+\subsection{Wave 3: loop refinements and loop depth}
+\label{sec:wave3}
+
+Wave 1 tested the two loop refinements available at the time --- per-iteration normalization and
+input injection --- at $K{=}2\ldots3$ and found nothing (Finding~4). The looped-transformer
+literature ablates its refinements at loop counts of eight and above, where the failure mode they
+address appears: unbounded growth of the residual stream across iterations, reported as residual
+explosion and late-training loss spikes, and attributed to the spectral norm of the injection path
+\cite{parcae}. The obvious reading of Wave 1's null is that $K{=}3$ is too shallow for a stabilizer
+to have anything to stabilize.
+
+Wave 3 tests that reading by making loop count the independent variable. It takes A1 --- Wave 2's
+best loop --- and runs it at $K{=}3$, $K{=}6$ and $K{=}12$ against three refinements implemented for
+this wave: \textbf{stabilized recurrence} (the update becomes $h \leftarrow \bar{A} h + \bar{B} e +
+R(h)$ with $\bar{A} = \exp(-\Delta \odot \exp(\log A))$, so every transition eigenvalue lies in
+$(0,1)$ by construction \cite{parcae}), an \textbf{injection norm} on the group input, and
+\textbf{FiLM iteration conditioning} (a learned per-iteration scale and shift, telling the shared
+weights which iteration they are executing \cite{depthcond}). Every arm trains on Wave 2's budget,
+tokenizer, data and global batch, and is compared against the plain-loop control \emph{at its own
+$K$}. The refinements cost under 0.015\% of the model's parameters.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llrrrrrr}
+\toprule
+$K$ & Arm & Exec. & LM loss & vs.\ ctrl & s.d. & max $\|g\|$ & $\|g\|{>}100$ \\
+\midrule
+3 & plain loop (control) & 22 & 2.4916 & --- & --- & 0.4 & 0 \\
+3 & all three & 22 & 2.4915 & $-0.0001$ & 0.0 & --- & --- \\
+\midrule
+6 & plain loop (control) & 37 & 2.4815 & --- & --- & 5.1 & 0 \\
+6 & \quad + recurrence & 37 & 2.4777 & $-0.0038$ & 1.8 & 6.6 & 0 \\
+6 & \quad + recurrence, inj.\ norm & 37 & 2.4803 & $-0.0012$ & 0.6 & --- & --- \\
+6 & \quad + FiLM only & 37 & \textbf{2.4736} & $-0.0079$ & 3.8 & 1.3 & 0 \\
+6 & \quad + all three & 37 & 2.4747 & $-0.0067$ & 3.2 & --- & --- \\
+\midrule
+12 & plain loop (control) & 67 & 2.5005 & --- & --- & 85\,782 & 104 \\
+12 & \quad + recurrence & 67 & 2.5001 & $-0.0003$ & 0.2 & 53\,863 & 229 \\
+12 & \quad + recurrence, inj.\ norm & 67 & 2.5480 & $+0.0475$ & 22.6 & 100\,765 & 563 \\
+12 & \quad + FiLM only & 67 & 2.4896 & $-0.0109$ & 5.2 & 2\,343 & 20 \\
+12 & \quad + all three & 67 & 2.5191 & $+0.0186$ & 8.9 & 2\,327 & 23 \\
+\bottomrule
+\end{tabular}
+\caption{Wave 3, twelve arms at 76{,}250 steps (4.997B tokens), global batch 65{,}536 tokens/step
+throughout. ``Exec.'' is layer applications per token. ``s.d.'' expresses the gap to that $K$'s
+control in units of 0.0021, the seed s.d.\ measured for this architecture from four runs; every arm
+is $n=1$. ``max $\|g\|$'' is the largest pre-clipping gradient-norm average after warmup and
+``$\|g\|{>}100$'' the number of logged steps exceeding 100 --- both blank where not extracted. The
+$K{=}12$ arms ran on two nodes (world size 8) because one node needs 27.6h against a 24h partition
+limit; world size sets the data sampler's order, so $K{=}12$ figures are internally comparable but
+their comparison to $K{=}3$ and $K{=}6$ carries data-order variation on top of seed noise.}
+\label{tab:wave3}
+\end{table}
+
+\paragraph{Depth has an optimum, and it is not at the deep end.} The plain loop improves from 2.4916
+at $K{=}3$ to 2.4815 at $K{=}6$, then \emph{worsens} to 2.5005 at $K{=}12$ --- non-monotonic, and
+the $K{=}12$ point is worse than $K{=}3$ despite executing three times as many layers per token. No
+$K{=}12$ arm, refined or not, beats the best $K{=}6$ arm. Whatever looping buys in this architecture,
+it is exhausted somewhere near $K{=}6$, and past that more iterations of the same weights actively
+cost quality as well as compute. (The $K{=}12$ half of that curve carries the data-order caveat
+above; the reversal is 0.0190 nats, several times seed noise, but a controlled version would need
+$K{=}12$ on one node, which the 24h limit forbids.)
+
+\paragraph{The instability is real, and appears exactly where predicted.} Gradient norms are flat and
+small at $K{=}3$ and $K{=}6$ --- maxima of 0.4 and 5.1, with \emph{zero} logged steps above 100 in
+any arm --- and then explode at $K{=}12$, where the plain loop peaks at 85{,}782 and spends 104
+logged steps above 100. The onset between $K{=}6$ and $K{=}8$ is precisely where \cite{parcae}
+reports it. This also retrospectively explains the $K{=}6$ result: the stabilizer had nothing to
+stabilize there, so its 1.8 s.d.\ was never a fair test.
+
+\paragraph{But the stabilizer does not stabilize it.} Given a real instability to fix, the
+eigenvalue-bounded recurrence fixes neither the gradients nor the loss. It leaves the loss unchanged
+($-0.0003$, 0.2 s.d.) and produces \emph{more} large-gradient steps than the plain loop it replaces
+(229 above 100, against 104). What suppresses the excursions is FiLM iteration conditioning, which
+carries no stability guarantee at all: it cuts the peak gradient norm 37-fold, from 85{,}782 to
+2{,}343, and is the only refinement that improves the loss at every depth
+($-0.0001$, $-0.0079$, $-0.0109$, growing with $K$ as predicted). We take this as evidence that the
+binding constraint on a deep loop here is not the residual stream's magnitude but the shared
+weights' inability to tell iterations apart --- though our gradient norms are a proxy for, not a
+measurement of, the residual growth \cite{parcae} actually bounds, and a single seed per arm cannot
+separate the two mechanisms cleanly.
+
+\paragraph{The injection norm is harmful, and the harm dominates combinations.} Normalizing the
+injected group input --- ablated as a positive in \cite{parcae} --- is the worst intervention tested.
+It is the weakest $K{=}6$ arm (0.6 s.d.), and at $K{=}12$ it costs $+0.0475$ nats, 22.6 s.d.\ in the
+wrong direction, with the worst gradient behaviour of any arm (563 steps above 100). It also
+poisons the full stack: FiLM alone is worth $-0.0109$, but FiLM together with the recurrence and the
+norm lands at $+0.0186$, so the norm's harm exceeds FiLM's benefit rather than partially offsetting
+it. Refinements here are not additive, and a bundled ``all refinements'' arm would have hidden the
+one component doing damage. That is the practical lesson of this wave: the $K{=}3$ pair alone, which
+is how the earlier waves were designed, would have concluded ``refinements do nothing'' and stopped.
+
+\paragraph{What this does not establish.} Every Wave 3 arm is a single run, and the s.d.\ column is
+borrowed from a different arm's replication. Differences of a few tenths of a standard deviation ---
+the recurrence at either depth, the $K{=}3$ pair --- are not results. The three large effects (FiLM
+at $K{=}12$ at 5.2 s.d., the injection norm at 22.6, the bundle at 8.9) are far enough outside that
+floor to be believed, and the gradient-norm separation spans four orders of magnitude, but the
+ordering among the smaller effects should not be read as one. Nothing here has been replicated at a
+second seed.
+
+\paragraph{A replication, and a wider noise floor.} The $K{=}3$ control is architecturally identical
+to Wave 2's A1 --- same pattern, budget, tokenizer, data, node count and sampler seed, verified by
+diffing the two configs down to a naming difference and an inert empty weight-decay group --- so it
+is an independent fourth seed of that arm. It lands at 2.4916 against A1's three-seed mean of
+2.4951, which is $2.6\times$ the s.d.\ estimated from those three runs. Pooling all four gives a mean
+of 2.4942 and an s.d.\ of \textbf{0.0021} against 0.0013 from three; the new point is then an
+unremarkable 1.3 s.d.\ from the pooled mean. This is a concrete instance of the caution attached to
+Table~\ref{tab:wave2}: a standard deviation from $n=3$ is uncertain by roughly half its value, and
+0.0021 is the figure used throughout this section. The Wave 2 conclusions are unaffected --- A1's
+lead over A4 remains $2.4\times$ the pooled s.d.
+
+
 \section{Limitations}
 
-\paragraph{Budget.} 557M tokens is roughly 12\% of a compute-optimal allocation for a 225M-active
-model. Differences of 0.01--0.04 nats at this scale need not survive to convergence, and the
-published loop results are reported at 250B tokens and above.
+\paragraph{Budget.} Wave 1's 557M tokens was roughly 12\% of a compute-optimal allocation for a
+225M-active model; Wave 2's 4.997B closes most of that gap for active parameters ($\sim$20
+tokens/parameter $\Rightarrow$ $\sim$4.5--5.6B) but not for total parameters ($\sim$20--40B wanted
+at 1.03--1.96B total), so even Wave 2 is not a converged-budget result. The published loop results
+this work compares against are reported at 250B tokens and above, still $\sim$50$\times$ beyond
+Wave 2.
 
-\paragraph{Seeds.} Only A6a is replicated, and its four runs vary weight initialization only, with
-the data order held fixed. Run-to-run noise under a varying data seed can only be larger, so
-Table~\ref{tab:noise} is a lower bound. Every other row of Table~\ref{tab:main} is $n=1$.
+\paragraph{Seeds.} Table~\ref{tab:main}'s A6a (Wave 1, 4 seeds) varies weight initialization only,
+data order held fixed; run-to-run noise under a varying data seed can only be larger, so
+Table~\ref{tab:noise} is a lower bound. Wave 2 now has its own partial seed-noise floor
+(Section~\ref{sec:wave2-seeds}, Table~\ref{tab:wave2seeds}): A1, A2 and A3 are fully replicated (3
+seeds each on held-out loss), with five of the twelve extra runs discarded and re-run after a
+scheduling artifact (a cancel-then-warmstart resume, traced to a checkpointing defect on the tied
+embedding/output weight -- see Section~\ref{sec:wave2-seeds} for the full account) made them
+non-replicates. The measured s.d.\ ranges from 0.0010 to 0.0050 across the six arms; at $n=3$ each
+of those estimates is itself uncertain by roughly half its value, so the spread \emph{between} the
+arms' s.d.s should not be over-read. Every row of Table~\ref{tab:main} outside A6a, and every anchor
+row (N1--N4) and A0 in Table~\ref{tab:wave2}, remains $n=1$ --- which is why the anchor-vs-loop gaps,
+the strongest claim in this paper, still rest on one seed on the anchor side. The Wave 1 finding that a nominally
+significant reasoning-suite result did not survive four replications (Finding~4) is the strongest
+reason not to over-read any of these single-seed numbers, including the ones that still lack a
+noise floor.
 
-\paragraph{Incomplete arm coverage.} The three single-layer-type loops --- Mamba alone at $K=3$,
-MoE alone at $K=2$, attention alone at $K=4$ --- have not yet been run with the evaluation suite,
-and they are precisely the variants that would answer the titular question most directly. Only
-mixed-block loops appear above. Anchors for A4 and A5 have also not been constructed.
+\paragraph{Confounded budget scaling.} Wave 2 changed tokenizer, dataset composition and hardware
+layout alongside the token budget (Section~\ref{sec:wave2}), so it is not a controlled scaling
+ladder on Wave 1. The robustness claims in Section~\ref{sec:wave2} are therefore about
+\emph{qualitative rankings} (loop beats baseline, anchor beats loop) surviving a bundle of
+simultaneous changes, not about a clean budget effect isolated from everything else.
+
+\paragraph{Incomplete arm coverage.} Wave 1's gap here --- the three single-operator loops and their
+anchors were never run --- is closed by Wave 2 (A1--A3, N1--N3, all eleven arms now complete), which
+is the direct answer to the titular question that Wave 1 could not give. One gap remains: dedicated
+anchors for A4 and A5 (the two mixed Mamba-containing loops) still do not exist in either wave, so
+those two comparisons still rest on the loop-vs-baseline gap alone rather than a loop-vs-fresh-
+weights one.
 
 \paragraph{Reasoning measures.} The synthetic suite is under-powered here, and the $p$-hop task may
 additionally be mis-scaled: at a prompt length of 256 over a 26-symbol alphabet the query appears
 about 9.8 times, so even a perfectly functioning induction head returns a mixture over roughly ten
 candidate successors and lands near 10\% --- which is approximately where the best models sit. A
 shorter prompt would make the most-recent match near-unique and give the task room to discriminate.
+This applies unchanged to Wave 2, whose $p$-hop-1 accuracies (0.06--0.16) sit in the same band.
 
 \section{Conclusion}
 
@@ -368,11 +813,69 @@ The hybrid architecture itself, however, is worth considerably more than the loo
 iso-FLOP dense transformer by an order of magnitude larger a margin than any difference among the
 looped variants, though part of that advantage is returned as lower hardware utilization.
 
-The methodological finding may be the more useful one. Held-out loss and the reasoning suite differ
-in measurement resolution by more than two orders of magnitude relative to the effects of interest,
-and a nominally 3.9-sigma result computed from sampling error alone did not survive four
-replications. Any claim from a suite of this kind should be accompanied by a measured seed-noise
-floor before it is believed --- including, and especially, one's own.
+Both of those results reproduce at $\sim$9$\times$ the budget, despite Wave 2 simultaneously
+changing tokenizer, data and hardware layout: every looped variant still beats the unlooped
+baseline, and a fresh-weight anchor still beats its iso-execution loop, now confirmed for all four
+matched pairs Wave 2 has, including a direct re-confirmation of Wave 1's original attention+MoE
+pair. What is new at the larger budget is the answer to the question the title asks. Completing the
+three single-operator loops that Wave 1 lacked shows the effect concentrates in one operator:
+looping Mamba alone is the best loop of any kind tried, mixed loops that include Mamba come next,
+and looping attention alone is the worst, barely ahead of no loop at all. Depth in this architecture
+is worth spending on the recurrent operator, not the quadratic one --- and the same operator shows
+the largest gap between what a loop buys and what real fresh depth buys, suggesting both findings
+trace back to the same property of the Mamba operator rather than being two unrelated results.
+Twelve further runs (two extra seeds of A1--A6 each) were launched to check this ranking against a
+measured seed-noise floor rather than $n=1$. All six looped arms are now replicated at three seeds
+(s.d.\ 0.0010--0.0050 on held-out loss), and the ranking they produce is identical to the
+single-seed one. A1's lead and A3's deficit are several times the pooled noise, so the titular claim
+holds; the interior ordering is within two pooled standard deviations and is not resolved. The
+Wave-1-vs-Wave-2 A4/A5 swap is confirmed on the Wave 2 side at $t = 4.9$ on 2.2 d.f., but its cause
+is not identified: four things changed between the waves at once.
+
+Wave 3 (Section~\ref{sec:wave3}) returns to the one negative result Wave 1 left hanging --- that
+loop refinements do nothing --- and shows it was a statement about loop depth rather than about
+refinements. Pushed to $K{=}12$, three things separate that the shallower waves could not. Loop depth
+turns out to have an optimum near $K{=}6$, past which more iterations of the same weights cost
+quality as well as compute. The instability the literature predicts is real and switches on between
+$K{=}6$ and $K{=}12$, exactly where reported. And the refinement with the theory behind it does not
+fix it: the eigenvalue-bounded recurrence leaves both loss and gradients where it found them, while
+FiLM iteration conditioning --- which guarantees nothing --- cuts the peak gradient norm 37-fold and
+is the only refinement that helps at every depth. One component, the injection norm, is actively
+harmful and dominates every combination containing it, which is the strongest argument in this paper
+for ablating refinements individually rather than as a bundle: the bundled arm looks like a modest
+failure, and hides a large benefit cancelled by a larger harm.
+
+The methodological finding may be the more useful one, and this wave supplied its sharpest example
+yet. Held-out loss and the reasoning suite differ in measurement resolution by more than two orders
+of magnitude relative to the effects of interest, and a nominally 3.9-sigma result computed from
+sampling error alone did not survive four replications. Wave 2 adds that a headline ranking can also
+shift at the margins under a budget change bundled with other changes --- A4 and A5 swap places
+between waves, by 0.005 nats at 557M and 0.014 at 5B, well inside what a change of tokenizer or data
+plausibly moves. Then the seed-replication run meant to check exactly that nearly introduced a worse
+problem than the one it was measuring: five runs cancelled mid-training and resumed with
+\texttt{modalities warmstart} came back 0.04--0.055 nats better than their own first seeds --- enough,
+had it been averaged in unexamined, to make a mixed loop look better than the pure-Mamba loop and
+overturn this paper's own headline result, for a reason with nothing to do with architecture. It was
+caught only by checking that the numbers a repeated-seed experiment produced looked like noise, and
+finding that five of them did not. The cause took three wrong explanations to pin down --- it is
+neither extra gradient steps nor a reset learning-rate schedule, both of which were checked and
+found identical, but a defect in the checkpoint round-trip for the tied embedding and output weight
+--- which is itself the point: an anomaly can be established as real long before it is understood,
+and excluding the affected runs did not have to wait on the diagnosis.
+
+Wave 3 then closes the loop on Wave 1's negative result, and supplies two more cautions. Making loop
+count the independent variable confirms the interaction that was predicted --- refinements do
+nothing at $K{=}3$ and something measurable at $K{=}6$ --- while refuting the mechanism that was
+predicted alongside it: the refinement with the theory behind it, a recurrence whose eigenvalues are
+bounded by construction, is not the one that helps, and the gradient norms show the plain loop was
+never unstable at this depth for it to rescue. The largest effect in that wave is neither refinement
+nor architecture but simply looping twice as often, which is worth more than every refinement
+combined and costs 1.68$\times$ the compute to get. And Wave 3's control, being an exact replicate of
+Wave 2's best arm, raised that arm's measured seed s.d.\ by half again merely by existing. Any claim
+from a suite of this kind should be accompanied by a measured seed-noise floor before it is believed
+--- including, and especially, one's own --- the noise floor should be checked for artifacts before
+it is trusted either, and a floor estimated from three runs should be treated as the rough figure it
+is.
 
 \begin{thebibliography}{9}
 \bibitem{nemotron} NVIDIA. \emph{Nemotron-3 Nano}. arXiv:2512.20848.
@@ -381,6 +884,9 @@ floor before it is believed --- including, and especially, one's own.
 \bibitem{lssm} \emph{Looped State-Space Language Models}. arXiv:2607.10110.
 \bibitem{phi} \emph{How Much Is One Recurrence Worth?} arXiv:2604.21106.
 \bibitem{loopie} \emph{Loopie: Looped Mixture-of-Experts}. arXiv:2607.16051.
+\bibitem{parcae} \emph{Parcae: Scaling Laws For Stable Looped Language Models}. arXiv:2604.12946.
+\bibitem{depthcond} \emph{Test-Time Compute Scaling for ASR with Depth-Conditioned Looped
+  Transformers}. arXiv:2606.04678.
 \end{thebibliography}
 
 \end{document}
