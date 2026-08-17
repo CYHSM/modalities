@@ -5,7 +5,11 @@ data/checkpoints
 # Tokenized copies of MATH and TriviaQA, rebuilt deterministically by
 # config_files/nemotron/loop_ablation/prepare_text_evals.py. Generated artifacts, and third-party
 # benchmark data that this repository should not redistribute.
-data/prepared_evals
+data/prepared_evals*
+# LaTeX build intermediates. The compiled .pdf is kept as the readable output; these are not.
+docs/**/*.aux
+docs/**/*.out
+docs/**/*.log
 logs/
 .DS_Store
 *.whl
