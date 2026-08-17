@@ -34,6 +34,11 @@ from modalities.models.model import NNModel
 from modalities.models.nemotron.layer_pattern import LayerSymbol, LoopGroup, parse_layer_schedule
 from modalities.models.nemotron.nemotron_layer_specs import NemotronLayerSpecIF
 from modalities.models.nemotron.nemotron_layers import PerIterationNorm
+from modalities.models.nemotron.nemotron_loop import (
+    INJECTION_MODES,
+    ITERATION_EMBEDDINGS,
+    LoopIterationConditioning,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +47,18 @@ class LoopConfig(BaseModel):
     """
     Configuration of how a loop group's iterations are combined.
 
-    All three loop refinements default to off, so a config that does not mention them describes
-    exactly the model it described before they existed.
+    Every loop refinement defaults to off, so a config that does not mention them describes exactly
+    the model it described before they existed -- same modules, same parameter names, same count.
+
+    Two further refinements once lived here and were removed after the K in {3, 6, 12} ablation
+    measured them as useless and harmful respectively: a stabilized recurrence (``variant="parcae"``)
+    and an injection normalization (``injection_norm_config``). See
+    :mod:`~modalities.models.nemotron.nemotron_loop` for the numbers. Their keys remain declared but
+    accept only their inert value, so the many configs written before the removal keep building while
+    a config actually *requesting* a removed refinement fails loudly instead of quietly training a
+    plain loop under a refined arm's name.
 
     Attributes:
-        variant (str): The loop execution strategy. ``"simple"`` applies the group's layers
-            repeatedly, feeding each iteration's output into the next. Further variants (e.g. a
-            router-weighted sum over iterations) plug into
-            :meth:`NemotronLLM._run_loop_group` without changing the config schema.
         per_iteration_norm (bool): Whether each iteration of a loop group gets its own
             pre-normalization instead of reusing the layer's single norm. Only the norm parameters
             are per-iteration; the operator stays shared. Adds ``n_embd`` parameters per extra
@@ -60,38 +69,89 @@ class LoopConfig(BaseModel):
             residual step away from what the group was given.
         injection_mode (str): How the group's input is combined with the hidden states. Only
             ``"add"`` is implemented; see :meth:`NemotronLLM._run_loop_group`.
+        iteration_embedding (str): How the current iteration index is made visible to the shared
+            weights, one of
+            :data:`~modalities.models.nemotron.nemotron_loop.ITERATION_EMBEDDINGS`. ``"add"`` learns
+            a per-iteration shift, ``"film"`` a per-iteration scale and shift. Adds ``K * n_embd``
+            (or twice that) parameters per looped group.
     """
 
-    variant: str = "simple"
     per_iteration_norm: bool = False
     input_injection: bool = False
     injection_mode: str = "add"
+    iteration_embedding: str = "none"
 
-    # Permit unknown keys so that a future variant's hyperparameters can be configured without a
-    # schema change; the executing variant is responsible for reading them.
+    # Removed refinements, still DECLARED rather than deleted. Every loop config written before the
+    # removal carries `variant: simple`, and the refinement wave's controls carry an explicit
+    # `injection_norm_config: null`; both describe exactly the plain loop. They have to be declared
+    # because ComponentFactory validates each component config with `extra="forbid"`, which overrides
+    # this model's `extra="allow"` -- so an *undeclared* key here is a hard build failure, not an
+    # ignored extra, and deleting these outright makes every historical arm config unloadable.
+    # `_validate` below rejects any value other than the inert one.
+    variant: str = "simple"
+    injection_norm_config: Optional[dict] = None
+
+    # Permit unknown keys so that a future refinement's hyperparameters can be configured without a
+    # schema change; the code implementing it is responsible for reading them.
     model_config = ConfigDict(extra="allow")
 
     @model_validator(mode="after")
     def _validate(self) -> "LoopConfig":
         if self.injection_mode not in _INJECTION_MODES:
             raise ValueError(f"Unknown injection_mode '{self.injection_mode}'. Available: {sorted(_INJECTION_MODES)}.")
+        if self.iteration_embedding not in ITERATION_EMBEDDINGS:
+            raise ValueError(
+                f"Unknown iteration_embedding '{self.iteration_embedding}'. "
+                f"Available: {sorted(ITERATION_EMBEDDINGS)}."
+            )
+        # Accepting the key but ignoring its value would let a refinement-wave config train a plain
+        # loop while still reporting itself as a refined arm.
+        requested = sorted(
+            key for key, inert in _REMOVED_REFINEMENTS.items() if getattr(self, key, inert) != inert
+        )
+        if requested:
+            raise ValueError(
+                f"loop_config key(s) {requested} request loop refinements that were removed after "
+                "the K in {3, 6, 12} ablation measured them as ineffective and harmful respectively "
+                "(see the nemotron_loop module docstring). iteration_embedding='film' is the "
+                "refinement that survived."
+            )
         return self
+
+    @property
+    def needs_group_modulation(self) -> bool:
+        """
+        Whether a per-group :class:`LoopIterationConditioning` needs to be built.
+
+        ``per_iteration_norm`` is deliberately absent: it is realized inside the layers themselves,
+        not per group. So is ``input_injection``, which needs no parameters of its own.
+
+        Returns:
+            bool: True if iteration conditioning is enabled.
+        """
+        return self.iteration_embedding != "none"
 
 
 # Matrix dimensions should be multiples of this for efficient tensor-core utilization, see
 # https://docs.nvidia.com/deeplearning/performance/dl-performance-matrix-multiplication/
 _TENSOR_CORE_ALIGNMENT = 128
 
-# Loop execution strategies understood by NemotronLLM._run_loop_group.
-_LOOP_VARIANTS = frozenset({"simple"})
+# Injection modes and iteration-conditioning modes are defined next to the module that implements
+# them; re-exported here under the name this file already used.
+#
+# A "concat_proj" injection mode (concatenate and project back to n_embd) is deliberately still
+# absent: it would add ~2 * n_embd^2 parameters per looped group, breaking the iso-parameter
+# comparison that the whole ablation rests on. The per-group parameters that *do* exist
+# (LoopIterationConditioning) are per-channel tables, which is why they do not.
+_INJECTION_MODES = INJECTION_MODES
 
-# How input injection combines the group's input with the hidden states. A "concat_proj" mode
-# (concatenate and project back to n_embd) is deliberately absent: its projection is a property of
-# the *group* rather than of any one layer, so it would have to live outside `transformer.h` and
-# would need entries of its own in the weight-decay groups and the initialization filters -- and it
-# would add ~2 * n_embd^2 parameters per looped group, breaking the iso-parameter comparison that
-# the whole ablation rests on. Add it only if an arm justifies the cost.
-_INJECTION_MODES = frozenset({"add"})
+# Removed loop refinements, mapped to the only value of each key that is still a faithful
+# description of what the model does. `variant: simple` and an absent injection norm are exactly the
+# plain loop, so every config predating the refinements -- and every arm of the ablation that did not
+# use them -- keeps loading unchanged; anything requesting the removed behaviour is rejected below
+# rather than swallowed by `extra="allow"`. `dt_min`/`dt_max` only ever tuned the recurrence, so they
+# are inert here and are accepted at any value.
+_REMOVED_REFINEMENTS = {"variant": "simple", "injection_norm_config": None}
 
 
 class NemotronLLMConfig(BaseModel):
@@ -232,6 +292,14 @@ class NemotronLLM(NNModel):
             # is not merely undecayed, it is dropped from the optimizer entirely.
             "layernorm": [r"\.norm\.", r"\.norms\.", r"\.lm_head_norm\."],
             "ssm": [r"\.A_log", r"\.D$", r"\.dt_bias", r"\.conv1d_weight", r"\.conv1d_bias"],
+            # Per-loop-group iteration-conditioning tables (LoopIterationConditioning). Matched by
+            # exact parameter name rather than by the `.loop_mods.` prefix so that adding a
+            # differently-shaped parameter to that module later cannot land here by accident. A
+            # parameter matching two groups is appended to both optimizer groups and makes the
+            # optimizer raise; one matching no group is dropped from the optimizer silently.
+            # Like `ssm` and `layernorm`, this group belongs in `weight_decay_groups_excluded`:
+            # every parameter in it is a per-channel scale or shift, not a weight matrix.
+            "loop": [r"\.loop_mods\.\d+\.(iter_scale|iter_shift)$"],
         }
         super().__init__(weight_decay_groups=weight_decay_groups)
 
@@ -254,8 +322,6 @@ class NemotronLLM(NNModel):
                 f"n_layer ({n_layer}) does not match the number of layers built by layer_pattern "
                 f"('{layer_pattern}' builds {len(layer_symbols)} layers)."
             )
-        if self.loop_config.variant not in _LOOP_VARIANTS:
-            raise ValueError(f"Unknown loop variant '{self.loop_config.variant}'. Available: {sorted(_LOOP_VARIANTS)}.")
         specs_by_symbol = {LayerSymbol(symbol): spec for symbol, spec in layer_specs.items()}
         missing = sorted({symbol.value for symbol in layer_symbols} - {s.value for s in specs_by_symbol})
         if missing:
@@ -285,6 +351,26 @@ class NemotronLLM(NNModel):
                 lm_head=nn.Linear(in_features=n_embd, out_features=vocab_size, bias=False),
             )
         )
+
+        # Per-group conditioning tables, keyed by the group's index in the schedule. Built only for
+        # groups that actually loop and only when conditioning is on, so a model with the defaults
+        # has no `loop_mods` submodule at all and its state dict is byte-for-byte the shape it was
+        # before this existed. Lives beside `h` rather than inside it because these parameters
+        # belong to a *group* of layers, and `transformer.h` is keyed by single layer. The attribute
+        # is still `loop_mods` (rather than something matching the class name) because it is part of
+        # every conditioned checkpoint's parameter names, including the FiLM arms of the ablation.
+        if self.loop_config.needs_group_modulation:
+            self.transformer["loop_mods"] = nn.ModuleDict(
+                {
+                    str(group_idx): LoopIterationConditioning(
+                        n_embd=n_embd,
+                        num_loops=group.num_loops,
+                        iteration_embedding=self.loop_config.iteration_embedding,
+                    )
+                    for group_idx, group in enumerate(self._schedule)
+                    if group.num_loops > 1
+                }
+            )
 
         if use_weight_tying:
             self.transformer.wte.weight = self.transformer.lm_head.weight
@@ -320,6 +406,27 @@ class NemotronLLM(NNModel):
             if isinstance(module, PerIterationNorm):
                 extra += sum(parameter.numel() for norm in module.norms[1:] for parameter in norm.parameters())
         return extra
+
+    @property
+    def num_loop_refinement_parameters(self) -> int:
+        """
+        The parameters that exist only because a per-group loop refinement is enabled.
+
+        Counts the iteration-conditioning tables held by the :class:`LoopIterationConditioning`
+        modules. They are per-channel, so this is kilobytes against a billion-parameter model, but
+        an arm using them is not *exactly* iso-parameter with the baseline and this is the figure to
+        report alongside its results (as :attr:`num_per_iteration_norm_parameters` is for the
+        per-layer refinement).
+
+        Returns:
+            int: The number of extra parameters, zero when conditioning is off.
+        """
+        return sum(
+            parameter.numel()
+            for module in self.modules()
+            if isinstance(module, LoopIterationConditioning)
+            for parameter in module.parameters()
+        )
 
     def get_execution_counts(self) -> dict[str, int]:
         """
@@ -424,44 +531,76 @@ class NemotronLLM(NNModel):
                 predictions[self.aux_loss_key] = aux_loss
         return predictions
 
-    def _run_loop_group(self, group: LoopGroup, h: torch.Tensor) -> torch.Tensor:
+    def _run_loop_group(self, group: LoopGroup, group_idx: int, h: torch.Tensor) -> torch.Tensor:
         """
         Executes one group of the schedule, applying its layers ``group.num_loops`` times.
 
-        This is the single place where loop semantics live. Alternative strategies (for instance
-        weighting the iterations by a router and returning their weighted sum instead of only the
-        last one) are added here, selected by ``loop_config.variant``.
+        This is the single place where loop semantics live. All refinements are off by default, and
+        each is an exact no-op on a group that does not loop, so enabling any of them leaves a
+        non-looped arm bit-identical.
 
-        Two optional refinements, both off by default:
+        Per-layer refinement:
 
         * ``per_iteration_norm`` passes the iteration index into the layer, which then applies that
           iteration's own pre-normalization. The layers were built with the matching number of
           norms; nothing here needs to know how many.
+
+        Per-group refinements:
+
+        * ``iteration_embedding`` conditions the hidden states on the iteration index before each
+          pass, so the shared weights can tell which iteration they are executing. Carried by this
+          group's :class:`LoopIterationConditioning`.
         * ``input_injection`` adds the group's input back to the hidden states at the start of
           every iteration after the first, so every iteration operates one residual step away from
           what the group was handed rather than drifting further from it with each pass. Injecting
           *before* an iteration rather than after one is what makes this an exact no-op for
-          non-looped groups, which is required for the flag to leave the existing arms alone.
+          non-looped groups.
 
         Under pipeline parallelism a stage holds only some layers, so keys absent from this stage's
         ``transformer.h`` are skipped.
 
         Args:
             group (LoopGroup): The group to execute.
+            group_idx (int): Index of the group in the schedule, which keys its conditioning.
             h (torch.Tensor): Hidden states of shape ``(B, L, n_embd)``.
 
         Returns:
             torch.Tensor: Hidden states of shape ``(B, L, n_embd)``.
         """
-        group_input = h
+        # A single path rather than a refined one beside a fast one: every refinement below is a
+        # no-op when disabled, so the disabled case executes exactly the operations it did before
+        # they existed, and there is no second copy of the loop to drift out of sync.
+        conditioning = self._iteration_conditioning(group_idx)
+        injected = h
         for iteration in range(group.num_loops):
+            if conditioning is not None:
+                h = conditioning.condition(h, iteration)
             if self.loop_config.input_injection and iteration > 0:
-                h = h + group_input
+                h = h + injected
             for layer_key in group.layer_keys:
                 if layer_key in self.transformer.h:
                     layer = self.transformer.h[layer_key]
                     h = layer(h, iteration) if self.loop_config.per_iteration_norm else layer(h)
         return h
+
+    def _iteration_conditioning(self, group_idx: int) -> Optional[LoopIterationConditioning]:
+        """
+        Returns the per-group iteration-conditioning module for a group, if it has one.
+
+        Absent for non-looped groups, for every group when conditioning is off, and on a pipeline
+        stage that does not hold this group.
+
+        Args:
+            group_idx (int): Index of the group in the schedule.
+
+        Returns:
+            LoopIterationConditioning | None: The module, or None.
+        """
+        if "loop_mods" not in self.transformer:
+            return None
+        # nn.ModuleDict has no .get(); membership then index is the only safe access.
+        key = str(group_idx)
+        return self.transformer.loop_mods[key] if key in self.transformer.loop_mods else None
 
     def forward_impl(self, inputs: torch.Tensor) -> torch.Tensor:
         """
@@ -493,8 +632,8 @@ class NemotronLLM(NNModel):
 
         h = self.transformer.wte(inputs) if hasattr(self.transformer, "wte") else inputs
 
-        for group in self._schedule:
-            h = self._run_loop_group(group, h)
+        for group_idx, group in enumerate(self._schedule):
+            h = self._run_loop_group(group, group_idx, h)
 
         h = self.transformer.lm_head_norm(h) if hasattr(self.transformer, "lm_head_norm") else h
         if self._skip_lm_head:

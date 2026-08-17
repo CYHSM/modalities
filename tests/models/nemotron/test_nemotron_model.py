@@ -264,8 +264,17 @@ def test_weight_decay_groups_partition_all_parameters():
         assigned.setdefault(matches[0], []).append(name)
 
     # Every declared group must be non-empty for this pattern, otherwise the optimizer factory
-    # would raise when the group is excluded from weight decay.
+    # would raise when the group is excluded from weight decay. "loop" is the one exception: its
+    # parameters exist only when a per-group loop refinement is enabled, and the default model this
+    # test builds enables none. An empty group is harmless there -- it contributes an empty list to
+    # whichever of the two optimizer groups it belongs to, and the factory only raises if a whole
+    # optimizer group comes out empty. That it is populated when a refinement *is* on is pinned by
+    # test_layer_loops.py::test_every_refinement_parameter_lands_in_exactly_one_weight_decay_group.
+    conditional_groups = {"loop"}
     for group in groups:
+        if group in conditional_groups:
+            assert not assigned.get(group), f"weight decay group '{group}' should be empty without refinements"
+            continue
         assert assigned.get(group), f"weight decay group '{group}' is empty"
 
 

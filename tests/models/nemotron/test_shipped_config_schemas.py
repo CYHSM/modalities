@@ -37,6 +37,15 @@ SHIPPED_CONFIGS = [
     # regression in the gpt2 component keys -- the latter having already cost one failed launch
     # (GPT2MFUCalculatorConfig accepts only the alias `wrapped_model`, never `model_parts`).
     REPO_ROOT / "config_files" / "nemotron" / "loop_ablation" / "config_D1_dense_flops_matched.yaml",
+    # The loop-refinement wave. Two arms: the one that switches on iteration conditioning (so a
+    # rename of a loop_config key fails here rather than at launch) and its control (so the
+    # generator's rewrite of the whole loop_config block is checked in both the "all keys present"
+    # and the "minimal keys" shape). The wave's other arms are deliberately absent: they configure
+    # the stabilized recurrence and injection norm, which were removed after the ablation, and
+    # LoopConfig now rejects them by design. They are kept, unrunnable, under
+    # loop_refinements/removed_refinements/ as the provenance of the published numbers.
+    REPO_ROOT / "config_files" / "nemotron" / "loop_refinements" / "config_R_k6_film.yaml",
+    REPO_ROOT / "config_files" / "nemotron" / "loop_refinements" / "config_R_k6_simple.yaml",
     REPO_ROOT / "tests" / "test_yaml_configs" / "nemotron_config_initialization.yaml",
     REPO_ROOT / "tests" / "fsdp2_parallelization" / "nemotron_fsdp2_config.yaml",
 ]

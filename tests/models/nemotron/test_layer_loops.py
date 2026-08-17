@@ -31,6 +31,7 @@ from modalities.models.nemotron.nemotron_layer_specs import (
     NemotronMoELayerSpec,
 )
 from modalities.models.nemotron.nemotron_layers import PerIterationNorm
+from modalities.models.nemotron.nemotron_loop import LoopIterationConditioning
 from modalities.models.nemotron.nemotron_model import LoopConfig, NemotronLLM
 from modalities.training.activation_checkpointing.activation_checkpointing import (
     ActivationCheckpointing,
@@ -240,8 +241,8 @@ def test_forward_and_backward_pass_through_every_loop_iteration():
     assert parameters_without_gradient == []
 
 
-def test_unknown_loop_variant_is_rejected():
-    with pytest.raises(ValueError, match="Unknown loop variant"):
+def test_unknown_injection_mode_is_rejected():
+    with pytest.raises(ValueError, match="Unknown injection_mode"):
         NemotronLLM(
             sample_key="input_ids",
             prediction_key="logits",
@@ -252,7 +253,7 @@ def test_unknown_loop_variant_is_rejected():
             layer_pattern="ME",
             layer_specs=_layer_specs(),
             lm_head_norm_config=NormWrapperConfig.model_validate(NORM_CONFIG),
-            loop_config=LoopConfig(variant="router_weighted"),
+            loop_config=LoopConfig(injection_mode="concat_proj"),
         )
 
 
@@ -495,3 +496,223 @@ def test_every_parameter_lands_in_exactly_one_weight_decay_group(per_iteration_n
         assert len(matched) == 1, f"{name} matched {matched}"
         if ".norm" in name or "lm_head_norm" in name:
             assert matched == ["layernorm"], name
+
+
+# --------------------------------------------------------------------------------------------
+# Per-group iteration conditioning
+#
+# This attaches to a loop *group* rather than to a layer, and lives in LoopIterationConditioning.
+# It is checked against a hand-computed reference for the same reason the per-layer refinements
+# are: conditioning read from the wrong iteration still trains and still converges -- it just
+# answers a different question than the arm claims to.
+#
+# Two sibling refinements (a stabilized recurrence, `variant="parcae"`, and an injection norm,
+# `injection_norm_config`) were removed after the K in {3, 6, 12} ablation. Their tests went with
+# them; what remains is the assertion that a config still asking for them fails loudly.
+# --------------------------------------------------------------------------------------------
+
+
+def test_iteration_conditioning_is_off_by_default():
+    loop_config = LoopConfig()
+    assert loop_config.iteration_embedding == "none"
+    assert not loop_config.needs_group_modulation
+
+
+@pytest.mark.parametrize("pattern", ["MEM*E", "M[ME]^3*E"])
+def test_defaults_build_no_group_modulation_at_all(pattern):
+    # Conditioning may not be a silent rename either: a model with the defaults must have the same
+    # module tree and the same state dict keys it had before LoopIterationConditioning existed.
+    model = _build_model(pattern, loop_config=LoopConfig())
+    assert "loop_mods" not in model.transformer
+    assert all(not isinstance(module, LoopIterationConditioning) for module in model.modules())
+    assert model.num_loop_refinement_parameters == 0
+
+
+def test_input_injection_alone_builds_no_group_modulation():
+    # input_injection needs no parameters of its own, so it must not drag an (empty) module into
+    # the state dict -- an arm using it stays byte-for-byte comparable with the plain loop.
+    model = _build_model("M[ME]^3*E", loop_config=LoopConfig(input_injection=True))
+    assert "loop_mods" not in model.transformer
+    assert model.num_loop_refinement_parameters == 0
+
+
+@pytest.mark.parametrize("iteration_embedding", ["add", "film"])
+def test_group_modulation_is_built_only_for_groups_that_loop(iteration_embedding):
+    # "M[ME]^3*E" has groups (M), (M E)x3, (*), (E): exactly one loops, and only it needs a module.
+    model = _build_model("M[ME]^3*E", loop_config=LoopConfig(iteration_embedding=iteration_embedding))
+    assert sorted(model.transformer.loop_mods.keys()) == ["1"]
+
+
+def test_group_modulation_is_absent_when_nothing_loops():
+    model = _build_model("MEM*E", loop_config=LoopConfig(iteration_embedding="film"))
+    assert len(model.transformer.loop_mods) == 0
+    assert model.num_loop_refinement_parameters == 0
+
+
+@pytest.mark.parametrize("iteration_embedding", ["add", "film"])
+def test_iteration_conditioning_is_an_exact_no_op_at_initialization(iteration_embedding):
+    # Zero-initialized tables mean enabling conditioning cannot move the loss at step 0, only the
+    # trajectory -- so a conditioning arm and its control start from the same place.
+    plain = _build_model("[ME]^3*E", seed=7)
+    conditioned = _build_model("[ME]^3*E", seed=7, loop_config=LoopConfig(iteration_embedding=iteration_embedding))
+    inputs = torch.randint(0, VOCAB_SIZE, (2, SEQUENCE_LENGTH))
+
+    torch.testing.assert_close(conditioned({"input_ids": inputs})["logits"], plain({"input_ids": inputs})["logits"])
+
+
+@pytest.mark.parametrize("iteration_embedding", ["add", "film"])
+def test_iteration_conditioning_applies_the_entry_of_the_current_iteration(iteration_embedding):
+    model = _build_model("[M]^3", loop_config=LoopConfig(iteration_embedding=iteration_embedding))
+    conditioning = model.transformer.loop_mods["0"]
+    with torch.no_grad():
+        conditioning.iter_shift.normal_(std=0.5)
+        if iteration_embedding == "film":
+            conditioning.iter_scale.normal_(std=0.5)
+    inputs = torch.randint(0, VOCAB_SIZE, (2, SEQUENCE_LENGTH))
+
+    layer = model.transformer.h["0"]
+    h = model.transformer.wte(inputs)
+    for iteration in range(3):
+        if iteration_embedding == "film":
+            h = h * (1.0 + conditioning.iter_scale[iteration]) + conditioning.iter_shift[iteration]
+        else:
+            h = h + conditioning.iter_shift[iteration]
+        h = h + layer.mixer(layer.norm(h))
+    expected = model.transformer.lm_head(model.transformer.lm_head_norm(h))
+
+    torch.testing.assert_close(model({"input_ids": inputs})["logits"], expected)
+
+
+def test_add_conditioning_has_no_scale_table():
+    # "add" is FiLM's shift-only degenerate case, so it must not silently allocate (and leave
+    # untrained) a scale table that no code path reads.
+    conditioning = _build_model("[M]^3", loop_config=LoopConfig(iteration_embedding="add")).transformer.loop_mods["0"]
+    assert not hasattr(conditioning, "iter_scale")
+
+
+def test_iteration_conditioning_table_is_sized_to_the_groups_loop_count():
+    model = _build_model("[M]^5E[ME]^2*E", loop_config=LoopConfig(iteration_embedding="film"))
+    assert model.transformer.loop_mods["0"].iter_shift.shape == (5, N_EMBD)
+    assert model.transformer.loop_mods["2"].iter_scale.shape == (2, N_EMBD)
+
+
+def test_unknown_iteration_embedding_is_rejected():
+    with pytest.raises(ValueError, match="Unknown iteration_embedding"):
+        LoopConfig(iteration_embedding="rotary")
+
+
+@pytest.mark.parametrize(
+    "removed_kwargs",
+    [
+        {"variant": "parcae"},
+        {"injection_norm_config": NORM_CONFIG},
+        {"variant": "parcae", "injection_norm_config": NORM_CONFIG},
+    ],
+)
+def test_removed_refinements_are_rejected_rather_than_ignored(removed_kwargs):
+    # LoopConfig sets extra="allow", so without an explicit check a refinement-wave config would
+    # parse cleanly, train a plain loop and still report itself as a refined arm.
+    with pytest.raises(ValueError, match="removed after"):
+        LoopConfig(**removed_kwargs)
+
+
+@pytest.mark.parametrize(
+    "historical_block",
+    [
+        # Every loop config written before the refinements were removed carries `variant: simple`;
+        # the refinement wave's controls also carry an explicit `injection_norm_config: null`.
+        {"variant": "simple", "per_iteration_norm": False, "input_injection": False},
+        {"variant": "simple", "per_iteration_norm": False, "input_injection": False, "injection_norm_config": None},
+    ],
+)
+def test_historical_loop_config_blocks_survive_the_component_factorys_strict_validation(historical_block):
+    # ComponentFactory validates every component config with `extra="forbid"`, which OVERRIDES this
+    # model's `extra="allow"` and propagates into nested models. So a removed key that is merely
+    # undeclared is a hard build failure for every historical arm config -- not the tolerated extra
+    # that `extra="allow"` suggests. Deleting `variant` outright did exactly that, and the shipped-
+    # config schema test did not catch it because it only inspects each component's *top-level* keys.
+    assert LoopConfig.model_validate(historical_block, extra="forbid").needs_group_modulation is False
+
+
+@pytest.mark.parametrize("inert_kwargs", [{"variant": "simple"}, {"injection_norm_config": None}, {"dt_min": 0.001}])
+def test_configs_predating_the_refinements_still_load(inert_kwargs):
+    # Every loop config shipped before the refinements carries `variant: simple`, and every
+    # non-refined arm of the ablation carries an explicit `injection_norm_config: null`. Those
+    # describe exactly the plain loop, so rejecting them would break the historical configs for
+    # no gain.
+    assert LoopConfig(**inert_kwargs).needs_group_modulation is False
+
+
+def test_refinement_parameter_count_is_reported():
+    model = _build_model("[M]^4E", loop_config=LoopConfig(iteration_embedding="film"))
+    # film: (scale + shift) = 2 * 4 * n_embd, for the one looped group.
+    assert model.num_loop_refinement_parameters == 2 * 4 * N_EMBD
+
+
+@pytest.mark.parametrize(
+    "loop_config",
+    [
+        LoopConfig(iteration_embedding="film"),
+        LoopConfig(iteration_embedding="add", per_iteration_norm=True),
+        LoopConfig(iteration_embedding="film", per_iteration_norm=True, input_injection=True),
+    ],
+)
+def test_every_refinement_parameter_receives_a_gradient(loop_config):
+    model = _build_model("M[ME]^3*E", loop_config=loop_config)
+    inputs = torch.randint(0, VOCAB_SIZE, (2, SEQUENCE_LENGTH))
+
+    model({"input_ids": inputs})["logits"].sum().backward()
+    assert [name for name, p in model.named_parameters() if p.grad is None] == []
+
+
+@pytest.mark.parametrize(
+    "loop_config",
+    [
+        LoopConfig(iteration_embedding="film"),
+        LoopConfig(iteration_embedding="film", per_iteration_norm=True, input_injection=True),
+    ],
+)
+def test_every_refinement_parameter_lands_in_exactly_one_weight_decay_group(loop_config):
+    # Same trap as the per-iteration norms: the conditioning tables are matched by the `loop`
+    # group's explicit name list. Overlap makes the optimizer raise; a gap drops the parameter
+    # from training silently.
+    model = _build_model("M[ME]^3*E", loop_config=loop_config)
+    groups = model.weight_decay_groups
+    in_loop_group = []
+
+    for name, _ in model.named_parameters():
+        matched = [
+            group
+            for group, expressions in groups.items()
+            if any(re.search(expression, name) for expression in expressions)
+        ]
+        assert len(matched) == 1, f"{name} matched {matched}"
+        if "loop_mods" in name:
+            assert matched == ["loop"], name
+        if matched == ["loop"]:
+            in_loop_group.append(name)
+
+    # The complement of the "empty by default" assertion in test_nemotron_model.py: with
+    # conditioning on, the group must actually claim parameters, or they are silently untrained.
+    assert in_loop_group
+
+
+def test_refinement_parameters_survive_activation_checkpointing():
+    loop_config = LoopConfig(iteration_embedding="film", per_iteration_norm=True, input_injection=True)
+    model = _build_model("M[ME]^3*E", loop_config=loop_config)
+    with torch.no_grad():  # off the no-op initialization, so a dropped term would show
+        model.transformer.loop_mods["1"].iter_shift.normal_(std=0.1)
+    inputs = torch.randint(0, VOCAB_SIZE, (2, SEQUENCE_LENGTH))
+    expected = model({"input_ids": inputs})["logits"]
+
+    ActivationCheckpointing.apply_activation_checkpointing_(
+        ac_variant=ActivationCheckpointingVariants.FULL_ACTIVATION_CHECKPOINTING,
+        layers_fqn="transformer.h",
+        model=model,
+        ac_fun_params=None,
+    )
+    checkpointed = model({"input_ids": inputs})["logits"]
+
+    torch.testing.assert_close(checkpointed, expected)
+    checkpointed.sum().backward()
+    assert [name for name, p in model.named_parameters() if p.grad is None] == []
