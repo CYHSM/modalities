@@ -303,6 +303,36 @@ class LoopUpdateRecorder:
         ]
         return {"per_member_relative_norm": per_member_norm, "between_member_cosine": pairwise}
 
+    def layer_profile(self) -> list[dict]:
+        """
+        Per-layer update magnitude measured against each layer's OWN input.
+
+        Distinct from :meth:`stack_report`, which normalizes every layer's update by the *stack's*
+        input (the embedding output). That quantity necessarily grows with depth because the residual
+        stream itself grows -- on the unlooped baseline it runs from 4.7 at layer 0 to 111 at layer 11
+        -- so it measures the stream's scale, not how hard a layer is working. Dividing by the layer's
+        own input instead answers "how much does this layer change the state it was handed", which is
+        the quantity that predicts whether re-running that layer buys anything.
+
+        This is the same normalization the looped arms' ``member_step_norms`` use (a single-layer loop
+        group's input *is* the layer's input), so a profile measured on the baseline is directly
+        comparable to the per-member figures in :meth:`group_report`.
+
+        Returns:
+            list[dict]: One entry per layer application, in execution order.
+        """
+        return [
+            {
+                "step": call.order,
+                "layer_key": call.layer_key,
+                "layer_type": call.layer_type,
+                "input_norm": _summarize(call.layer_input.float().norm(dim=-1)),
+                "absolute_update_norm": _summarize(call.delta.float().norm(dim=-1)),
+                "relative_to_own_input": _summarize(_per_token_norm_ratio(call.delta, call.layer_input)),
+            }
+            for call in self._calls
+        ]
+
     def stack_report(self) -> dict:
         """
         Summarizes the same two quantities across the whole executed stack, layer by layer.

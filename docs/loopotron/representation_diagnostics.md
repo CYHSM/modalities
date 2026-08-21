@@ -176,10 +176,24 @@ smallest updates of any operator: if the iterations do little, their count matte
 cancelling, work; these models are locked to their trained depth, attention excepted; operator class
 and loop position are inseparable in Wave 2.
 
-**Not established:** whether loop *position* or looped *operator* drives the Wave 2 ranking. Both
-diagnostics carry positional confounds, in opposite directions. Settling it needs trained arms that
-hold one fixed while varying the other — e.g. one Mamba layer looped at each of positions 0/2/5/7/9,
-same K, same executed depth, identical FLOPs.
+**Not established at the time this was written:** whether loop *position* or looped *operator*
+drives the Wave 2 ranking. Both diagnostics carry positional confounds, in opposite directions.
+Settling it needs trained arms that hold one fixed while varying the other — e.g. one Mamba layer
+looped at each of positions 0/2/5/7/9, same K, same executed depth, identical FLOPs.
+
+> **SETTLED 2026-08-18 — that sweep was run, for all three operators.** See
+> [position_sweep.md](position_sweep.md). Position is a large causal variable *and* it is
+> operator-specific: Mamba spreads 0.0498 nats across its five positions, MoE 0.0192 (U-shaped),
+> attention 0.0022 (flat). Wave 2's headline "looping Mamba is best" survives position control and
+> compute normalisation; its interior claim "MoE beats attention" does not.
+>
+> The magnitude result below generalised only partly. Update *diversity* (cosine) predicts nothing,
+> and the update *norm* does better -- but a direct test
+> ([update_norm_predictor.md](update_norm_predictor.md)) scoring it against the twelve sweep outcomes
+> found it predicts **which Mamba layer to loop** (Spearman +0.80 within that family) and **not**
+> which operator to loop (+0.29 pooled, and the MoE/attention pair inverted) or where to loop a MoE
+> layer (0.000; the MoE curve is U-shaped). Do not restate "three coincident orderings" without that
+> qualification.
 
 **Caveat on the absolute numbers here:** the fixed evaluation set is the leading sequences of the test
 file, not the full split, so baseline losses (e.g. A1 at 2.758) are not comparable to the paper's loss

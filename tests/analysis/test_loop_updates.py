@@ -14,7 +14,12 @@ import re
 import pytest
 import torch
 
-from modalities.analysis.loop_updates import LoopUpdateRecorder, _per_token_cosine, _per_token_norm_ratio
+from modalities.analysis.loop_updates import (
+    LoopUpdateRecorder,
+    _LayerCall,
+    _per_token_cosine,
+    _per_token_norm_ratio,
+)
 from modalities.models.components.moe.experts import ExpertsBackend
 from modalities.models.components.norms import NormWrapperConfig
 from modalities.models.nemotron.layer_pattern import get_num_built_layers
@@ -212,6 +217,54 @@ def test_stack_report_covers_every_executed_layer_including_unlooped_models():
     assert stack["n_executed_layers"] == 5
     assert stack["executed_types"] == list("MEM*E")
     assert len(stack["update_cosine"]) == 4
+
+
+def test_layer_profile_covers_every_execution_and_is_ordered():
+    model = _build_model("MEM*E")
+    model.eval()
+    with torch.no_grad(), LoopUpdateRecorder(model=model) as recorder:
+        model({"input_ids": _inputs()})
+
+    profile = recorder.layer_profile()
+    assert [entry["layer_type"] for entry in profile] == list("MEM*E")
+    assert [entry["step"] for entry in profile] == list(range(5))
+    assert all(entry["input_norm"]["median"] > 0 for entry in profile)
+
+
+def test_layer_profile_normalizes_by_own_input_not_the_stack_input():
+    """The distinction the whole predictor rests on, so it is pinned rather than assumed.
+
+    ``stack_report`` divides every layer's update by the FIRST layer's input, so a late layer's ratio
+    is inflated by however much the residual stream has grown. ``layer_profile`` divides by the
+    layer's own input. The two therefore agree only on layer 0, where the two references are the
+    same tensor.
+    """
+    model = _build_model("MEM*E")
+    model.eval()
+    with torch.no_grad(), LoopUpdateRecorder(model=model) as recorder:
+        model({"input_ids": _inputs()})
+
+    profile = recorder.layer_profile()
+    stack = recorder.stack_report()["relative_step_norm"]
+
+    assert profile[0]["relative_to_own_input"]["median"] == pytest.approx(stack[0]["median"], rel=1e-6)
+    # And the layer's own input norm must actually differ from the stack's by the last layer, or the
+    # two normalizations would be interchangeable and this method would be pointless.
+    assert profile[-1]["input_norm"]["median"] != pytest.approx(profile[0]["input_norm"]["median"], rel=1e-3)
+
+
+def test_layer_profile_recovers_a_known_update_ratio():
+    """A layer whose update is a fixed multiple of its input must report exactly that multiple."""
+    call = _LayerCall(
+        order=0,
+        layer_key="0",
+        layer_type="M",
+        delta=torch.full((1, 4, 8), 3.0),
+        layer_input=torch.full((1, 4, 8), 1.0),
+    )
+    recorder = LoopUpdateRecorder(model=torch.nn.Module())
+    recorder._calls = [call]
+    assert recorder.layer_profile()[0]["relative_to_own_input"]["median"] == pytest.approx(3.0)
 
 
 # --------------------------------------------------------------------------------------------

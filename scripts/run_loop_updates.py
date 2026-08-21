@@ -78,6 +78,10 @@ def main() -> None:
         "sanity_batch_loss": loss.item(),
         "groups": recorder.group_report(),
         "stack": recorder.stack_report(),
+        # Per-layer update magnitude against each layer's OWN input. On the unlooped baseline this is
+        # the cheap predictor tested in docs/loopotron/update_norm_predictor.md: it is measurable
+        # from one baseline checkpoint, before any loop arm is trained.
+        "layer_profile": recorder.layer_profile(),
     }
 
     arguments.output_directory.mkdir(parents=True, exist_ok=True)
