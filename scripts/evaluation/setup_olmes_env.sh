@@ -46,6 +46,11 @@ sed -i 's/"pytrec_eval", # For HELMET/"pytrec-eval-terrier", # For HELMET/' "${O
 "${UV}" pip install --python "${VENV}/bin/python" -e "${OLMES_DIR}"
 # Base deps only (no torch extra): modalities pins torch>=2.10, olmes torch<2.9.
 "${UV}" pip install --python "${VENV}/bin/python" -e "${REPO_DIR}"
+# olmes pins numpy<2, but the resolver picks a pyarrow (>=20) that needs numpy 2, and
+# `import datasets` then fails inside every eval. 19.x still supports numpy 1.26.
+"${UV}" pip install --python "${VENV}/bin/python" "pyarrow<20"
+# uv venvs ship without setuptools, but olmes still imports pkg_resources (removed in setuptools 81).
+"${UV}" pip install --python "${VENV}/bin/python" "setuptools<81"
 
 export TIKTOKEN_CACHE_DIR="${EVAL_ROOT}/tiktoken_cache"
 export NLTK_DATA="${EVAL_ROOT}/nltk_data"
@@ -62,7 +67,8 @@ EOF
 # Import check under the same conditions as a compute node.
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 LITELLM_LOCAL_MODEL_COST_MAP=True \
 PYTHONPATH="${REPO_DIR}/src:${OLMES_DIR}" "${VENV}/bin/python" - <<'EOF'
-import torch, transformers, oe_eval, litellm
+import torch, transformers, litellm, datasets
+import oe_eval.run_eval  # the module olmes actually runs; importing oe_eval alone missed the pyarrow break
 from modalities.conversion import generic_adapter
 print("torch", torch.__version__, "transformers", transformers.__version__, "imports ok")
 EOF

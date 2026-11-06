@@ -48,7 +48,7 @@ sbatch --wait <<EOF
 #SBATCH --job-name=conv-eval-${STEP}
 #SBATCH --account=AIFAC_S07_154
 #SBATCH --partition=boost_usr_prod
-#SBATCH --qos=normal
+#SBATCH --qos=${JANUS_EVAL_QOS:-normal}
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8

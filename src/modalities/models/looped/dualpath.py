@@ -98,6 +98,14 @@ class AdaptiveComputationConfig(BaseModel):
     # the ability to attenuate or shut off a path -- which convex mode cannot do.
     # None disables it (original behaviour). 1.0 makes the layer non-amplifying.
     gate_sum_cap: Optional[float] = None
+    # Gate controls (two_gates mode only).
+    # gate_token_independent: the gate logits come from the bias alone, so each layer
+    # learns one fixed (g_d, g_w) pair shared by every token.
+    # gate_residual: "gated" is Eq. 5, y = g_d*h_deep + g_w*h_wide, which also scales the
+    # residual x by g_d + g_w. "ungated" gates only the path updates and keeps a plain
+    # residual: y = x + g_d*(h_deep - x) + g_w*(h_wide - x).
+    gate_token_independent: bool = False
+    gate_residual: Literal["gated", "ungated"] = "gated"
     cross_scale_deep_init: float = -7.0
     cross_scale_wide_init: float = -7.0
 
@@ -633,9 +641,15 @@ class DualPathGateTwoGates(nn.Module):
         cross_scale_wide_init: float = -7.0,
         is_softmax: bool = False,
         sum_cap: Optional[float] = None,
+        token_independent: bool = False,
+        ungated_residual: bool = False,
     ):
         super().__init__()
+        if ungated_residual and use_cross:
+            raise ValueError("gate_residual='ungated' is not defined together with use_cross.")
         self.sum_cap = sum_cap
+        self.token_independent = token_independent
+        self.ungated_residual = ungated_residual
         self.deep_gate_init_bias = deep_gate_init_bias
         self.wide_gate_init_bias = wide_gate_init_bias
         self.use_cross = use_cross
@@ -695,7 +709,12 @@ class DualPathGateTwoGates(nn.Module):
             gate_wide_raw: (B, T, 1) pre-override
             aux:           dict
         """
-        logits = self.gate_proj(x)                       # (B, T, 2)
+        if self.token_independent:
+            # Bias-only gates. Multiplying by zero rather than skipping the projection
+            # keeps gate_proj.weight in the graph (with zero gradient) for FSDP.
+            logits = self.gate_proj(x * 0)               # (B, T, 2), equal across tokens
+        else:
+            logits = self.gate_proj(x)                   # (B, T, 2)
         if self.is_softmax:
             gates_raw = torch.softmax(logits, dim=-1)    # (B, T, 2)
         else:
@@ -732,7 +751,10 @@ class DualPathGateTwoGates(nn.Module):
             h_deep_branch = gate_deep * h_deep
             h_wide_branch = gate_wide * h_wide
 
-        output = h_deep_branch + h_wide_branch
+        if self.ungated_residual:
+            output = x + gate_deep * (h_deep - x) + gate_wide * (h_wide - x)
+        else:
+            output = h_deep_branch + h_wide_branch
 
         with torch.no_grad():
             aux = {
@@ -925,6 +947,8 @@ class AdaptiveRecursiveBlock(nn.Module):
                     cross_scale_wide_init=adaptive_config.cross_scale_wide_init,
                     is_softmax=(self.gate_mode == "softmax"),
                     sum_cap=getattr(adaptive_config, "gate_sum_cap", None),
+                    token_independent=getattr(adaptive_config, "gate_token_independent", False),
+                    ungated_residual=getattr(adaptive_config, "gate_residual", "gated") == "ungated",
                 )
             else:
                 raise ValueError(f"Unknown gate_mode: {self.gate_mode}")
