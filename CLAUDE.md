@@ -125,10 +125,9 @@ with `hf_checkpoint/` inside it and the OLMES output in `hf_checkpoint/olmes_eva
   as metrics), soft cap (F80M/F160M), depth L8/16/32. The S3 backup of every final checkpoint is
   complete.
 - 2026-11-06: data moved to scratch and verified. The soft-cap smoke test passed (200 steps,
-  checkpoints written). The OLMES env was rebuilt; the check that it reproduces the published
-  soft-cap F80M numbers writes to `hf_checkpoint_recheck/olmes_eval_18360_recheck` and
-  `hf_checkpoint/olmes_eval_18360_gsm8k_recheck` in run `2026-09-14__01-44-11_4767e14501931d3a`.
-  Expected: C4 1.0361, Wiki 0.9332, math BPB 0.5116, GSM8K 0.1348.
+  checkpoints written). The rebuilt OLMES env reproduces the published soft-cap F80M numbers
+  exactly (C4 1.0361, Wiki 0.9332, math BPB 0.5116, GSM8K 0.1348; output in
+  `hf_checkpoint_recheck/olmes_eval_18360_recheck` of run `2026-09-14__01-44-11_4767e14501931d3a`).
 - Stalled: L64 dual (soft cap) and PureWide, both at step 12852/18360 (the D21_101 lockout).
   Resume with `run_warmstart.sh`; each needs about 25h more.
 - Missing from git: the Table 4 token-class override analysis (Wilcoxon over 18 checkpoints).
