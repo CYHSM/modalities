@@ -62,7 +62,7 @@ def resolve(node, values: dict):
     return node
 
 
-def build(kind: str, k: int, d_deep: int, d_wide: int) -> torch.nn.Module:
+def build(kind: str, k: int, d_deep: int, d_wide: int, compile_blocks: bool = True) -> torch.nn.Module:
     raw = yaml.safe_load(BASE_CONFIG.read_text())["model_raw"]
     raw = resolve(raw, {
         "settings.referencing_keys.sample_key": "input_ids",
@@ -82,7 +82,7 @@ def build(kind: str, k: int, d_deep: int, d_wide: int) -> torch.nn.Module:
     model = model.to(device="cuda", dtype=torch.bfloat16)
     # Compile per block, as the training configs do (compiled_model, block_names: AdaptiveRecursiveBlock).
     for module in model.modules():
-        if type(module).__name__ == "AdaptiveRecursiveBlock":
+        if compile_blocks and type(module).__name__ == "AdaptiveRecursiveBlock":
             module.compile()
     return model
 
