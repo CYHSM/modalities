@@ -25,7 +25,7 @@ sbatch --wait <<EOF
 set -e
 ulimit -c 0
 
-MY_ROOT="/leonardo_work/EUHPC_D21_101/mfrey"
+MY_ROOT="/leonardo_work/AIFAC_S07_154/mfrey"  # env built by scripts/evaluation/setup_olmes_env.sh
 EXPERIMENTS_DIR="/leonardo_scratch/large/userexternal/mfrey000/experiments_tests"
 OLMES_VENV="\${MY_ROOT}/venvs/olmes_uv"
 

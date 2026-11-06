@@ -176,3 +176,8 @@ results/*
 tutorials/einsum_transformer/experiments/*
 tutorials/warmstart/experiments/*
 
+
+# Paper drafts (double-blind submission; this repository is public)
+paper/
+# Tokenized MATH/TriviaQA copies used by the loopotron study; generated, not redistributable
+data/prepared_evals*

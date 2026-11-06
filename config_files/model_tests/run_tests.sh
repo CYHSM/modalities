@@ -7,7 +7,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODALITIES_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-PYTHON_EXEC="${PYTHON_EXEC:-/leonardo_work/EUHPC_D21_101/mfrey/venvs/olmes_uv/bin/python}"
+PYTHON_EXEC="${PYTHON_EXEC:-/leonardo_work/AIFAC_S07_154/mfrey/venvs/olmes_uv/bin/python}"
 NUM_GPUS="${NUM_GPUS:-1}"
 CONFIG="${1:-${SCRIPT_DIR}/dualpath_test.yaml}"
 

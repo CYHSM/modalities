@@ -95,7 +95,9 @@ if [ -f "${OUT_DIR}/metrics-all.jsonl" ]; then
 else
     mkdir -p "${OUT_DIR}"
 
-    EVAL_MY_ROOT="/leonardo_work/EUHPC_D21_101/mfrey"
+    # Built by scripts/evaluation/setup_olmes_env.sh. The original env under
+    # EUHPC_D21_101 became unreadable once that project ended.
+    EVAL_MY_ROOT="/leonardo_work/AIFAC_S07_154/mfrey"
     EXPERIMENTS_DIR="/leonardo_scratch/large/userexternal/mfrey000/experiments_tests"
     OLMES_VENV="\${EVAL_MY_ROOT}/venvs/olmes_uv"
 

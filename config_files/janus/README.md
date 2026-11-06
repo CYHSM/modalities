@@ -1,52 +1,49 @@
-# Janus — dual-path ablation suite (seed 43)
+# Janus: dual-path training configs
 
-17 configs recreated from `hpc-leonardo-emnlp-final:config_files/emnlp/final_budapest_seed43`,
-corrected to run on this branch. Training hyperparameters, token budgets, intervals, data
-mixture and seed (43) are **byte-identical** to the originals — only the items below changed.
+Start with the repo-root `CLAUDE.md`. This file covers only this folder.
 
-## What was changed, and why
+| Folder | What | Paper |
+|---|---|---|
+| `l16_sweep/` | L16 PureWide / PureLoop K=2,3,4 / Dual a25,a50,a75 (K=4) at F80M and F160M | main table; the F160M seeds 2 and 3 were trained from these |
+| `softcap/` | L16 Dual a50 K=4 with `gate_sum_cap: 1.0`, F80M and F160M | soft-cap table. **Baseline for new ablations** |
+| `depth/` | F80M: L8/L32/L48/L64 PureWide and Dual a50 soft cap. F160M: L32/L48 Dual (uncapped) and PureWide | depth table (L8/16/32), L64 (stalled at step 12852) |
+| `gate_variants/` | L16 a50 with convex, fixed and softmax gates | not in the paper |
+| `stability/` | Attempts to fix the L32 NaN divergence before the soft cap: lr, warmup, grad clip, fp32 reduce, init, convex gate, compile | not in the paper |
+| `debug/` | Smoke test, livecheck and NaN-repro configs and their launchers | |
+| `tools/` | `generate_configs.py` (FLOP-matched widths), `make_depth_variant.py`, `make_warmstart_config.py` | |
 
-1. **Data paths.** The originals used `/data/...`, which only exists inside the Singularity
-   image (`--bind /leonardo_work/EUHPC_E05_119/mfrey/tokenized:/data`). All 436 `raw_data_path`
-   entries per config now use the absolute host path, so these run under the native `.venv`.
-2. **`model_raw.variant_key: gpt2` → `dualpath`.** On the EMNLP branch the adaptive model *was*
-   the gpt2 variant. On this branch it is a separate `dualpath` variant and `gpt2` no longer
-   accepts `adaptive_config`. Without this the config fails validation.
-3. **Removed `tokenizer` from `evaluation_subscriber`.** `WandBEvaluationResultSubscriberConfig`
-   does not define that field here and the component factory rejects unknown keys.
-4. **Added `model_converter` + `downstream_evaluator`** (the originals had neither), wiring the
-   26-task OLMES suite with `LIMIT=1024`, `BATCH_SIZE=1`, `INCLUDE_GENERATIVE=1`.
+`*_WARMSTART.yaml` resumes its base config from the last checkpoint (made by
+`tools/make_warmstart_config.py`). `paper_checkpoints_manifest.tsv` maps each paper table cell
+to its experiment directory. `all_configs.txt` is the default array list for
+`run_array_16nodes.sh`. Run directories store their config by basename, so moving a config
+between folders does not break `run_warmstart.sh` discovery.
 
 ## Running
 
 ```bash
-sbatch --array=1-17 config_files/janus/run_array_16nodes.sh
+# full run(s): 16 nodes x 4 GPUs, 24h limit
+CONFIG_LIST=my_list.txt sbatch --array=1-N config_files/janus/run_array_16nodes.sh
+# continue past 24h (queue several links up front)
+sbatch --dependency=afterany:<job> config_files/janus/run_warmstart.sh <WS_CONFIG> <BASE_CONFIG_NAME>
+# 200-step smoke test on one node, debug QOS
+sbatch config_files/janus/debug/run_smoketest_debug.sh [CONFIG]
 ```
 
-16 nodes x 4 GPUs, native `.venv`, no container. `EXPERIMENT_ROOT` in the launcher must stay in
-sync with `settings.paths.experiments_root_path` in the configs
-(`/leonardo_scratch/large/userexternal/mfrey000/experiments_budapest`) — the converter and
-downstream evaluator resolve the checkpoint through the config value.
+`EXPERIMENT_ROOT` in the launchers must match `settings.paths.experiments_root_path` in the
+config (`.../experiments_budapest`): the converter and evaluator find the checkpoint through the
+config value.
 
-## Benchmark cache — read before running
+## How these differ from the EMNLP-branch originals
 
-Compute nodes have no internet (`HF_HUB_OFFLINE=1`), so every task must be precached from a
-login node into `/leonardo_scratch/large/userexternal/mfrey000/hf_cache`.
+The `l16_sweep/` configs are recreated from `hpc-leonardo-emnlp-final:config_files/emnlp`.
+Hyperparameters, token budget, intervals, data mixture and seed 43 are identical. Changes:
+absolute host data paths (no container), `variant_key: dualpath` (on that branch the model was
+the `gpt2` variant), no `tokenizer` on the W&B subscriber, and an added `downstream_evaluator`.
+Data paths have since moved to scratch and the tokenizer to `AIFAC_S07_154`, see `CLAUDE.md`.
 
-**All 26 tasks are cached and offline-verified** (verified with `HF_HUB_OFFLINE=1` and no
-token in the environment, i.e. exactly the conditions on a compute node).
+## Eval notes
 
-`allenai/paloma` is a **gated** dataset, so `paloma_c4_en::paloma` and
-`paloma_wikitext_103::paloma` needed an authenticated download once. That is already done — the
-data now sits in the cache and compute nodes read it offline without any credential. You only
-need a token again if the cache is wiped or another gated dataset is added.
-
-Note that `HF_HOME` also determines where the HF **token** is read from. Pointing it at the
-scratch cache moves token lookup away from `~/.cache/huggingface/`, so export `HF_TOKEN`
-explicitly when fetching a gated dataset.
-
-## Eval walltime
-
-`scripts/evaluation/run_olmes_sbatch.sh` requests `--time=06:00:00`. 26 tasks at
-`limit=1024`, `batch_size=1`, including generative `gsm8k::olmes`, may exceed that on one GPU.
-Raise the walltime or the batch size if evals start hitting TIMEOUT.
+Compute nodes are offline. All OLMES tasks are cached in
+`/leonardo_scratch/large/userexternal/mfrey000/hf_cache`, including the gated Paloma, which
+needs `HF_TOKEN` only if the cache is ever rebuilt. Generative gsm8k is slow at depth (about
+15 s/it at L32); the deep runs set `JANUS_EVAL_TIME=20:00:00`.
