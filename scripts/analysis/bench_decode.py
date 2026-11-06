@@ -17,7 +17,7 @@ configuration runs on the same GPU type, so the numbers are comparable with each
 
 Usage: bench_decode.py --check
        bench_decode.py --shard I --num-shards N --out results.jsonl
-       bench_decode.py --table results.jsonl      (LaTeX rows for the paper)
+       bench_decode.py --table results.jsonl.*    (LaTeX rows for the paper)
 """
 
 import argparse
@@ -278,33 +278,35 @@ def bench(name, kind, k, d_deep, d_wide) -> list[dict]:
     return rows
 
 
-def table(path: str) -> None:
-    """LaTeX rows: KV cache per token and decode tokens/s (relative to PureWide of the same budget)."""
-    rows = [json.loads(l) for l in open(path) if "error" not in l]
-    by = {(r["config"], r["batch"], r["prompt"]): r for r in rows}
-    cols = [(1, 512), (1, 3584), (32, 512), (32, 3584)]
-    for budget in ("F80M", "F160M"):
-        print(f"% {budget}")
-        base = {c: by.get((f"{budget} PureWide",) + c) for c in cols}
-        for name, *_ in [c for c in CONFIGS if c[0].startswith(budget + " ")]:
-            cells = []
-            for c in cols:
-                r = by.get((name,) + c)
-                if r is None or base[c] is None:
-                    cells.append(r"\ph")
-                    continue
-                v = r["decode_tok_s"]
-                cells.append(f"{v / 1e3:.2f}k ({v / base[c]['decode_tok_s']:.2f}$\\times$)" if v >= 1e3
-                             else f"{v:.0f} ({v / base[c]['decode_tok_s']:.2f}$\\times$)")
-            kv = next((by[(name,) + c]["kv_KB_per_token"] for c in cols if (name,) + c in by), None)
-            label = name.split(" ", 1)[1]
-            print(f"{label} & {'-' if kv is None else f'{kv:.0f}'} & " + " & ".join(cells) + r" \\")
+def table(paths: list[str]) -> None:
+    """LaTeX rows of the paper's decoding table (CUDA-graph mode): KV cache per token and decode
+    tokens/s relative to PureWide, at B=1/P=512 (latency) and B=32/P=3584 (throughput). Dual rows use
+    alpha=50; the script prints the largest alpha spread so the caption can state it."""
+    rows = [json.loads(l) for path in paths for l in open(path) if "error" not in l]
+    by = {(r["config"], r["mode"], r["batch"], r["prompt"]): r for r in rows}
+    cols = [("F80M", 1, 512), ("F80M", 32, 3584), ("F160M", 1, 512), ("F160M", 32, 3584)]
+    names = [("PureWide", r"\textsc{PureWide}"), ("PureWide compute-matched", r"\textsc{PureWide} (compute-matched)"),
+             ("PureLoop K2", r"\textsc{PureLoop} $K{=}2$"), ("PureLoop K3", r"\textsc{PureLoop} $K{=}3$"),
+             ("PureLoop K4", r"\textsc{PureLoop} $K{=}4$"), ("PureLoop K4 compute-matched", r"\textsc{PureLoop} $K{=}4$ (compute-matched)"),
+             ("Dual a50 K2", r"\textsc{Dual} $K{=}2$"), ("Dual a50 K3", r"\textsc{Dual} $K{=}3$"), ("Dual a50 K4", r"\textsc{Dual} $K{=}4$")]
+    for n, label in names:
+        cells = []
+        for bud, b, pr in cols:
+            v = by[(f"{bud} {n}", "graph", b, pr)]["decode_tok_s"]
+            base = by[(f"{bud} PureWide", "graph", b, pr)]["decode_tok_s"]
+            cells.append(f"{v:,.0f} ({v / base:.2f}$\\times$)".replace(",", "{,}"))
+        kv = by[(f"F80M {n}", "graph", 1, 512)]["kv_KB_per_token"]
+        print(f"{label} & {kv:.0f} & " + " & ".join(cells) + r" \\")
+    spread = max(abs(by[(f"{bud} Dual a{a} K{k}", m, b, pr)]["decode_tok_s"] / by[(f"{bud} Dual a50 K{k}", m, b, pr)]["decode_tok_s"] - 1)
+                 for bud in ("F80M", "F160M") for a in (25, 75) for k in (2, 3, 4) for m in ("graph", "eager")
+                 for b, pr in [(1, 512), (1, 3584), (32, 512), (32, 3584)])
+    print(f"% largest alpha=25/75 deviation from alpha=50: {100 * spread:.1f}%")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
-    ap.add_argument("--table", metavar="JSONL")
+    ap.add_argument("--table", nargs="+", metavar="JSONL")
     ap.add_argument("--shard", type=int, default=0)
     ap.add_argument("--num-shards", type=int, default=1)
     ap.add_argument("--out")
