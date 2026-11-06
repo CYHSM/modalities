@@ -1,0 +1,52 @@
+L16_F80M_sweep	PureWide	experiments_emnlp/2026-05-13__02-00-20_7ad77be5d81edda7	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	PureLoop_loop2	experiments_emnlp/2026-05-15__04-29-48_f2cc5cc7dee9c20b	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	PureLoop_loop3	experiments_emnlp/2026-05-13__04-56-22_7772cb76cea79b1e	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	PureLoop_loop4	experiments_emnlp/2026-05-13__05-28-26_cba0ba4a0338106f	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	Dual_a25_loop2	experiments_emnlp/2026-05-18__13-49-25_46661c3a0490b08d	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	Dual_a50_loop2	experiments_emnlp/2026-05-13__02-05-13_fa51525556e2cd3b	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	Dual_a75_loop2	experiments_emnlp/2026-05-18__19-28-55_0d6659323c9236d8	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	Dual_a25_loop3	experiments_emnlp/2026-05-18__12-12-23_207cde6cd1273411	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	Dual_a50_loop3	experiments_emnlp/2026-05-13__02-21-25_03070170b2aa73fa	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	Dual_a75_loop3	experiments_emnlp/2026-05-18__19-28-58_635662eb51947f62	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	Dual_a25_loop4	experiments_emnlp/2026-05-18__23-27-56_3af89f56dea89107	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	Dual_a50_loop4	experiments_emnlp/2026-05-13__05-25-03_e3f7d3d2ad461681	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F80M_sweep	Dual_a75_loop4	experiments_emnlp/2026-05-18__19-28-56_159b57f1f3f20442	seed 1 of tab:main; column of tab:appendix-f80m
+L16_F160M_sweep	PureWide	experiments_emnlp/2026-05-12__06-08-00_e2024d4668888064	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	PureLoop_loop2	experiments_emnlp/2026-05-12__06-22-22_aa12cd089a6c295f	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	PureLoop_loop3	experiments_emnlp/2026-05-14__08-53-02_4216c33dec516135	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	PureLoop_loop4	experiments_emnlp/2026-05-12__08-25-36_59f1db86439d8912	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	Dual_a25_loop2	experiments_emnlp/2026-05-18__12-12-23_59f7fd9274a1eb2c	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	Dual_a50_loop2	experiments_emnlp/2026-05-12__06-09-41_7254f5ea8908ea68	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	Dual_a75_loop2	experiments_emnlp/2026-05-18__19-28-56_7d6f149ca64eea51	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	Dual_a25_loop3	experiments_emnlp/2026-05-18__12-12-23_2b5348bcf89b949f	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	Dual_a50_loop3	experiments_emnlp/2026-05-14__08-07-59_50122419e575e16d	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	Dual_a75_loop3	experiments_emnlp/2026-05-18__19-28-59_b5263d4c7baf76af	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	Dual_a25_loop4	experiments_emnlp/2026-05-18__12-12-23_355c95b231e4474c	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	Dual_a50_loop4	experiments_emnlp/2026-05-12__06-22-54_3719e6b84f11c9c1	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_sweep	Dual_a75_loop4	experiments_emnlp/2026-05-18__19-28-56_55916ccdd76d9adc	seed 1 of tab:main; column of tab:appendix-f160m
+L16_F160M_seeds	PureWide_seed2	experiments_budapest/2026-07-24__18-39-17_8bbbdb520711f375	seed 2 of tab:main (F160M)
+L16_F160M_seeds	PureWide_seed3	experiments_budapest/2026-07-24__20-43-59_9bf743665565e1b5	seed 3 of tab:main (F160M)
+L16_F160M_seeds	PureLoop_loop2_seed2	experiments_budapest/2026-07-24__18-41-25_36b265498cedb5f7	seed 2 of tab:main (F160M)
+L16_F160M_seeds	PureLoop_loop2_seed3	experiments_budapest/2026-07-24__20-44-16_3cdff85aa15370b9	seed 3 of tab:main (F160M)
+L16_F160M_seeds	PureLoop_loop3_seed2	experiments_budapest/2026-07-24__18-43-42_ffd20f609cbe702b	seed 2 of tab:main (F160M)
+L16_F160M_seeds	PureLoop_loop3_seed3	experiments_budapest/2026-07-24__20-49-08_c8dd392cdda6300c	seed 3 of tab:main (F160M)
+L16_F160M_seeds	PureLoop_loop4_seed2	experiments_budapest/2026-07-24__18-51-54_a8ce64b4a2b88bd3	seed 2 of tab:main (F160M)
+L16_F160M_seeds	PureLoop_loop4_seed3	experiments_budapest/2026-07-24__20-55-59_a63b386ae5a3df8f	seed 3 of tab:main (F160M)
+L16_F160M_seeds	Dual_a25_loop4_seed2	experiments_budapest/2026-07-24__19-52-44_48105428c1fd2d82	seed 2 of tab:main (F160M)
+L16_F160M_seeds	Dual_a25_loop4_seed3	experiments_budapest/2026-07-24__20-56-05_d035cae6de83dd00	seed 3 of tab:main (F160M)
+L16_F160M_seeds	Dual_a50_loop4_seed2	experiments_budapest/2026-07-24__20-29-47_8868c7e041195def	seed 2 of tab:main (F160M)
+L16_F160M_seeds	Dual_a50_loop4_seed3	experiments_budapest/2026-07-24__21-33-30_86448890015102b6	seed 3 of tab:main (F160M)
+L16_F160M_seeds	Dual_a75_loop4_seed2	experiments_budapest/2026-07-24__20-35-33_54b4363cb17b7875	seed 2 of tab:main (F160M)
+L16_F160M_seeds	Dual_a75_loop4_seed3	experiments_budapest/2026-07-24__22-07-53_e2cd3461d055b1fe	seed 3 of tab:main (F160M)
+unrolled_baseline	PureWideExp_F80M_K2_L32	experiments_emnlp/2026-05-18__19-29-00_09776dacfbd02318	tab:unrolled
+unrolled_baseline	PureWideExp_F80M_K3_L48	experiments_emnlp/2026-05-18__19-28-58_b0f6ff56da44e1d2	tab:unrolled
+unrolled_baseline	PureWideExp_F80M_K4_L64	experiments_emnlp/2026-05-18__19-28-56_35921c8a7d8e2634	tab:unrolled
+unrolled_baseline	PureWideExp_F160M_K2_L32	experiments_emnlp/2026-05-18__19-28-59_78bcbfab173bc55b	tab:unrolled
+unrolled_baseline	PureWideExp_F160M_K3_L48	experiments_emnlp/2026-05-18__19-28-58_b701cc1f92e023b7	tab:unrolled
+unrolled_baseline	PureWideExp_F160M_K4_L64	experiments_emnlp/2026-05-18__22-41-23_d8e95812e2a31843	tab:unrolled
+softcap	L16_F80M_Dual_a50_loop4_cap1	experiments_budapest/2026-09-14__01-44-11_4767e14501931d3a	tab:softcap; L16 row of tab:depth-sweep
+softcap	L16_F160M_Dual_a50_loop4_cap1	experiments_budapest/2026-09-13__03-57-19_7baca097a6a8a0d2	tab:softcap
+depth_sweep_F80M	L8_PureWide	experiments_budapest/2026-09-14__01-40-27_bfe620344dd90688	tab:depth-sweep
+depth_sweep_F80M	L8_Dual_a50_loop4_cap1	experiments_budapest/2026-09-14__01-39-55_a60bd94f927862fe	tab:depth-sweep
+depth_sweep_F80M	L32_PureWide	experiments_budapest/2026-09-10__05-47-34_4c2694a69d16531d	tab:depth-sweep
+depth_sweep_F80M	L32_Dual_a50_loop4_cap1	experiments_budapest/2026-09-13__03-54-08_e2578e41d2128d01	tab:depth-sweep
