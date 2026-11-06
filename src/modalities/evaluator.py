@@ -207,11 +207,14 @@ class Evaluator:
 
 
 class DownstreamEvaluator:
-    """Evaluator that runs OLMES on HF checkpoints produced by the conversion callback.
+    """Evaluator that converts the latest DCP checkpoint to HF format and runs OLMES on it.
 
-    Checks if an ``hf_checkpoint`` folder exists inside the latest checkpoint directory
-    (as written by ``ModelConverter``).  If it does, the configured OLMES command template
-    is executed via subprocess.
+    Both steps are launched as a single dedicated sbatch job (see
+    ``scripts/evaluation/run_convert_and_eval_sbatch.sh``), submitted asynchronously via a
+    non-blocking ``subprocess.Popen`` so rank 0 never stalls the training process's own
+    collectives. Conversion used to run synchronously inside the training loop (the old
+    ``ModelConverter`` component); for checkpoints that take longer than NCCL's collective
+    timeout to convert, that stalled rank 0 past the timeout and crashed the whole job.
     """
 
     def __init__(
@@ -237,28 +240,33 @@ class DownstreamEvaluator:
         if self.global_rank != 0:
             return
 
-        hf_model_dir = self._find_hf_checkpoint()
-        if hf_model_dir is None:
+        checkpoint_path = self._resolve_checkpoint_path()
+        if checkpoint_path is None:
             logger.warning(
-                f"No hf_checkpoint found in {self.checkpoint_dir} at step {num_train_steps_done}, "
-                "skipping downstream evaluation."
+                f"No checkpoint info found in {self.checkpoint_dir} at step {num_train_steps_done}, "
+                "skipping conversion+downstream evaluation."
             )
             return
 
+        config_path = self._resolve_config_path()
+        hf_model_dir = checkpoint_path / "hf_checkpoint"
+
         tasks_str = " ".join(self.tasks)
         cmd = self.olmes_command_template.format(
+            checkpoint_path=str(checkpoint_path),
+            modalities_config=str(config_path),
             hf_model_dir=str(hf_model_dir),
             tasks=tasks_str,
             step=num_train_steps_done,
         )
 
-        logger.info(f"Running downstream evaluation: {cmd}")
+        logger.info(f"Launching conversion+downstream evaluation: {cmd}")
         try:
             p = subprocess.Popen(cmd, shell=True)
             self.active_processes.append((p, num_train_steps_done, hf_model_dir))
-            logger.info(f"Downstream evaluation launched for step {num_train_steps_done}.")
+            logger.info(f"Conversion+downstream evaluation launched for step {num_train_steps_done}.")
         except Exception as e:
-            logger.error(f"Failed to launch downstream evaluation: {e}")
+            logger.error(f"Failed to launch conversion+downstream evaluation: {e}")
 
     def wait_for_evaluations(self) -> None:
         if not hasattr(self, "active_processes") or not self.active_processes:
@@ -307,7 +315,9 @@ class DownstreamEvaluator:
             if wandb.run is not None:
                 # Define a custom step metric so downstream/* metrics are decoupled from
                 # the global training step counter (which is already past these steps).
-                wandb.run.define_metric("downstream_step", hidden=True)
+                # NOT hidden: hidden=True also removes it from the manual-panel x-axis
+                # picker in the W&B UI, which is the whole point of exposing it here.
+                wandb.run.define_metric("downstream_step")
                 wandb.run.define_metric("downstream/*", step_metric="downstream_step")
                 metrics_dict["downstream_step"] = step
                 wandb.run.log(metrics_dict)
@@ -317,23 +327,41 @@ class DownstreamEvaluator:
         except ImportError:
             logger.info(f"wandb not installed, skipping metric sync for step {step}.")
 
-    def _find_hf_checkpoint(self) -> Path | None:
-        """Read last_checkpoint_info.json and check for hf_checkpoint subfolder."""
+    def _resolve_checkpoint_path(self) -> Path | None:
+        """Read last_checkpoint_info.json and return the latest DCP checkpoint directory."""
         info_file = self.checkpoint_dir / "last_checkpoint_info.json"
         if not info_file.exists():
             return None
 
-        with open(info_file, "r", encoding="utf-8") as f:
-            info = json.load(f)
-
-        checkpoint_path_str = info.get("checkpoint_folder_path") or info.get("model_checkpoint_path")
-        if checkpoint_path_str is None:
+        try:
+            with open(info_file, "r", encoding="utf-8") as f:
+                info = json.load(f)
+            cp_str = (
+                info.get("checkpoint_folder_path")
+                or info.get("checkpoint_path")
+                or info.get("model_checkpoint_path")
+            )
+            if not cp_str:
+                return None
+        except Exception as e:
+            logger.error(f"Failed to read {info_file}: {e}")
             return None
 
-        checkpoint_path = Path(checkpoint_path_str)
+        checkpoint_path = Path(cp_str)
         if checkpoint_path.is_file():
             checkpoint_path = checkpoint_path.parent
+        return checkpoint_path
 
-        hf_dir = checkpoint_path / "hf_checkpoint"
-        return hf_dir if hf_dir.exists() else None
+    def _resolve_config_path(self) -> Path:
+        """Locate the resolved training config next to the checkpoints (same logic as the
+        old ModelConverter): prefer the fully-resolved config dump, since the plain config
+        copy still contains ${...} interpolations that cannot be resolved outside training.
+        """
+        config_path = next(iter(sorted(self.checkpoint_dir.glob("*.yaml.resolved"))), None)
+        if config_path is not None:
+            return config_path
+        if (self.checkpoint_dir / "config.yaml").exists():
+            return self.checkpoint_dir / "config.yaml"
+        yaml_files = sorted(self.checkpoint_dir.glob("*.yaml"))
+        return yaml_files[0] if yaml_files else self.checkpoint_dir / "config.yaml"
 

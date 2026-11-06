@@ -1,12 +1,21 @@
 import re
 from pathlib import Path
 
+import torch
 import torch.nn as nn
 from torch.distributed.fsdp import FSDPModule as FSDP2
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP1
 from torch.distributed.tensor import DTensor
-from torch.optim import Adam, AdamW, Muon, Optimizer
+from torch.optim import Adam, AdamW, Optimizer
+
+try:
+    from torch.optim import Muon
+except ImportError:  # torch < 2.10 does not ship Muon
+    # Importing this module must not hard-fail on older torch: downstream consumers
+    # (e.g. the exported HF adapter, which runs inside the evaluation environment)
+    # import the component registry only to rebuild a model, never to optimize one.
+    Muon = None
 
 from modalities.checkpointing.checkpoint_loading import FSDP1CheckpointLoadingIF
 from modalities.exceptions import OptimizerError
@@ -62,6 +71,11 @@ class OptimizerFactory:
         weight_decay_groups_excluded: list[str],
         wrapped_model: nn.Module,
     ) -> Optimizer:
+        if Muon is None:
+            raise OptimizerError(
+                "The Muon optimizer requires torch>=2.10, but this environment provides "
+                f"torch {torch.__version__}."
+            )
         optimizer_groups = get_optimizer_groups(wrapped_model, weight_decay, weight_decay_groups_excluded)
         optimizer = Muon(
             params=optimizer_groups,

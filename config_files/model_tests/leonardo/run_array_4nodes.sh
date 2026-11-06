@@ -21,7 +21,7 @@ if [ -z "$SLURM_ARRAY_TASK_ID" ]; then
     exit 1
 fi
 
-MY_ROOT="/leonardo_work/EUHPC_D21_101/mfrey"
+MY_ROOT="/leonardo_work/AIFAC_S07_154/mfrey"
 REPO_DIR="${MY_ROOT}/modalities"
 VENV_DIR="${REPO_DIR}/.venv"
 CONFIG_LIST="${REPO_DIR}/config_files/model_tests/leonardo/all_configs.txt"

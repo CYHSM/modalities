@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import click
+import torch
 try:
     import click_pathlib
 except ImportError:
@@ -104,6 +105,14 @@ def CMD_entry_point_run_modalities(
 
     try:
         with CudaEnv(process_group_backend=ProcessGroupBackendType.nccl):
+            if os.environ.get("MODALITIES_DETECT_ANOMALY", "0") == "1":
+                # Debug-only: NaN-tracing repro. Makes autograd raise at the exact
+                # backward op that first produces a non-finite gradient, instead of
+                # silently letting NaN propagate through the optimizer. Real overhead
+                # (roughly 2-3x slower), so this is opt-in via env var only, never on
+                # by default for production training.
+                torch.autograd.set_detect_anomaly(True)
+                print_rank_0("torch.autograd.set_detect_anomaly(True) enabled via MODALITIES_DETECT_ANOMALY=1")
             if test_comm:
                 print_rank_0("Running communication test...")
                 run_communication_test()

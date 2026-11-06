@@ -50,15 +50,16 @@ class ModelConverter:
             logger.info(f"ModelConverter: Output dir {output_dir} already exists. Skipping.")
             return
 
-        config_path = self.checkpoint_dir / "config.yaml"
-        if not config_path.exists():
-            yaml_files = [f for f in self.checkpoint_dir.glob("*.yaml") if not f.name.endswith(".resolved")]
-            if not yaml_files:
-                yaml_files = list(self.checkpoint_dir.glob("*.yaml.resolved"))
-            if yaml_files:
-                config_path = yaml_files[0]
+        # Prefer the fully resolved config dump: the plain config copy still contains
+        # ${...} interpolations (e.g. ${modalities_env:experiment_id}) that cannot be
+        # resolved outside of the training process.
+        config_path = next(iter(sorted(self.checkpoint_dir.glob("*.yaml.resolved"))), None)
+        if config_path is None:
+            if (self.checkpoint_dir / "config.yaml").exists():
+                config_path = self.checkpoint_dir / "config.yaml"
             else:
-                config_path = self.checkpoint_dir.parent / "config.yaml"
+                yaml_files = sorted(self.checkpoint_dir.glob("*.yaml"))
+                config_path = yaml_files[0] if yaml_files else self.checkpoint_dir.parent / "config.yaml"
 
         cmd = self.command_template.format(
             checkpoint_path=str(checkpoint_path),

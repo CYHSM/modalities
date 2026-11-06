@@ -312,7 +312,7 @@ tokenizer:
   component_key: tokenizer
   variant_key: pretrained_hf_tokenizer
   config:
-    pretrained_model_name_or_path: /leonardo_work/EUHPC_D21_101/mfrey/tokenizer/local_gpt2_tokenizer/
+    pretrained_model_name_or_path: /leonardo_work/AIFAC_S07_154/mfrey/tokenizer/local_gpt2_tokenizer/
     padding: false
     truncation: false
 
@@ -320,7 +320,7 @@ model_converter:
   component_key: model_converter
   variant_key: default
   config:
-    command_template: "python -m modalities.conversion {modalities_config} {output_dir} --checkpoint_path {checkpoint_path} > {checkpoint_path}/conversion.log 2>&1"
+    command_template: "python -m modalities.conversion {modalities_config} {output_dir} --checkpoint_path {checkpoint_path} --tokenizer_dir /leonardo_work/AIFAC_S07_154/mfrey/tokenizer/local_gpt2_tokenizer/ > {checkpoint_path}/conversion.log 2>&1"
     checkpoint_dir: ${settings.paths.experiments_root_path}/${settings.experiment_id}
     global_rank: ${settings.cuda_env.global_rank}
     eval_interval: ${settings.intervals.checkpointing_interval_in_steps}

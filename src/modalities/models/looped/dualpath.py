@@ -89,6 +89,15 @@ class AdaptiveComputationConfig(BaseModel):
     scheduler_type: str = "constant"
     layer_types: Optional[list[str]] = None
     use_cross: bool = True
+    # Soft cap on the two_gates per-layer residual gain (g_deep + g_wide).
+    # The gates are independent sigmoids, so the sum lies in (0, 2): bounded,
+    # but free to sit above 1 and compound geometrically with depth. When set,
+    # any token whose gate sum exceeds this value has BOTH gates divided by the
+    # same scalar, so the routing ratio g_d:g_w is preserved exactly and only the
+    # magnitude is damped. Tokens under the cap are untouched, so the model keeps
+    # the ability to attenuate or shut off a path -- which convex mode cannot do.
+    # None disables it (original behaviour). 1.0 makes the layer non-amplifying.
+    gate_sum_cap: Optional[float] = None
     cross_scale_deep_init: float = -7.0
     cross_scale_wide_init: float = -7.0
 
@@ -475,6 +484,7 @@ def _batch_corr(a: torch.Tensor, b: torch.Tensor, eps: float = 1e-8) -> torch.Te
     return (a * b).sum() / denom
 
 
+
 class AdaptiveRouter(nn.Module):
     """Per-token halting: [h; t_normalized] -> sigmoid -> halt_prob."""
 
@@ -622,8 +632,10 @@ class DualPathGateTwoGates(nn.Module):
         cross_scale_deep_init: float = -7.0,
         cross_scale_wide_init: float = -7.0,
         is_softmax: bool = False,
+        sum_cap: Optional[float] = None,
     ):
         super().__init__()
+        self.sum_cap = sum_cap
         self.deep_gate_init_bias = deep_gate_init_bias
         self.wide_gate_init_bias = wide_gate_init_bias
         self.use_cross = use_cross
@@ -695,6 +707,13 @@ class DualPathGateTwoGates(nn.Module):
         deep_ovr, wide_ovr = self._unpack_override(gate_override)
         gate_deep = self._apply_override(gate_deep_raw, deep_ovr)
         gate_wide = self._apply_override(gate_wide_raw, wide_ovr)
+
+        if self.sum_cap is not None:
+            # Divide both gates by the same factor so the ratio survives; clamp's
+            # min= makes this exactly a no-op below the cap.
+            damp = torch.clamp((gate_deep + gate_wide) / self.sum_cap, min=1.0)
+            gate_deep = gate_deep / damp
+            gate_wide = gate_wide / damp
 
         if self.use_cross:
             s_d = F.softplus(self.cross_scale_deep)
@@ -831,6 +850,17 @@ class DualPathGateFixed(nn.Module):
 # =============================================================================
 
 class AdaptiveRecursiveBlock(nn.Module):
+    # softplus(loop_scales / wide_scale) is otherwise unbounded above. For the
+    # (weight-shared) recursive loop path this residual scale is reapplied up
+    # to max_loops times in sequence, so unconstrained growth compounds
+    # multiplicatively across iterations — unlike the single-pass wide path,
+    # where one large scale is a one-shot risk, not an iterated one. Observed
+    # in practice: stable loss/grad-norm for 1300+ steps, then an instant,
+    # zero-ramp NaN — consistent with a compounding-scale threshold crossing
+    # rather than a gradual divergence. Clamp both to the same safe ceiling
+    # as a direct guard against that failure mode.
+    _MAX_RESIDUAL_SCALE = 2.0
+
     def __init__(
         self,
         block: Optional[DualPathBlock],
@@ -894,6 +924,7 @@ class AdaptiveRecursiveBlock(nn.Module):
                     cross_scale_deep_init=adaptive_config.cross_scale_deep_init,
                     cross_scale_wide_init=adaptive_config.cross_scale_wide_init,
                     is_softmax=(self.gate_mode == "softmax"),
+                    sum_cap=getattr(adaptive_config, "gate_sum_cap", None),
                 )
             else:
                 raise ValueError(f"Unknown gate_mode: {self.gate_mode}")
@@ -932,7 +963,7 @@ class AdaptiveRecursiveBlock(nn.Module):
                 for step in range(self.max_loops):
                     actual_steps = step + 1
 
-                    scale = F.softplus(self.loop_scales[step])
+                    scale = F.softplus(self.loop_scales[step]).clamp(max=self._MAX_RESIDUAL_SCALE)
                     h_prev = h_loop
 
                     h_loop = self.block(h_loop, scale=scale)
@@ -966,7 +997,7 @@ class AdaptiveRecursiveBlock(nn.Module):
             elif loop_combination_mode == "final":
                 for step in range(self.max_loops):
                     actual_steps = step + 1
-                    scale = F.softplus(self.loop_scales[step])
+                    scale = F.softplus(self.loop_scales[step]).clamp(max=self._MAX_RESIDUAL_SCALE)
                     h_loop = self.block(h_loop, scale=scale)
                     with torch.no_grad():
                         metrics.log("loop_scale", scale.detach())
@@ -976,7 +1007,7 @@ class AdaptiveRecursiveBlock(nn.Module):
                 h_sum = torch.zeros_like(x)
                 for step in range(self.max_loops):
                     actual_steps = step + 1
-                    scale = F.softplus(self.loop_scales[step])
+                    scale = F.softplus(self.loop_scales[step]).clamp(max=self._MAX_RESIDUAL_SCALE)
                     h_loop = self.block(h_loop, scale=scale)
                     h_sum = h_sum + h_loop
                     with torch.no_grad():
@@ -992,7 +1023,7 @@ class AdaptiveRecursiveBlock(nn.Module):
         # Wide path: single pass
         # ---------------------------------------------------------------
         if self.has_wide_path:
-            wide_scale_val = F.softplus(self.wide_scale)
+            wide_scale_val = F.softplus(self.wide_scale).clamp(max=self._MAX_RESIDUAL_SCALE)
             h_wide = self.wide_block(x, scale=wide_scale_val)
         else:
             h_wide = torch.zeros_like(x)
