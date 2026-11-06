@@ -26,8 +26,12 @@ CS = ["arc_challenge", "arc_easy", "hellaswag", "piqa", "socialiqa", "winogrande
 
 
 def _rows(evaldir):
+    """Rows of one eval dir, limit=1024 only (skips smoke tests such as olmes_eval_<step>_envtest)."""
     f = os.path.join(evaldir, "metrics-all.jsonl")
-    return [json.loads(l) for l in open(f)] if os.path.exists(f) else []
+    if not os.path.exists(f):
+        return []
+    rows = [json.loads(l) for l in open(f)]
+    return [r for r in rows if r.get("task_config", {}).get("limit") == 1024]
 
 
 def _collect(root, exp_hash, step=18360):

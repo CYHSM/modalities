@@ -74,6 +74,10 @@ with `hf_checkpoint/` inside it and the OLMES output in `hf_checkpoint/olmes_eva
 - **Paper numbers**: `python scripts/evaluation/render_paper_tables.py`. Conventions: use the
   limit=1024 dir (not `_128`) and each task's `primary_score`. Commonsense = mean over ARC-c, ARC-e,
   HellaSwag, PIQA, SIQA, WinoGrande. Math BPB = `olmo3:base_easy:math_bpb`. C4/Wiki = Paloma BPB.
+  Only rows with `limit == 1024` count, so smoke-test dirs next to a real eval are ignored.
+- **Review-round tables** (compute-matched, gate controls, capped sweep; mean +- std over seeds):
+  `python scripts/evaluation/render_review_tables.py [--apply <main.tex>]`. Configs and launch
+  lists are in `config_files/janus/review/`.
 - **New FLOP-matched arm**: get widths from `tools/generate_configs.py`. Its output follows the
   older EMNLP layout, so copy the closest existing janus config and change only the model block
   rather than using the output directly.
