@@ -47,7 +47,11 @@ def main() -> None:
         cells = []
         for s in SOURCES:
             d = [loss(m, name, s) - loss(m, "learned", s) for m in models if loss(m, name, s) is not None]
-            cells.append(f"{st.mean(d):+.3f} (+-{st.stdev(d):.3f}, n={len(d)})" if len(d) > 1 else "n/a")
+            if len(d) > 1:
+                p = wilcoxon(d).pvalue  # against zero change
+                cells.append(f"{st.mean(d):+.3f}{stars(p)} (+-{st.stdev(d):.3f}, {sum(x > 0 for x in d)}/{len(d)} > 0)")
+            else:
+                cells.append("n/a")
         print(f"  {name:14}", " | ".join(cells))
     print("\nClass-specific excess over random control (paired Wilcoxon across checkpoints)")
     for label, (cls, rnd, matched) in CLASS.items():

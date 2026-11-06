@@ -1,0 +1,271 @@
+{
+  "ablation": "gd0p0_gw1p0_mask_NUM+RANDOMMATCHED+SYM",
+  "spec": {
+    "g_deep": 0.0,
+    "g_wide": 1.0,
+    "mask_tags": [
+      "NUM",
+      "RANDOMMATCHED",
+      "SYM"
+    ]
+  },
+  "sources": {
+    "gsm8k": {
+      "n_chunks": 200,
+      "n_tokens_with_loss": 31013,
+      "n_masked_tokens": 10544,
+      "perturbation_match": {
+        "target_mean_delta": 0.7939873603920371,
+        "control_mean_delta": 0.7950106188089605,
+        "n_target": 10574,
+        "n_control": 10544
+      },
+      "mean_loss": 4.042162895202637,
+      "ppl": 56.94938659667969,
+      "by_pos": {
+        "NOUN": {
+          "mean_loss": 4.161036558258435,
+          "n_tokens": 5137
+        },
+        "PUNCT": {
+          "mean_loss": 4.573326436074716,
+          "n_tokens": 2450
+        },
+        "PROPN": {
+          "mean_loss": 5.6651325536275845,
+          "n_tokens": 1153
+        },
+        "PART": {
+          "mean_loss": 4.929129252895456,
+          "n_tokens": 359
+        },
+        "VERB": {
+          "mean_loss": 5.158282312245091,
+          "n_tokens": 1922
+        },
+        "NUM": {
+          "mean_loss": 2.040420758353407,
+          "n_tokens": 6124
+        },
+        "ADP": {
+          "mean_loss": 5.219177841840038,
+          "n_tokens": 1940
+        },
+        "PRON": {
+          "mean_loss": 5.097448591257531,
+          "n_tokens": 1048
+        },
+        "DET": {
+          "mean_loss": 5.944052562274227,
+          "n_tokens": 1736
+        },
+        "CCONJ": {
+          "mean_loss": 5.593052424682725,
+          "n_tokens": 310
+        },
+        "ADV": {
+          "mean_loss": 4.906105861411921,
+          "n_tokens": 571
+        },
+        "SYM": {
+          "mean_loss": 2.1778029130176324,
+          "n_tokens": 4250
+        },
+        "ADJ": {
+          "mean_loss": 5.112482133582409,
+          "n_tokens": 1000
+        },
+        "SCONJ": {
+          "mean_loss": 3.77408213207853,
+          "n_tokens": 525
+        },
+        "AUX": {
+          "mean_loss": 6.417465655524901,
+          "n_tokens": 1147
+        },
+        "SPACE": {
+          "mean_loss": 5.918292526538414,
+          "n_tokens": 1210
+        },
+        "X": {
+          "mean_loss": 3.5755866846212974,
+          "n_tokens": 13
+        }
+      }
+    },
+    "triviaqa": {
+      "n_chunks": 200,
+      "n_tokens_with_loss": 3975,
+      "n_masked_tokens": 113,
+      "perturbation_match": {
+        "target_mean_delta": 0.7650989009215768,
+        "control_mean_delta": 0.7657368599841025,
+        "n_target": 113,
+        "n_control": 113
+      },
+      "mean_loss": 4.370419025421143,
+      "ppl": 79.0767593383789,
+      "by_pos": {
+        "NOUN": {
+          "mean_loss": 2.2035392333480415,
+          "n_tokens": 829
+        },
+        "PUNCT": {
+          "mean_loss": 5.222944619382036,
+          "n_tokens": 646
+        },
+        "PRON": {
+          "mean_loss": 4.844384833778205,
+          "n_tokens": 114
+        },
+        "AUX": {
+          "mean_loss": 4.980022039834191,
+          "n_tokens": 170
+        },
+        "DET": {
+          "mean_loss": 7.281953301380225,
+          "n_tokens": 337
+        },
+        "ADP": {
+          "mean_loss": 5.077437041151295,
+          "n_tokens": 283
+        },
+        "PROPN": {
+          "mean_loss": 3.839172462264896,
+          "n_tokens": 824
+        },
+        "SPACE": {
+          "mean_loss": 5.605149564743042,
+          "n_tokens": 200
+        },
+        "ADV": {
+          "mean_loss": 4.805273727003124,
+          "n_tokens": 31
+        },
+        "VERB": {
+          "mean_loss": 3.2353184222168214,
+          "n_tokens": 185
+        },
+        "NUM": {
+          "mean_loss": 3.5740383500233293,
+          "n_tokens": 89
+        },
+        "X": {
+          "mean_loss": 0.7419576104730368,
+          "n_tokens": 4
+        },
+        "ADJ": {
+          "mean_loss": 5.716434271963498,
+          "n_tokens": 131
+        },
+        "SYM": {
+          "mean_loss": 2.842009322001384,
+          "n_tokens": 13
+        },
+        "PART": {
+          "mean_loss": 7.563858658808177,
+          "n_tokens": 61
+        },
+        "CCONJ": {
+          "mean_loss": 5.9730494982004165,
+          "n_tokens": 25
+        },
+        "SCONJ": {
+          "mean_loss": 3.857854284089187,
+          "n_tokens": 29
+        },
+        "INTJ": {
+          "mean_loss": 5.099179625511169,
+          "n_tokens": 4
+        }
+      }
+    },
+    "wikitext_103": {
+      "n_chunks": 93,
+      "n_tokens_with_loss": 246591,
+      "n_masked_tokens": 14986,
+      "perturbation_match": {
+        "target_mean_delta": 0.7993006873763994,
+        "control_mean_delta": 0.7992975234858076,
+        "n_target": 14986,
+        "n_control": 14986
+      },
+      "mean_loss": 3.424036741256714,
+      "ppl": 30.693065643310547,
+      "by_pos": {
+        "SPACE": {
+          "mean_loss": 3.0463107587666722,
+          "n_tokens": 9259
+        },
+        "SYM": {
+          "mean_loss": 2.130843174883799,
+          "n_tokens": 5012
+        },
+        "PROPN": {
+          "mean_loss": 2.8558877944796435,
+          "n_tokens": 43319
+        },
+        "NOUN": {
+          "mean_loss": 2.9211473565910193,
+          "n_tokens": 39865
+        },
+        "PUNCT": {
+          "mean_loss": 4.138368196835381,
+          "n_tokens": 21836
+        },
+        "VERB": {
+          "mean_loss": 2.8825136753249536,
+          "n_tokens": 20472
+        },
+        "ADP": {
+          "mean_loss": 3.69223193541169,
+          "n_tokens": 28126
+        },
+        "DET": {
+          "mean_loss": 4.957217447110587,
+          "n_tokens": 21125
+        },
+        "ADJ": {
+          "mean_loss": 3.4808533976322487,
+          "n_tokens": 12665
+        },
+        "CCONJ": {
+          "mean_loss": 4.875916878018619,
+          "n_tokens": 6035
+        },
+        "AUX": {
+          "mean_loss": 4.376464692053138,
+          "n_tokens": 7577
+        },
+        "PRON": {
+          "mean_loss": 4.11175348163738,
+          "n_tokens": 5681
+        },
+        "ADV": {
+          "mean_loss": 3.544567386782401,
+          "n_tokens": 5661
+        },
+        "NUM": {
+          "mean_loss": 2.666832811557453,
+          "n_tokens": 9973
+        },
+        "PART": {
+          "mean_loss": 3.811765710860991,
+          "n_tokens": 5246
+        },
+        "SCONJ": {
+          "mean_loss": 3.4948324896474974,
+          "n_tokens": 2160
+        },
+        "X": {
+          "mean_loss": 2.9089223946841734,
+          "n_tokens": 682
+        },
+        "INTJ": {
+          "mean_loss": 3.0407818937674165,
+          "n_tokens": 93
+        }
+      }
+    }
+  }
+}
