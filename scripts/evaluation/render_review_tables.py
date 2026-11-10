@@ -23,10 +23,13 @@ from render_paper_tables import BUD, summary  # noqa: E402
 
 REV = "dm768_L16_loop{K}_{B}M_{W}"
 SEEDS = (42, 43, 44)
-# The seed-43 capped alpha=50 runs already exist from September (Table softcap); not retrained.
+# Seed-43 runs that already exist from September (Tables softcap and depth-sweep); not retrained.
 SEP_CAPPED_S43 = {
     "8e7_loops4__dm768_L16_loop4_F80M_ffnD1600_ffnW11392_dual_a50_nocross_softcap1": "2026-09-14__01-44-11_4767e14501931d3a",
     "16e7_loops4__dm768_L16_loop4_F160M_ffnD4864_ffnW24448_dual_a50_nocross_softcap1": "2026-09-13__03-57-19_7baca097a6a8a0d2",
+    # L=32 depth-sweep runs of Table 3 (seed 43); seeds 42/44 added in the review round
+    "8e7_loops4__dm768_L32_loop4_F80M_dual_a50_nocross_softcap1": "2026-09-13__03-54-08_e2578e41d2128d01",
+    "8e7_loops2__dm768_L32_loop1_F80M_ffnW24576_purewide": "2026-09-10__05-47-34_4c2694a69d16531d",
 }
 
 # arm key -> config stem (without _s<seed>.yaml)
@@ -41,6 +44,9 @@ ARMS = {
     "cap_a25_F160": "16e7_loops4__dm768_L16_loop4_F160M_ffnD1600_ffnW37440_dual_a25_nocross_softcap1",
     "cap_a50_F160": "16e7_loops4__dm768_L16_loop4_F160M_ffnD4864_ffnW24448_dual_a50_nocross_softcap1",
     "cap_a75_F160": "16e7_loops4__dm768_L16_loop4_F160M_ffnD8128_ffnW11392_dual_a75_nocross_softcap1",
+    "gate_tokenwise": "8e7_loops4__dm768_L16_loop4_F80M_ffnD1600_ffnW11392_dual_a50_nocross_tokenwise",
+    "l32_dual_cap": "8e7_loops4__dm768_L32_loop4_F80M_dual_a50_nocross_softcap1",
+    "l32_purewide": "8e7_loops2__dm768_L32_loop1_F80M_ffnW24576_purewide",
     "gate_fixed": "8e7_loops4__dm768_L16_loop4_F80M_ffnD1600_ffnW11392_dual_a50_nocross_gatefixed",
     "gate_perlayer": "8e7_loops4__dm768_L16_loop4_F80M_ffnD1600_ffnW11392_dual_a50_nocross_gateperlayer",
     "gate_ungated": "8e7_loops4__dm768_L16_loop4_F80M_ffnD1600_ffnW11392_dual_a50_nocross_gateungated",
@@ -55,6 +61,7 @@ TABLE_ROWS = {
     ("tab:compute-matched", 1, r"\textsc{PureWide} (compute-matched)"): "pw_cm_F160",
     ("tab:compute-matched", 1, r"\textsc{PureLoop} $K{=}4$ (compute-matched)"): "pl_cm_F160",
     ("tab:compute-matched", 1, r"\quad + gate cap $c{=}1$"): "cap_a25_F160",
+    ("tab:gate-controls", 0, r"Token-wise, Eq.~\ref{eq:two-gates}"): "gate_tokenwise",
     ("tab:gate-controls", 0, r"Static $0.5/0.5$"): "gate_fixed",
     ("tab:gate-controls", 0, r"Per-layer, token-independent"): "gate_perlayer",
     ("tab:gate-controls", 0, r"Update-only (ungated residual)"): "gate_ungated",
