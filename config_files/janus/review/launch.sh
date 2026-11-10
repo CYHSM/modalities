@@ -4,8 +4,11 @@
 #   bash config_files/janus/review/launch.sh config_files/janus/review/attnmatched.txt
 #
 # The warmstart link (afterany) exits cleanly when training already reached its target,
-# so it only costs time for runs that hit the 24h limit (the widened F160M PureWide
-# needs ~24.4h). The eval job then converts and evaluates the final checkpoint only.
+# but it still needs 16 nodes to get through the queue first, which took days in Nov 2026.
+# So each run gets two eval jobs: one right after training (the usual case) and one after
+# the warmstart link (for runs that hit the 24h limit, e.g. the widened F160M PureWide,
+# ~24.4h). Both evaluate the final checkpoint only and exit cleanly if the run is not
+# finished yet or already evaluated.
 set -euo pipefail
 
 LIST="$1"
@@ -25,7 +28,9 @@ while read -r CFG; do
     WS="${CFG%.yaml}_WARMSTART.yaml"
     WS_ID=$(sbatch --parsable --dependency=afterany:"${ARRAY_ID}_${i}" \
         config_files/janus/run_warmstart.sh "${REPO_DIR}/${WS}" "${BASE}")
-    EV_ID=$(sbatch --parsable --dependency=afterany:"${WS_ID}" \
+    EV1_ID=$(sbatch --parsable --dependency=afterany:"${ARRAY_ID}_${i}" \
         scripts/evaluation/queue_eval_after_training.sh "${BASE}")
-    echo "${ARRAY_ID}_${i}  ws=${WS_ID}  eval=${EV_ID}  ${BASE}"
+    EV2_ID=$(sbatch --parsable --dependency=afterany:"${WS_ID}" \
+        scripts/evaluation/queue_eval_after_training.sh "${BASE}")
+    echo "${ARRAY_ID}_${i}  ws=${WS_ID}  eval=${EV1_ID},${EV2_ID}  ${BASE}"
 done < "${LIST}"
