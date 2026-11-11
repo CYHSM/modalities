@@ -57,10 +57,14 @@ METRICS = [("c4", 3), ("wiki", 3), ("cs_acc", 4), ("cs_bpb", 4), ("gsm8k", 4), (
 TABLE_ROWS = {
     ("tab:compute-matched", 0, r"\textsc{PureWide} (compute-matched)"): "pw_cm_F80",
     ("tab:compute-matched", 0, r"\textsc{PureLoop} $K{=}4$ (compute-matched)"): "pl_cm_F80",
-    ("tab:compute-matched", 0, r"\quad + gate cap $c{=}1$"): "cap_a50_F80",
+    ("tab:compute-matched", 0, r"\textsc{Dual} $\alpha{=}25$, $K{=}4$, cap $c{=}1$"): "cap_a25_F80",
+    ("tab:compute-matched", 0, r"\textsc{Dual} $\alpha{=}50$, $K{=}4$, cap $c{=}1$"): "cap_a50_F80",
+    ("tab:compute-matched", 0, r"\textsc{Dual} $\alpha{=}75$, $K{=}4$, cap $c{=}1$"): "cap_a75_F80",
     ("tab:compute-matched", 1, r"\textsc{PureWide} (compute-matched)"): "pw_cm_F160",
     ("tab:compute-matched", 1, r"\textsc{PureLoop} $K{=}4$ (compute-matched)"): "pl_cm_F160",
-    ("tab:compute-matched", 1, r"\quad + gate cap $c{=}1$"): "cap_a25_F160",
+    ("tab:compute-matched", 1, r"\textsc{Dual} $\alpha{=}25$, $K{=}4$, cap $c{=}1$"): "cap_a25_F160",
+    ("tab:compute-matched", 1, r"\textsc{Dual} $\alpha{=}50$, $K{=}4$, cap $c{=}1$"): "cap_a50_F160",
+    ("tab:compute-matched", 1, r"\textsc{Dual} $\alpha{=}75$, $K{=}4$, cap $c{=}1$"): "cap_a75_F160",
     ("tab:gate-controls", 0, r"Token-wise, Eq.~\ref{eq:two-gates}"): "gate_tokenwise",
     ("tab:gate-controls", 0, r"Static $0.5/0.5$"): "gate_fixed",
     ("tab:gate-controls", 0, r"Per-layer, token-independent"): "gate_perlayer",
@@ -106,6 +110,44 @@ def latex_cells(runs: dict) -> str:
     return " & ".join(cell([r[k] for r in runs.values()], nd) for k, nd in METRICS)
 
 
+LOWER_IS_BETTER = [True, True, False, True, False, True]  # C4, Wiki, CS acc, CS BPB, GSM8K, math BPB
+
+
+def _mean_of(c: str):
+    c = re.sub(r"\\textbf\{(.*)\}$", r"\1", c.strip())
+    m = re.match(r"([0-9.]+)", c)
+    return float(m.group(1)) if m else None
+
+
+def bold_best(lines: list, start: int, end: int) -> None:
+    """Bold the best mean of each metric column within every \\midrule block of a table."""
+    blocks, cur = [], []
+    for i in range(start, end):
+        l = lines[i].strip()
+        if l.startswith("\\midrule") or l.startswith("\\bottomrule"):
+            if cur:
+                blocks.append(cur)
+            cur = []
+        elif " & " in l and l.endswith("\\\\") and cur is not None and any(l.startswith(p) for p in ("\\textsc", "\\quad", "Token", "Static", "Per-layer", "Update")):
+            cur.append(i)
+    if cur:
+        blocks.append(cur)
+    for rows in blocks:
+        cells = {i: lines[i].strip()[:-2].strip().split(" & ") for i in rows}
+        for j, low in enumerate(LOWER_IS_BETTER):
+            col = -6 + j
+            vals = {i: _mean_of(c[col]) for i, c in cells.items()}
+            vals = {i: v for i, v in vals.items() if v is not None}
+            if not vals:
+                continue
+            best = min(vals.values()) if low else max(vals.values())
+            for i, c in cells.items():
+                raw = re.sub(r"^\\textbf\{(.*)\}$", r"\1", c[col].strip())
+                c[col] = f"\\textbf{{{raw}}}" if vals.get(i) == best else raw
+        for i, c in cells.items():
+            lines[i] = " & ".join(c) + r" \\"
+
+
 def apply(tex_path: str, data: dict) -> None:
     lines = open(tex_path).read().split("\n")
     changed = 0
@@ -127,9 +169,10 @@ def apply(tex_path: str, data: dict) -> None:
                 # Table 11 rows: label & params & gflops & 6 metrics; Table 12 rows: label & 6 metrics
                 keep = cells[:-6]
                 new = " & ".join(keep) + " & " + latex_cells(data[arm]) + r" \\"
-                if new != l:
+                if re.sub(r"\\textbf\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", r"\1", new) != re.sub(r"\\textbf\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", r"\1", l):
                     lines[i] = new
                     changed += 1
+        bold_best(lines, start, end)
     open(tex_path, "w").write("\n".join(lines))
     print(f"\n{tex_path}: {changed} rows updated")
 
