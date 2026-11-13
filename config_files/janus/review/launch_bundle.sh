@@ -11,10 +11,11 @@ REPO_DIR="/leonardo_work/AIFAC_S07_154/mfrey/modalities"
 cd "${REPO_DIR}"
 N=$(grep -c . "${LIST}")
 NODES=$((16 * N))
-[ "${NODES}" -ge 65 ] || { echo "boost_qos_bprod needs >= 65 nodes; ${N} runs give ${NODES}"; exit 1; }
-BUNDLE_ID=$(CONFIG_LIST="${REPO_DIR}/${LIST}" sbatch --parsable --nodes="${NODES}" \
+[ "${NODES}" -lt 65 ] && NODES=65   # boost_qos_bprod minimum; extra nodes stay idle
+TIME="${TIME:-24:00:00}"           # shorter bundles fit into scheduling gaps sooner
+BUNDLE_ID=$(CONFIG_LIST="${REPO_DIR}/${LIST}" sbatch --parsable --nodes="${NODES}" --time="${TIME}" \
     config_files/janus/run_bundle_bprod.sh)
-echo "bundle: ${BUNDLE_ID} (${N} runs, ${NODES} nodes)"
+echo "bundle: ${BUNDLE_ID} (${N} runs, ${NODES} nodes, ${TIME})"
 while read -r CFG _; do
     [ -z "${CFG}" ] && continue
     BASE=$(basename "${CFG}")

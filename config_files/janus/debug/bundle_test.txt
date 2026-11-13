@@ -1,2 +1,1 @@
-config_files/janus/debug/8e7_loops4__dm768_L16_loop4_F80M_dual_a50_nocross_softcap1_smoketest.yaml
-config_files/janus/debug/smoke_gateungated.yaml 64399351
+config_files/janus/debug/8e7_loops4__dm768_L16_loop4_F80M_dual_a50_nocross_softcap1_smoketest.yaml 64401787

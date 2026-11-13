@@ -61,6 +61,14 @@ if [ -f "${CK}/hf_checkpoint/olmes_eval_${STEP}/metrics-all.jsonl" ]; then
     echo "already evaluated: ${CK}"; exit 0
 fi
 
+# Two eval jobs can target the same checkpoint (duplicate runs, eval-after-train plus
+# eval-after-warmstart). Take a lock so only one converts and evaluates it; a lock whose
+# job is no longer in the queue is stale and taken over.
+LOCK="${CK}/.eval_lock_${STEP}"
+if [ -f "${LOCK}" ] && squeue -h -j "$(cat "${LOCK}")" 2>/dev/null | grep -q .; then
+    echo "being evaluated by job $(cat "${LOCK}"): ${CK}"; exit 0
+fi
+echo "${SLURM_JOB_ID:-$$}" > "${LOCK}"
 # Final step only; 26 tasks incl. generative gsm8k take ~7h for an L16 model.
 export JANUS_EVAL_ALL_STEPS=1
 export JANUS_EVAL_TIME="${JANUS_EVAL_TIME:-14:00:00}"
