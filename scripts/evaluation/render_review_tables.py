@@ -65,6 +65,8 @@ TABLE_ROWS = {
     ("tab:compute-matched", 1, r"\textsc{Dual} $\alpha{=}25$, $K{=}4$, cap $c{=}1$"): "cap_a25_F160",
     ("tab:compute-matched", 1, r"\textsc{Dual} $\alpha{=}50$, $K{=}4$, cap $c{=}1$"): "cap_a50_F160",
     ("tab:compute-matched", 1, r"\textsc{Dual} $\alpha{=}75$, $K{=}4$, cap $c{=}1$"): "cap_a75_F160",
+    ("tab:depth-sweep", 2, r"& \textsc{PureWide}"): "l32_purewide",
+    ("tab:depth-sweep", 2, r"& \textsc{DualPath} $\alpha=50$"): "l32_dual_cap",
     ("tab:gate-controls", 0, r"Token-wise, Eq.~\ref{eq:two-gates}"): "gate_tokenwise",
     ("tab:gate-controls", 0, r"Static $0.5/0.5$"): "gate_fixed",
     ("tab:gate-controls", 0, r"Per-layer, token-independent"): "gate_perlayer",
@@ -97,17 +99,21 @@ def arm_runs(stem: str) -> dict:
     return out
 
 
-def cell(vals: list, nd: int) -> str:
+# Main-text tables too narrow for "mean +- sd" cells: means only (state the seeds in the caption).
+MEAN_ONLY = {"tab:depth-sweep"}
+
+
+def cell(vals: list, nd: int, sd: bool = True) -> str:
     if not vals:
         return r"\ph"
-    if len(vals) == 1:
-        return f"{vals[0]:.{nd}f}"
+    if len(vals) == 1 or not sd:
+        return f"{st.mean(vals):.{nd}f}"
     sd = st.stdev(vals)
     return f"{st.mean(vals):.{nd}f}{{\\tiny$\\pm${sd:.{nd}f}}}"
 
 
-def latex_cells(runs: dict) -> str:
-    return " & ".join(cell([r[k] for r in runs.values()], nd) for k, nd in METRICS)
+def latex_cells(runs: dict, sd: bool = True) -> str:
+    return " & ".join(cell([r[k] for r in runs.values()], nd, sd) for k, nd in METRICS)
 
 
 LOWER_IS_BETTER = [True, True, False, True, False, True]  # C4, Wiki, CS acc, CS BPB, GSM8K, math BPB
@@ -128,7 +134,7 @@ def bold_best(lines: list, start: int, end: int) -> None:
             if cur:
                 blocks.append(cur)
             cur = []
-        elif " & " in l and l.endswith("\\\\") and cur is not None and any(l.startswith(p) for p in ("\\textsc", "\\quad", "Token", "Static", "Per-layer", "Update")):
+        elif " & " in l and l.endswith("\\\\") and cur is not None and any(l.startswith(p) for p in ("\\textsc", "& \\textsc", "\\quad", "Token", "Static", "Per-layer", "Update")):
             cur.append(i)
     if cur:
         blocks.append(cur)
@@ -145,7 +151,8 @@ def bold_best(lines: list, start: int, end: int) -> None:
                 raw = re.sub(r"^\\textbf\{(.*)\}$", r"\1", c[col].strip())
                 c[col] = f"\\textbf{{{raw}}}" if vals.get(i) == best else raw
         for i, c in cells.items():
-            lines[i] = " & ".join(c) + r" \\"
+            lead = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
+            lines[i] = lead + " & ".join(c) + r" \\"
 
 
 def apply(tex_path: str, data: dict) -> None:
@@ -166,11 +173,11 @@ def apply(tex_path: str, data: dict) -> None:
                 if not data[arm]:
                     continue
                 cells = l.split(" & ")
-                # Table 11 rows: label & params & gflops & 6 metrics; Table 12 rows: label & 6 metrics
+                # Table 11 rows: label & params & gflops & 6 metrics; Table 12: label & 6 metrics; Table 3: & label & params & gflops & 6
                 keep = cells[:-6]
-                new = " & ".join(keep) + " & " + latex_cells(data[arm]) + r" \\"
+                new = " & ".join(keep) + " & " + latex_cells(data[arm], sd=label not in MEAN_ONLY) + r" \\"
                 if re.sub(r"\\textbf\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", r"\1", new) != re.sub(r"\\textbf\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", r"\1", l):
-                    lines[i] = new
+                    lines[i] = lines[i][: len(lines[i]) - len(lines[i].lstrip())] + new
                     changed += 1
         bold_best(lines, start, end)
     open(tex_path, "w").write("\n".join(lines))
