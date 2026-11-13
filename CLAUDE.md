@@ -65,6 +65,10 @@ with `hf_checkpoint/` inside it and the OLMES output in `hf_checkpoint/olmes_eva
 - **Longer runs** (L>=32): make a warmstart config with `tools/make_warmstart_config.py`, then
   chain `sbatch --dependency=afterany:<job> config_files/janus/run_warmstart.sh <WS_CONFIG> <BASE_CONFIG_NAME>`.
   Queue several links up front; a link that finds the run finished exits cleanly.
+- **Faster queue for several runs**: `boost_qos_bprod` ranks well above `normal` but needs >= 65 nodes,
+  so bundle 5-16 runs into one job: list `<config> [<old job id> [<old chain ids>]]` per line, then
+  `bash config_files/janus/review/launch_bundle.sh <list>` (run_bundle_bprod.sh; adds eval and warmstart
+  chains). The allocation is held until the longest run ends, so bundle runs of similar length.
 - **Smoke test** (1 node, debug QOS, 200 steps): `sbatch config_files/janus/debug/run_smoketest_debug.sh [CONFIG]`.
 - **Eval**: happens automatically at the final step (one 1-GPU job: DCP->HF conversion, then 25
   OLMES tasks at limit=1024). Newer configs leave out gsm8k: queue
